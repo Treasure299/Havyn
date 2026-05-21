@@ -1,0 +1,10 @@
+node_modules/
+apps/*/node_modules/
+apps/desktop/dist/
+apps/desktop/release/
+.env
+apps/*/.env
+*.log
+.DS_Store
+Thumbs.db
+stock videos/

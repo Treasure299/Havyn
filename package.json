@@ -1,0 +1,22 @@
+{
+  "name": "havyn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Havyn MVP monorepo for local desktop watch parties.",
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "server": "npm --workspace apps/server run dev",
+    "desktop": "npm --workspace apps/desktop run dev",
+    "dev": "concurrently \"npm:server\" \"npm:desktop\""
+  },
+  "workspaces": [
+    "apps/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "ffmpeg-static": "^5.3.0"
+  },
+  "dependencies": {
+    "@fontsource/manrope": "^5.2.8"
+  }
+}

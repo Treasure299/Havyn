@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Havyn Test Video</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #050507;
+        color: #fff;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        min-height: 100%;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+      }
+      video {
+        width: min(1100px, 92vw);
+        border-radius: 12px;
+        background: #000;
+        box-shadow: 0 30px 90px rgba(0,0,0,.45);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <video controls playsinline src="/videos/havyn-bg-loop.mp4"></video>
+    </main>
+  </body>
+</html>
