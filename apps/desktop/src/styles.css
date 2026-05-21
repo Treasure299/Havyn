@@ -1080,11 +1080,43 @@ label {
   flex-wrap: wrap;
 }
 
+.call-control-stack {
+  width: 100%;
+  display: grid;
+  gap: 7px;
+  justify-items: end;
+}
+
 .call-controls .icon-button {
   width: 32px;
   min-height: 32px;
   height: 32px;
   border-radius: 8px;
+}
+
+.device-selectors {
+  width: min(100%, 300px);
+  display: grid;
+  gap: 6px;
+}
+
+.device-selectors label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.device-selectors select {
+  min-height: 30px;
+  width: 100%;
+  padding: 0 26px 0 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.86);
+  background: rgba(255,255,255,0.055);
 }
 
 .compact-call-button {

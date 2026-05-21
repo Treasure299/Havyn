@@ -20,6 +20,19 @@ const mediaConstraints = {
   }
 };
 
+function buildMediaConstraints(audioDeviceId, videoDeviceId) {
+  return {
+    audio: {
+      ...mediaConstraints.audio,
+      ...(audioDeviceId ? { deviceId: { exact: audioDeviceId } } : {})
+    },
+    video: {
+      ...mediaConstraints.video,
+      ...(videoDeviceId ? { deviceId: { exact: videoDeviceId } } : {})
+    }
+  };
+}
+
 async function tuneSender(sender, kind) {
   const parameters = sender.getParameters();
   parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
@@ -41,8 +54,31 @@ export function useWebRTC({ socket, room, user }) {
   const [callError, setCallError] = useState("");
   const [streams, setStreams] = useState([]);
   const [localPreviewStream, setLocalPreviewStream] = useState(null);
+  const [devices, setDevices] = useState({ audioInputs: [], videoInputs: [] });
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState("");
+  const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState("");
   const localStreamRef = useRef(null);
   const peersRef = useRef(new Map());
+  const mutedRef = useRef(muted);
+  const cameraOffRef = useRef(cameraOff);
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
+  useEffect(() => {
+    cameraOffRef.current = cameraOff;
+  }, [cameraOff]);
+
+  const refreshDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const items = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    const audioInputs = items.filter((device) => device.kind === "audioinput");
+    const videoInputs = items.filter((device) => device.kind === "videoinput");
+    setDevices({ audioInputs, videoInputs });
+    setSelectedAudioDeviceId((current) => current || audioInputs[0]?.deviceId || "");
+    setSelectedVideoDeviceId((current) => current || videoInputs[0]?.deviceId || "");
+  }, []);
 
   const closePeer = useCallback((peerUserId) => {
     peersRef.current.get(peerUserId)?.close();
@@ -85,9 +121,47 @@ export function useWebRTC({ socket, room, user }) {
     return peer;
   }, [room?.roomId, socket, user.id]);
 
+  async function replaceLocalTrack(kind, deviceId) {
+    if (!joined || !localStreamRef.current) return;
+    setCallError("");
+    const constraints = kind === "audio"
+      ? { audio: buildMediaConstraints(deviceId, selectedVideoDeviceId).audio, video: false }
+      : { audio: false, video: buildMediaConstraints(selectedAudioDeviceId, deviceId).video };
+    const stream = await navigator.mediaDevices.getUserMedia(constraints).catch((error) => {
+      setCallError(error.message || "Could not switch device.");
+      return null;
+    });
+    const nextTrack = stream?.getTracks()[0];
+    if (!nextTrack) return;
+
+    nextTrack.enabled = kind === "audio" ? !mutedRef.current : !cameraOffRef.current;
+    const currentTracks = kind === "audio"
+      ? localStreamRef.current.getAudioTracks()
+      : localStreamRef.current.getVideoTracks();
+    currentTracks.forEach((track) => {
+      localStreamRef.current.removeTrack(track);
+      track.stop();
+    });
+    localStreamRef.current.addTrack(nextTrack);
+    peersRef.current.forEach((peer) => {
+      const sender = peer.getSenders().find((item) => item.track?.kind === kind);
+      sender?.replaceTrack(nextTrack);
+      if (sender) tuneSender(sender, kind);
+    });
+    setLocalPreviewStream(new MediaStream(localStreamRef.current.getTracks()));
+    await refreshDevices();
+  }
+
   async function joinCall() {
     setCallError("");
-    const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    let stream = await navigator.mediaDevices.getUserMedia(buildMediaConstraints(selectedAudioDeviceId, selectedVideoDeviceId)).catch(() => null);
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia(mediaConstraints).catch((error) => {
+        setCallError(error.message || "Camera or microphone could not be opened.");
+        return null;
+      });
+    }
+    if (!stream) return;
     stream.getAudioTracks().forEach((track) => { track.enabled = true; });
     stream.getVideoTracks().forEach((track) => { track.enabled = true; });
     localStreamRef.current = stream;
@@ -101,6 +175,7 @@ export function useWebRTC({ socket, room, user }) {
       muted: false,
       cameraOff: false
     });
+    await refreshDevices();
   }
 
   function leaveCall() {
@@ -128,6 +203,16 @@ export function useWebRTC({ socket, room, user }) {
     localStreamRef.current?.getVideoTracks().forEach((track) => { track.enabled = !next; });
     setCameraOff(next);
     socket.emit("call-status", { roomId: room.roomId, userId: user.id, muted, cameraOff: next });
+  }
+
+  async function selectAudioDevice(deviceId) {
+    setSelectedAudioDeviceId(deviceId);
+    await replaceLocalTrack("audio", deviceId);
+  }
+
+  async function selectVideoDevice(deviceId) {
+    setSelectedVideoDeviceId(deviceId);
+    await replaceLocalTrack("video", deviceId);
   }
 
   useEffect(() => {
@@ -187,16 +272,27 @@ export function useWebRTC({ socket, room, user }) {
     peersRef.current.forEach((peer) => peer.close());
   }, []);
 
+  useEffect(() => {
+    refreshDevices();
+    navigator.mediaDevices?.addEventListener?.("devicechange", refreshDevices);
+    return () => navigator.mediaDevices?.removeEventListener?.("devicechange", refreshDevices);
+  }, [refreshDevices]);
+
   return {
     joined,
     muted,
     cameraOff,
     callError,
+    devices,
+    selectedAudioDeviceId,
+    selectedVideoDeviceId,
     localStream: localPreviewStream,
     streams,
     joinCall,
     leaveCall,
     toggleMute,
-    toggleCamera
+    toggleCamera,
+    selectAudioDevice,
+    selectVideoDevice
   };
 }
