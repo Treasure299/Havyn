@@ -186,6 +186,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
             />
             <PlaybackControls
               canControl={playback.canControl}
+              playbackMode={room.playbackMode}
               playbackState={playback.playbackState}
               onPlay={playback.play}
               onPause={playback.pause}

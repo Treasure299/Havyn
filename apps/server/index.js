@@ -121,6 +121,12 @@ io.on("connection", (socket) => {
   socket.on("room-playback-mode", ({ roomId, userId, playbackMode }) => {
     if (!canControlPlayback(roomId, userId)) return socket.emit("permission-denied", { reason: "Only room controllers can change playback mode." });
     setPlaybackMode(roomId, playbackMode);
+    io.to(roomId).emit("room-action", {
+      id: crypto.randomUUID(),
+      type: "playback-mode",
+      message: `${displayNameFor(roomId, userId)} set controls to ${modeLabel(playbackMode)}`,
+      createdAt: new Date().toISOString()
+    });
     emitRoomState(roomId);
   });
 
@@ -146,7 +152,7 @@ io.on("connection", (socket) => {
 
   socket.on("media-selected", ({ roomId, userId, media }) => {
     const playbackState = selectMedia(roomId, userId, media);
-    if (!playbackState) return socket.emit("permission-denied", { reason: "Playback controlled by host." });
+    if (!playbackState) return socket.emit("permission-denied", { reason: playbackPermissionMessage(roomId) });
     io.to(roomId).emit("media-selected", { media, playbackState });
     io.to(roomId).emit("playback-state-sync", playbackState);
     emitRoomState(roomId);
@@ -234,7 +240,7 @@ io.on("connection", (socket) => {
   function handlePlayback(action, { roomId, userId, currentTime, playbackRate }) {
     const playbackState = updatePlayback(roomId, userId, action, { currentTime, playbackRate });
     if (!playbackState) {
-      socket.emit("permission-denied", { reason: "Playback controlled by host." });
+      socket.emit("permission-denied", { reason: playbackPermissionMessage(roomId) });
       socket.emit("playback-state-sync", getAuthoritativePlayback(roomId));
       return;
     }
@@ -272,6 +278,21 @@ io.on("connection", (socket) => {
       "rate-change": "changed speed",
       ended: "ended playback"
     }[action] || "updated playback";
+  }
+
+  function modeLabel(playbackMode) {
+    return {
+      "host-only": "host only",
+      "host-and-cohosts": "host and cohosts",
+      everyone: "everyone"
+    }[playbackMode] || playbackMode;
+  }
+
+  function playbackPermissionMessage(roomId) {
+    const room = serializeRoom(roomId);
+    if (room?.playbackMode === "host-and-cohosts") return "Playback is controlled by the host and cohosts.";
+    if (room?.playbackMode === "everyone") return "Playback is open to everyone. Rejoin the room if controls still feel locked.";
+    return "Playback is controlled by the host.";
   }
 });
 

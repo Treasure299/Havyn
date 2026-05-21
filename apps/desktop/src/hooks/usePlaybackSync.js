@@ -86,14 +86,15 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     socket.emit(eventName, { roomId: room.roomId, userId: user.id, ...data });
   }
 
-  function controlPlayback(action) {
+  async function controlPlayback(action) {
     const currentTime = localCurrentTimeRef.current ?? playbackState?.currentTime ?? 0;
-    applyPlayback?.({
+    const applied = await applyPlayback?.({
       action,
       currentTime,
       playbackRate: playbackState?.playbackRate ?? room?.playbackState?.playbackRate ?? 1,
       reason: "local-control"
     });
+    if (applied === false) return;
     sendPlayback(action, { currentTime });
   }
 
