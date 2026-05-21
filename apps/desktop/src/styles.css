@@ -1081,7 +1081,8 @@ label {
 }
 
 .call-control-stack {
-  width: 100%;
+  position: relative;
+  width: auto;
   display: grid;
   gap: 7px;
   justify-items: end;
@@ -1094,22 +1095,41 @@ label {
   border-radius: 8px;
 }
 
-.device-selectors {
-  width: min(100%, 300px);
+.device-popover {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(330px, calc(100vw - 40px));
+  padding: 12px;
   display: grid;
-  gap: 6px;
+  gap: 10px;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.42);
 }
 
-.device-selectors label {
+.device-popover strong {
+  font-size: 13px;
+}
+
+.device-popover label {
   min-width: 0;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
+  gap: 5px;
   color: var(--muted);
 }
 
-.device-selectors select {
+.device-popover label span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.device-popover select {
   min-height: 30px;
   width: 100%;
   padding: 0 26px 0 9px;

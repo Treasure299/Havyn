@@ -1,6 +1,8 @@
-import { Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff, Settings2, Video, VideoOff } from "lucide-react";
+import { useState } from "react";
 
 export default function CallControls({ call }) {
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const audioInputs = call.devices?.audioInputs || [];
   const videoInputs = call.devices?.videoInputs || [];
 
@@ -11,6 +13,13 @@ export default function CallControls({ call }) {
           <button className="secondary-button compact-call-button" onClick={call.joinCall}><Phone size={16} /> Join</button>
         ) : (
           <>
+            <button
+              className={`icon-button ${devicesOpen ? "is-active" : ""}`}
+              onClick={() => setDevicesOpen((value) => !value)}
+              title="Call devices"
+            >
+              <Settings2 size={17} />
+            </button>
             <button className="icon-button" onClick={call.toggleMute} title={call.muted ? "Unmute mic" : "Mute mic"}>
               {call.muted ? <MicOff size={17} /> : <Mic size={17} />}
             </button>
@@ -21,9 +30,11 @@ export default function CallControls({ call }) {
           </>
         )}
       </div>
-      <div className="device-selectors">
+      {devicesOpen && (
+      <div className="device-popover glass">
+        <strong>Call devices</strong>
         <label>
-          <Mic size={12} />
+          <span><Mic size={12} /> Microphone</span>
           <select
             value={call.selectedAudioDeviceId}
             onChange={(event) => call.selectAudioDevice(event.target.value)}
@@ -37,7 +48,7 @@ export default function CallControls({ call }) {
           </select>
         </label>
         <label>
-          <Video size={12} />
+          <span><Video size={12} /> Camera</span>
           <select
             value={call.selectedVideoDeviceId}
             onChange={(event) => call.selectVideoDevice(event.target.value)}
@@ -51,6 +62,7 @@ export default function CallControls({ call }) {
           </select>
         </label>
       </div>
+      )}
       {call.callError && <span className="call-error">{call.callError}</span>}
     </div>
   );
