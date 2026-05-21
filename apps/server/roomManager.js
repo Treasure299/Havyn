@@ -54,10 +54,12 @@ export function getOrCreateRoom(roomId, { roomName, hostUserId, hostName } = {})
 }
 
 export function restoreRoom(snapshot = {}) {
+  const existed = rooms.has(snapshot.roomId);
   const room = getOrCreateRoom(snapshot.roomId, {
     roomName: snapshot.roomName,
     hostUserId: snapshot.hostUserId
   });
+  if (existed) return room;
   if (snapshot.hostUserId) room.hostUserId = snapshot.hostUserId;
   if (snapshot.roomName) room.roomName = snapshot.roomName;
   if (Object.values(PLAYBACK_MODES).includes(snapshot.playbackMode)) {
