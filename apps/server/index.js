@@ -101,11 +101,21 @@ io.on("connection", (socket) => {
   });
 
   socket.on("room-leave", ({ roomId, userId }) => {
+    const participant = listParticipants(roomId).find((item) => item.userId === userId);
+    if (participant?.online) {
+      socket.to(roomId).emit("chat-message", {
+        id: crypto.randomUUID(),
+        type: "system",
+        displayName: "Havyn",
+        message: `${participant.displayName} left the room`,
+        createdAt: new Date().toISOString()
+      });
+    }
     updateParticipant(roomId, userId, { online: false, socketId: null, callStatus: "idle" });
     leaveCall(roomId, userId);
-    socket.leave(roomId);
-    emitRoomState(roomId);
     socket.to(roomId).emit("user-left-call", { userId });
+    emitRoomState(roomId);
+    socket.leave(roomId);
   });
 
   socket.on("room-playback-mode", ({ roomId, userId, playbackMode }) => {

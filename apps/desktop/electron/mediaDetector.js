@@ -15,6 +15,8 @@
     readyState: video.readyState,
     width: video.videoWidth || video.clientWidth || 0,
     height: video.videoHeight || video.clientHeight || 0,
+    frameUrl: window.location.href,
+    pageUrl: window.location.href,
     url: window.location.href
   });
 

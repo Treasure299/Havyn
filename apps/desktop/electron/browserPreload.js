@@ -43,6 +43,12 @@ function findVideos() {
 
 function describeVideo(video, index) {
   video.dataset.havynMediaId = video.dataset.havynMediaId || `video-${index}`;
+  let pageUrl = window.location.href;
+  try {
+    pageUrl = window.top?.location?.href || pageUrl;
+  } catch {
+    pageUrl = document.referrer || pageUrl;
+  }
   return {
     id: video.dataset.havynMediaId,
     index,
@@ -60,7 +66,9 @@ function describeVideo(video, index) {
     width: video.videoWidth || video.clientWidth || 0,
     height: video.videoHeight || video.clientHeight || 0,
     src: video.currentSrc || video.src || "",
-    url: window.location.href
+    frameUrl: window.location.href,
+    pageUrl,
+    url: pageUrl
   };
 }
 

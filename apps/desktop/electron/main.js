@@ -237,8 +237,17 @@ async function scanTabMedia(tab = activeTab()) {
   if (!tab) return [];
   tab.view.webContents.send("browser:scan-media");
   const media = await tab.view.webContents.executeJavaScript("window.__havynScanMedia?.() || window.__havynMediaDetected || []", true).catch(() => []);
-  if (media?.length && tab.id === activeTabId) mainWindow?.webContents.send("browser:media-detected", media);
-  return media || [];
+  const normalizedMedia = normalizeDetectedMedia(tab, media);
+  if (normalizedMedia?.length && tab.id === activeTabId) mainWindow?.webContents.send("browser:media-detected", normalizedMedia);
+  return normalizedMedia || [];
+}
+
+function normalizeDetectedMedia(tab, media = []) {
+  return (media || []).map((item) => ({
+    ...item,
+    frameUrl: item.frameUrl || item.url,
+    url: tab?.url || item.pageUrl || item.url
+  }));
 }
 
 ipcMain.handle("browser:create", (_event, bounds) => {
@@ -413,14 +422,16 @@ ipcMain.handle("browser:apply-playback", async (_event, state) => {
 ipcMain.handle("browser:scan-media", async () => scanTabMedia());
 
 ipcMain.on("browser:media-detected-from-page", (_event, { tabId, media }) => {
-  if (tabId === activeTabId) mainWindow?.webContents.send("browser:media-detected", media || []);
+  const tab = tabs.get(tabId);
+  if (tabId === activeTabId) mainWindow?.webContents.send("browser:media-detected", normalizeDetectedMedia(tab, media));
 });
 
 ipcMain.on("browser:media-event-from-page", (_event, payload) => {
   if (payload?.tabId === activeTabId) {
+    const tab = tabs.get(payload.tabId);
     mainWindow?.webContents.send("browser:media-event", {
       eventName: payload.eventName,
-      media: payload.media,
+      media: normalizeDetectedMedia(tab, [payload.media])[0],
       controlledByHavyn: payload.controlledByHavyn
     });
   }

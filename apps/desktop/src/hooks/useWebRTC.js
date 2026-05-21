@@ -7,6 +7,33 @@ const rtcConfig = {
   ]
 };
 
+const mediaConstraints = {
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true
+  },
+  video: {
+    width: { ideal: 640, max: 960 },
+    height: { ideal: 360, max: 540 },
+    frameRate: { ideal: 15, max: 20 }
+  }
+};
+
+async function tuneSender(sender, kind) {
+  const parameters = sender.getParameters();
+  parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
+  if (kind === "video") {
+    parameters.encodings[0].maxBitrate = 320_000;
+    parameters.encodings[0].maxFramerate = 20;
+    parameters.degradationPreference = "maintain-framerate";
+  }
+  if (kind === "audio") {
+    parameters.encodings[0].maxBitrate = 40_000;
+  }
+  await sender.setParameters(parameters).catch(() => {});
+}
+
 export function useWebRTC({ socket, room, user }) {
   const [joined, setJoined] = useState(false);
   const [muted, setMuted] = useState(true);
@@ -26,8 +53,14 @@ export function useWebRTC({ socket, room, user }) {
   const createPeer = useCallback((peerUserId) => {
     if (peersRef.current.has(peerUserId)) return peersRef.current.get(peerUserId);
     const peer = new RTCPeerConnection(rtcConfig);
-    localStreamRef.current?.getAudioTracks().forEach((track) => peer.addTrack(track, localStreamRef.current));
-    localStreamRef.current?.getVideoTracks().forEach((track) => peer.addTrack(track, localStreamRef.current));
+    localStreamRef.current?.getAudioTracks().forEach((track) => {
+      const sender = peer.addTrack(track, localStreamRef.current);
+      tuneSender(sender, "audio");
+    });
+    localStreamRef.current?.getVideoTracks().forEach((track) => {
+      const sender = peer.addTrack(track, localStreamRef.current);
+      tuneSender(sender, "video");
+    });
 
     peer.onicecandidate = (event) => {
       if (event.candidate) {
@@ -54,7 +87,7 @@ export function useWebRTC({ socket, room, user }) {
 
   async function joinCall() {
     setCallError("");
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
     stream.getAudioTracks().forEach((track) => { track.enabled = true; });
     stream.getVideoTracks().forEach((track) => { track.enabled = true; });
     localStreamRef.current = stream;
