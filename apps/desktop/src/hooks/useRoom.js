@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "../lib/socketClient";
 import { supabase } from "../lib/supabaseClient";
 
@@ -9,6 +9,11 @@ export function useRoom(user) {
   const [messages, setMessages] = useState([]);
   const [permissionNotice, setPermissionNotice] = useState("");
   const [actionNotice, setActionNotice] = useState("");
+  const roomRef = useRef(null);
+
+  useEffect(() => {
+    roomRef.current = room;
+  }, [room]);
 
   function playTone(kind) {
     try {
@@ -56,6 +61,39 @@ export function useRoom(user) {
       socket.off("permission-denied", handleDenied);
     };
   }, [socket, userId]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    const resumeRoom = () => {
+      const currentRoom = roomRef.current;
+      if (!currentRoom?.roomId) return;
+      const participant = currentRoom.participants?.find((item) => item.userId === user.id);
+      socket.emit("room-resume", {
+        room: {
+          roomId: currentRoom.roomId,
+          roomName: currentRoom.roomName,
+          hostUserId: currentRoom.hostUserId,
+          playbackMode: currentRoom.playbackMode,
+          playbackState: currentRoom.playbackState
+        },
+        user: {
+          userId: user.id,
+          displayName: user.displayName,
+          role: participant?.role
+        }
+      });
+    };
+
+    socket.on("connect", resumeRoom);
+    socket.io.on("reconnect", resumeRoom);
+    const timer = window.setInterval(resumeRoom, 15000);
+    return () => {
+      socket.off("connect", resumeRoom);
+      socket.io.off("reconnect", resumeRoom);
+      window.clearInterval(timer);
+    };
+  }, [socket, user]);
 
   async function createRoom(name) {
     if (!user) return null;

@@ -183,6 +183,22 @@ function createBrowserTab(initialUrl = "about:blank") {
   wc.on("media-started-playing", () => scanTabMedia(tab));
   wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || errorCode === -3) return;
+    if (errorCode === -400) {
+      if (!tab.cacheMissRetried) {
+        tab.cacheMissRetried = true;
+        browserSession().clearCache().finally(() => {
+          if (!wc.isDestroyed()) wc.reloadIgnoringCache();
+        });
+      }
+      if (tab.id === activeTabId) {
+        mainWindow?.webContents.send("browser:load-state", {
+          type: "warning",
+          url: validatedURL,
+          message: "Refreshing player cache..."
+        });
+      }
+      return;
+    }
     if (tab.id === activeTabId) {
       mainWindow?.webContents.send("browser:load-state", {
         type: "error",
@@ -214,11 +230,13 @@ function createBrowserTab(initialUrl = "about:blank") {
     if (payload && tab.id === activeTabId) mainWindow?.webContents.send("browser:media-event", payload);
   });
   wc.on("did-navigate", (_event, url) => {
+    tab.cacheMissRetried = false;
     tab.url = url;
     if (tab.id === activeTabId) mainWindow?.webContents.send("browser:navigation", { url });
     emitTabs();
   });
   wc.on("did-navigate-in-page", (_event, url) => {
+    tab.cacheMissRetried = false;
     tab.url = url;
     if (tab.id === activeTabId) mainWindow?.webContents.send("browser:navigation", { url });
     emitTabs();
@@ -327,7 +345,7 @@ ipcMain.handle("browser:load-url", async (_event, url) => {
     });
   }
   await tab.view.webContents.loadURL(normalized).catch((error) => {
-    if (error?.code === "ERR_ABORTED" || /ERR_ABORTED|-3/.test(error?.message || "")) return;
+    if (error?.code === "ERR_ABORTED" || error?.code === "ERR_CACHE_MISS" || /ERR_ABORTED|-3|ERR_CACHE_MISS|-400/.test(error?.message || "")) return;
     mainWindow?.webContents.send("browser:load-state", {
       type: "warning",
       url: normalized,

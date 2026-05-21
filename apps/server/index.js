@@ -9,6 +9,7 @@ import {
   getParticipantBySocket,
   listParticipants,
   removeSocketParticipant,
+  restoreRoom,
   serializeRoom,
   setParticipantRole,
   setPlaybackMode,
@@ -106,6 +107,23 @@ io.on("connection", (socket) => {
       message: `${user.displayName} joined the room`,
       createdAt: new Date().toISOString()
     });
+    emitRoomState(room.roomId);
+  });
+
+  socket.on("room-resume", ({ room: snapshot, user }) => {
+    if (!snapshot?.roomId || !user?.userId) return;
+    const room = restoreRoom(snapshot);
+    socket.join(room.roomId);
+    const existing = listParticipants(room.roomId).find((participant) => participant.userId === user.userId);
+    addParticipant(room.roomId, {
+      ...user,
+      socketId: socket.id,
+      role: user.role || existing?.role || (room.hostUserId === user.userId ? "host" : "viewer")
+    });
+    socket.data.roomId = room.roomId;
+    socket.data.userId = user.userId;
+    socket.emit("room-state", serializeRoom(room.roomId));
+    socket.emit("playback-state-sync", getAuthoritativePlayback(room.roomId));
     emitRoomState(room.roomId);
   });
 
@@ -313,6 +331,7 @@ io.on("connection", (socket) => {
 
   function playbackPermissionMessage(roomId, controller = {}) {
     const room = serializeRoom(roomId);
+    if (!room) return "Room connection is refreshing. Try again in a moment.";
     if (room?.playbackMode === "host-and-cohosts") return "Playback is controlled by the host and cohosts.";
     if (room?.playbackMode === "everyone") {
       return `Playback is open to everyone, but this app window is not recognized in the room. Rejoin the room.`;

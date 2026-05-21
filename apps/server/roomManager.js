@@ -22,6 +22,14 @@ const defaultPlaybackState = () => ({
   controllerUserId: null
 });
 
+function normalizePlaybackState(state) {
+  return {
+    ...defaultPlaybackState(),
+    ...(state || {}),
+    updatedAt: Date.now()
+  };
+}
+
 export function getOrCreateRoom(roomId, { roomName, hostUserId, hostName } = {}) {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
@@ -41,6 +49,22 @@ export function getOrCreateRoom(roomId, { roomName, hostUserId, hostName } = {})
   if (roomName) room.roomName = roomName;
   if (hostName && hostUserId && !room.participants.has(hostUserId)) {
     addParticipant(roomId, { userId: hostUserId, displayName: hostName, role: ROOM_ROLES.HOST });
+  }
+  return room;
+}
+
+export function restoreRoom(snapshot = {}) {
+  const room = getOrCreateRoom(snapshot.roomId, {
+    roomName: snapshot.roomName,
+    hostUserId: snapshot.hostUserId
+  });
+  if (snapshot.hostUserId) room.hostUserId = snapshot.hostUserId;
+  if (snapshot.roomName) room.roomName = snapshot.roomName;
+  if (Object.values(PLAYBACK_MODES).includes(snapshot.playbackMode)) {
+    room.playbackMode = snapshot.playbackMode;
+  }
+  if (snapshot.playbackState) {
+    room.playbackState = normalizePlaybackState(snapshot.playbackState);
   }
   return room;
 }
