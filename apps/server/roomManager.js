@@ -92,6 +92,10 @@ export function getParticipant(roomId, userId) {
   return rooms.get(roomId)?.participants.get(userId);
 }
 
+export function getParticipantBySocket(roomId, socketId) {
+  return listParticipants(roomId).find((participant) => participant.socketId === socketId);
+}
+
 export function listParticipants(roomId) {
   return Array.from(rooms.get(roomId)?.participants.values() || []);
 }

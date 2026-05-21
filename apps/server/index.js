@@ -6,6 +6,7 @@ import { Server } from "socket.io";
 import {
   addParticipant,
   getOrCreateRoom,
+  getParticipantBySocket,
   listParticipants,
   removeSocketParticipant,
   serializeRoom,
@@ -48,7 +49,11 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "havyn-server" });
+  res.json({
+    ok: true,
+    service: "havyn-server",
+    revision: process.env.RENDER_GIT_COMMIT || "local"
+  });
 });
 
 const httpServer = createServer(app);
@@ -74,6 +79,8 @@ io.on("connection", (socket) => {
       isCreating: true,
       role: "host"
     });
+    socket.data.roomId = roomId;
+    socket.data.userId = user.userId;
     io.to(roomId).emit("chat-message", {
       id: crypto.randomUUID(),
       type: "system",
@@ -88,6 +95,8 @@ io.on("connection", (socket) => {
     const room = getOrCreateRoom(roomId);
     socket.join(roomId);
     addParticipant(roomId, { ...user, socketId: socket.id });
+    socket.data.roomId = roomId;
+    socket.data.userId = user.userId;
     socket.emit("room-state", serializeRoom(roomId));
     socket.emit("playback-state-sync", getAuthoritativePlayback(roomId));
     socket.to(roomId).emit("chat-message", {
@@ -151,11 +160,12 @@ io.on("connection", (socket) => {
   });
 
   socket.on("media-selected", ({ roomId, userId, media }) => {
-    const playbackState = selectMedia(roomId, userId, media);
-    if (!playbackState) return socket.emit("permission-denied", { reason: playbackPermissionMessage(roomId) });
-    io.to(roomId).emit("media-selected", { media, playbackState });
-    io.to(roomId).emit("playback-state-sync", playbackState);
-    emitRoomState(roomId);
+    const controller = resolveController(roomId, userId);
+    const playbackState = selectMedia(controller.roomId, controller.userId, media);
+    if (!playbackState) return socket.emit("permission-denied", { reason: playbackPermissionMessage(controller.roomId, controller) });
+    io.to(controller.roomId).emit("media-selected", { media, playbackState });
+    io.to(controller.roomId).emit("playback-state-sync", playbackState);
+    emitRoomState(controller.roomId);
   });
 
   socket.on("playback-play", (payload) => handlePlayback("play", payload));
@@ -238,10 +248,11 @@ io.on("connection", (socket) => {
   });
 
   function handlePlayback(action, { roomId, userId, currentTime, playbackRate }) {
-    const playbackState = updatePlayback(roomId, userId, action, { currentTime, playbackRate });
+    const controller = resolveController(roomId, userId);
+    const playbackState = updatePlayback(controller.roomId, controller.userId, action, { currentTime, playbackRate });
     if (!playbackState) {
-      socket.emit("permission-denied", { reason: playbackPermissionMessage(roomId) });
-      socket.emit("playback-state-sync", getAuthoritativePlayback(roomId));
+      socket.emit("permission-denied", { reason: playbackPermissionMessage(controller.roomId, controller) });
+      socket.emit("playback-state-sync", getAuthoritativePlayback(controller.roomId));
       return;
     }
     const eventName = {
@@ -251,14 +262,26 @@ io.on("connection", (socket) => {
       "rate-change": "playback-rate-change",
       ended: "media-ended"
     }[action];
-    io.to(roomId).emit("room-action", {
+    io.to(controller.roomId).emit("room-action", {
       id: crypto.randomUUID(),
       type: "playback",
-      message: `${displayNameFor(roomId, userId)} ${actionLabel(action)}`,
+      message: `${displayNameFor(controller.roomId, controller.userId)} ${actionLabel(action)}`,
       createdAt: new Date().toISOString()
     });
-    io.to(roomId).emit(eventName, playbackState);
-    io.to(roomId).emit("playback-state-sync", playbackState);
+    io.to(controller.roomId).emit(eventName, playbackState);
+    io.to(controller.roomId).emit("playback-state-sync", playbackState);
+  }
+
+  function resolveController(roomId, payloadUserId) {
+    const fallbackRoomId = roomId || socket.data.roomId;
+    const socketParticipant = getParticipantBySocket(fallbackRoomId, socket.id);
+    return {
+      roomId: fallbackRoomId,
+      userId: socketParticipant?.userId || payloadUserId || socket.data.userId,
+      payloadUserId,
+      socketUserId: socketParticipant?.userId || socket.data.userId,
+      socketId: socket.id
+    };
   }
 
   function relayToUser(roomId, toUserId, event, payload) {
@@ -288,10 +311,12 @@ io.on("connection", (socket) => {
     }[playbackMode] || playbackMode;
   }
 
-  function playbackPermissionMessage(roomId) {
+  function playbackPermissionMessage(roomId, controller = {}) {
     const room = serializeRoom(roomId);
     if (room?.playbackMode === "host-and-cohosts") return "Playback is controlled by the host and cohosts.";
-    if (room?.playbackMode === "everyone") return "Playback is open to everyone. Rejoin the room if controls still feel locked.";
+    if (room?.playbackMode === "everyone") {
+      return `Playback is open to everyone, but this app window is not recognized in the room. Rejoin the room.`;
+    }
     return "Playback is controlled by the host.";
   }
 });
