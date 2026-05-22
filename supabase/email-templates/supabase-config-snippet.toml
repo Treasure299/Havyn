@@ -1,0 +1,6 @@
+# Add this to supabase/config.toml only if you are using `supabase config push`.
+# Do not push a partial config.toml by itself; Supabase expects the whole project config.
+
+[auth.email.template.confirmation]
+subject = "Verify your Havyn account"
+content_path = "./email-templates/confirm-signup.html"

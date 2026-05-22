@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Verify Your Email | Havyn</title>
+  </head>
+  <body style="margin:0;padding:0;background:#0B0B0F;color:#F7F7FA;font-family:Manrope,Inter,Segoe UI,Arial,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;min-height:100%;background:#0B0B0F;">
+      <tr>
+        <td align="center" style="padding:42px 18px;background:radial-gradient(circle at 22% 0%, rgba(77,163,255,0.20), transparent 30%),radial-gradient(circle at 82% 12%, rgba(255,77,90,0.18), transparent 28%),linear-gradient(180deg,#111118 0%,#0B0B0F 58%,#050507 100%);">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;max-width:560px;border-collapse:separate;border-spacing:0;">
+            <tr>
+              <td style="padding:0 0 16px 0;">
+                <table role="presentation" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td align="center" valign="middle" style="width:42px;height:42px;border-radius:999px;background:#FFFFFF;color:#E93F4C;font-size:22px;font-weight:900;line-height:42px;text-align:center;">
+                      H
+                    </td>
+                    <td valign="middle" style="padding-left:12px;color:#FFFFFF;font-size:26px;font-weight:800;letter-spacing:-0.6px;">
+                      Havyn
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:42px;border:1px solid rgba(255,255,255,0.10);border-radius:18px;background:#141419;background-image:linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.035));box-shadow:0 28px 90px rgba(0,0,0,0.50);">
+                <p style="margin:0 0 14px 0;color:#4DA3FF;font-size:12px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;">
+                  Email Verification
+                </p>
+                <h1 style="margin:0;color:#FFFFFF;font-size:38px;line-height:1.05;font-weight:800;letter-spacing:-1.8px;">
+                  Confirm your email to enter Havyn.
+                </h1>
+                <p style="margin:18px 0 30px 0;color:#A9AAB5;font-size:16px;line-height:1.65;">
+                  One last step before your private watch rooms, synced playback, chat, and calls are ready.
+                </p>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td align="center" style="border-radius:12px;background:#FF4D5A;background-image:linear-gradient(135deg,#FF4D5A,#E93F4C 52%,#8B5CF6 140%);">
+                      <a href="{{ .ConfirmationURL }}" style="display:block;padding:17px 24px;color:#FFFFFF;font-size:16px;font-weight:800;text-decoration:none;border-radius:12px;">
+                        Verify email
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:24px 0 0 0;color:rgba(247,247,250,0.66);font-size:13px;line-height:1.6;">
+                  This link is unique to your account and expires automatically. If you did not create a Havyn account, you can ignore this email.
+                </p>
+                <div style="height:1px;margin:28px 0;background:rgba(255,255,255,0.10);line-height:1px;">&nbsp;</div>
+                <p style="margin:0;color:rgba(247,247,250,0.56);font-size:12px;line-height:1.65;word-break:break-word;">
+                  If the button does not work, paste this link into your browser:<br>
+                  <a href="{{ .ConfirmationURL }}" style="color:#C9DFFF;text-decoration:underline;">{{ .ConfirmationURL }}</a>
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:22px 12px 0 12px;color:rgba(247,247,250,0.42);font-size:12px;line-height:1.5;">
+                Havyn
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
