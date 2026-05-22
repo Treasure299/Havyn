@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
+const authRedirectUrl = import.meta.env.VITE_AUTH_REDIRECT_URL || "https://havyn-verify.onrender.com";
+
 export function useAuth() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -60,7 +62,7 @@ export function useAuth() {
       password,
       options: {
         data: { display_name: displayName },
-        emailRedirectTo: window.location.origin
+        emailRedirectTo: authRedirectUrl
       }
     });
     if (error) throw error;
