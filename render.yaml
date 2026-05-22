@@ -12,8 +12,3 @@ services:
         value: production
       - key: CLIENT_ORIGIN
         value: "*"
-  - type: web
-    name: havyn-verify
-    runtime: static
-    buildCommand: echo "Static verification page"
-    staticPublishPath: apps/verify

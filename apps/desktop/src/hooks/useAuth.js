@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
-const authRedirectUrl = import.meta.env.VITE_AUTH_REDIRECT_URL || "https://havyn-verify.onrender.com";
+const authRedirectUrl = import.meta.env.VITE_AUTH_REDIRECT_URL || "https://havyn-socket-server.onrender.com/verify";
 
 export function useAuth() {
   const [session, setSession] = useState(null);

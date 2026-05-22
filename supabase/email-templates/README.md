@@ -14,15 +14,15 @@ The template uses Supabase's required `{{ .ConfirmationURL }}` variable and does
 
 ## Free Redirect Setup
 
-Use Render's free static site for the confirmation result page:
+Use the existing free Render server for the confirmation result page:
 
 ```text
-https://havyn-verify.onrender.com
+https://havyn-socket-server.onrender.com/verify
 ```
 
 In Supabase Auth URL settings:
 
-- Site URL: `https://havyn-verify.onrender.com`
-- Redirect URL: `https://havyn-verify.onrender.com`
+- Site URL: `https://havyn-socket-server.onrender.com/verify`
+- Redirect URL: `https://havyn-socket-server.onrender.com/verify`
 
 The desktop app also sends `emailRedirectTo` to this same URL through `VITE_AUTH_REDIRECT_URL`.

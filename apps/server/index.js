@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import {
   addParticipant,
@@ -32,6 +34,7 @@ import {
 const PORT = process.env.PORT || 4000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
 const allowedOrigins = CLIENT_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
+const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), "public");
 
 function allowOrigin(origin, callback) {
   if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
@@ -44,6 +47,7 @@ function allowOrigin(origin, callback) {
 const app = express();
 app.use(cors({ origin: allowOrigin }));
 app.use(express.json());
+app.use(express.static(publicDir));
 
 app.get("/", (_req, res) => {
   res.json({ ok: true, service: "havyn-server", transport: "socket.io" });
@@ -55,6 +59,10 @@ app.get("/health", (_req, res) => {
     service: "havyn-server",
     revision: process.env.RENDER_GIT_COMMIT || "local"
   });
+});
+
+app.get("/verify", (_req, res) => {
+  res.sendFile(resolve(publicDir, "verify.html"));
 });
 
 const httpServer = createServer(app);
