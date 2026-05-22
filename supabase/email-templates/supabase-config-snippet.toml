@@ -2,5 +2,5 @@
 # Do not push a partial config.toml by itself; Supabase expects the whole project config.
 
 [auth.email.template.confirmation]
-subject = "Verify your Havyn account"
+subject = "Havyn access"
 content_path = "./email-templates/confirm-signup.html"
