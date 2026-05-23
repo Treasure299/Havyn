@@ -61,6 +61,9 @@ export function useWebRTC({ socket, room, user }) {
   const peersRef = useRef(new Map());
   const mutedRef = useRef(muted);
   const cameraOffRef = useRef(cameraOff);
+  const joinedRef = useRef(joined);
+  const reconnectTimersRef = useRef(new Map());
+  const createPeerRef = useRef(null);
 
   useEffect(() => {
     mutedRef.current = muted;
@@ -69,6 +72,10 @@ export function useWebRTC({ socket, room, user }) {
   useEffect(() => {
     cameraOffRef.current = cameraOff;
   }, [cameraOff]);
+
+  useEffect(() => {
+    joinedRef.current = joined;
+  }, [joined]);
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -81,10 +88,40 @@ export function useWebRTC({ socket, room, user }) {
   }, []);
 
   const closePeer = useCallback((peerUserId) => {
-    peersRef.current.get(peerUserId)?.close();
+    const timer = reconnectTimersRef.current.get(peerUserId);
+    if (timer) window.clearTimeout(timer);
+    reconnectTimersRef.current.delete(peerUserId);
+    const peer = peersRef.current.get(peerUserId);
+    if (peer) {
+      peer.onconnectionstatechange = null;
+      peer.oniceconnectionstatechange = null;
+      peer.close();
+    }
     peersRef.current.delete(peerUserId);
     setStreams((items) => items.filter((item) => item.userId !== peerUserId));
   }, []);
+
+  const sendOffer = useCallback(async (peerUserId) => {
+    const peer = peersRef.current.get(peerUserId);
+    if (!peer || peer.signalingState !== "stable") return;
+    const offer = await peer.createOffer({ iceRestart: true });
+    await peer.setLocalDescription(offer);
+    socket.emit("webrtc-offer", { roomId: room.roomId, fromUserId: user.id, toUserId: peerUserId, offer });
+  }, [room?.roomId, socket, user.id]);
+
+  const schedulePeerRepair = useCallback((peerUserId) => {
+    if (!joinedRef.current || reconnectTimersRef.current.has(peerUserId)) return;
+    const timer = window.setTimeout(async () => {
+      reconnectTimersRef.current.delete(peerUserId);
+      if (!joinedRef.current || !localStreamRef.current) return;
+      closePeer(peerUserId);
+      createPeerRef.current?.(peerUserId);
+      if (String(user.id) > String(peerUserId)) {
+        await sendOffer(peerUserId);
+      }
+    }, 1200);
+    reconnectTimersRef.current.set(peerUserId, timer);
+  }, [closePeer, sendOffer, user.id]);
 
   const createPeer = useCallback((peerUserId) => {
     if (peersRef.current.has(peerUserId)) return peersRef.current.get(peerUserId);
@@ -117,9 +154,19 @@ export function useWebRTC({ socket, room, user }) {
       });
     };
 
+    const handlePeerState = () => {
+      if (["failed", "disconnected", "closed"].includes(peer.connectionState) || ["failed", "disconnected"].includes(peer.iceConnectionState)) {
+        schedulePeerRepair(peerUserId);
+      }
+    };
+    peer.onconnectionstatechange = handlePeerState;
+    peer.oniceconnectionstatechange = handlePeerState;
+
     peersRef.current.set(peerUserId, peer);
     return peer;
-  }, [room?.roomId, socket, user.id]);
+  }, [room?.roomId, schedulePeerRepair, socket, user.id]);
+
+  createPeerRef.current = createPeer;
 
   async function replaceLocalTrack(kind, deviceId) {
     if (!joined || !localStreamRef.current) return;
@@ -180,9 +227,15 @@ export function useWebRTC({ socket, room, user }) {
 
   function leaveCall() {
     socket.emit("call-leave", { roomId: room.roomId, userId: user.id });
+    reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    reconnectTimersRef.current.clear();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
-    peersRef.current.forEach((peer) => peer.close());
+    peersRef.current.forEach((peer) => {
+      peer.onconnectionstatechange = null;
+      peer.oniceconnectionstatechange = null;
+      peer.close();
+    });
     peersRef.current.clear();
     setStreams([]);
     setLocalPreviewStream(null);
@@ -218,16 +271,17 @@ export function useWebRTC({ socket, room, user }) {
   useEffect(() => {
     const handleCallUsers = async (users) => {
       for (const peerUser of users) {
-        const peer = createPeer(peerUser.userId);
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        socket.emit("webrtc-offer", { roomId: room.roomId, fromUserId: user.id, toUserId: peerUser.userId, offer });
+        createPeer(peerUser.userId);
+        await sendOffer(peerUser.userId);
       }
     };
 
     const handleOffer = async ({ fromUserId, offer }) => {
       if (!joined) return;
       const peer = createPeer(fromUserId);
+      if (peer.signalingState !== "stable") {
+        await peer.setLocalDescription({ type: "rollback" }).catch(() => {});
+      }
       await peer.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
@@ -249,6 +303,15 @@ export function useWebRTC({ socket, room, user }) {
       setCallError(message);
       leaveCall();
     };
+    const handleReconnect = () => {
+      if (!joinedRef.current || !localStreamRef.current) return;
+      socket.emit("call-join", {
+        roomId: room.roomId,
+        user: { userId: user.id, displayName: user.displayName },
+        muted: mutedRef.current,
+        cameraOff: cameraOffRef.current
+      });
+    };
 
     socket.on("call-users", handleCallUsers);
     socket.on("webrtc-offer", handleOffer);
@@ -256,6 +319,7 @@ export function useWebRTC({ socket, room, user }) {
     socket.on("webrtc-ice-candidate", handleIce);
     socket.on("user-left-call", handleUserLeft);
     socket.on("call-full", handleCallFull);
+    socket.io.on("reconnect", handleReconnect);
 
     return () => {
       socket.off("call-users", handleCallUsers);
@@ -264,12 +328,18 @@ export function useWebRTC({ socket, room, user }) {
       socket.off("webrtc-ice-candidate", handleIce);
       socket.off("user-left-call", handleUserLeft);
       socket.off("call-full", handleCallFull);
+      socket.io.off("reconnect", handleReconnect);
     };
-  }, [closePeer, createPeer, joined, room?.roomId, socket, user.id]);
+  }, [closePeer, createPeer, joined, room?.roomId, sendOffer, socket, user.displayName, user.id]);
 
   useEffect(() => () => {
+    reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
-    peersRef.current.forEach((peer) => peer.close());
+    peersRef.current.forEach((peer) => {
+      peer.onconnectionstatechange = null;
+      peer.oniceconnectionstatechange = null;
+      peer.close();
+    });
   }, []);
 
   useEffect(() => {

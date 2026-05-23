@@ -10,6 +10,7 @@ export function useRoom(user) {
   const [permissionNotice, setPermissionNotice] = useState("");
   const [actionNotice, setActionNotice] = useState("");
   const roomRef = useRef(null);
+  const leavingRoomIdRef = useRef(null);
 
   useEffect(() => {
     roomRef.current = room;
@@ -35,7 +36,10 @@ export function useRoom(user) {
   }
 
   useEffect(() => {
-    const handleRoomState = (nextRoom) => setRoom(nextRoom);
+    const handleRoomState = (nextRoom) => {
+      if (nextRoom?.roomId && leavingRoomIdRef.current === nextRoom.roomId) return;
+      setRoom(nextRoom);
+    };
     const handleMessage = (message) => {
       setMessages((items) => [...items.slice(-120), message]);
       if (/joined the room|created the room/i.test(message.message || "")) playTone("join");
@@ -68,6 +72,7 @@ export function useRoom(user) {
     const resumeRoom = () => {
       const currentRoom = roomRef.current;
       if (!currentRoom?.roomId) return;
+      if (leavingRoomIdRef.current === currentRoom.roomId) return;
       const participant = currentRoom.participants?.find((item) => item.userId === user.id);
       socket.emit("room-resume", {
         room: {
@@ -87,16 +92,15 @@ export function useRoom(user) {
 
     socket.on("connect", resumeRoom);
     socket.io.on("reconnect", resumeRoom);
-    const timer = window.setInterval(resumeRoom, 15000);
     return () => {
       socket.off("connect", resumeRoom);
       socket.io.off("reconnect", resumeRoom);
-      window.clearInterval(timer);
     };
   }, [socket, user]);
 
   async function createRoom(name) {
     if (!user) return null;
+    leavingRoomIdRef.current = null;
     const roomId = crypto.randomUUID().slice(0, 8).toUpperCase();
     const roomName = name || "Friday Watch";
     socket.emit("room-create", {
@@ -123,6 +127,7 @@ export function useRoom(user) {
 
   async function joinRoom(roomId) {
     if (!user) return;
+    leavingRoomIdRef.current = null;
     socket.emit("room-join", {
       roomId: roomId.trim().toUpperCase(),
       user: { userId: user.id, displayName: user.displayName }
@@ -141,6 +146,8 @@ export function useRoom(user) {
 
   function leaveRoom() {
     if (!room || !user) return;
+    leavingRoomIdRef.current = room.roomId;
+    roomRef.current = null;
     socket.emit("room-leave", { roomId: room.roomId, userId: user.id });
     setRoom(null);
     setMessages([]);

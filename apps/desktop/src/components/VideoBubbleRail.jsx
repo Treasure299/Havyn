@@ -5,6 +5,7 @@ function VideoBubble({ label, stream, muted, cameraOff, remote, className = "" }
   const ref = useRef(null);
   const [volume, setVolume] = useState(0.72);
   const isAudioMuted = muted || !stream?.getAudioTracks?.().some((track) => track.enabled && track.readyState === "live");
+  const hasLiveVideo = stream?.getVideoTracks?.().some((track) => track.enabled && track.readyState === "live");
 
   useEffect(() => {
     if (!ref.current) return;
@@ -20,7 +21,7 @@ function VideoBubble({ label, stream, muted, cameraOff, remote, className = "" }
     <div className={`video-bubble ${className}`}>
       <video ref={ref} autoPlay playsInline muted={!remote || muted} />
       <span>{label}</span>
-      {cameraOff && <em>Camera off</em>}
+      {cameraOff && !hasLiveVideo && <em>Camera off</em>}
       {remote && (
         <div className="volume-hover">
           <div>

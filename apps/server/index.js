@@ -203,6 +203,7 @@ io.on("connection", (socket) => {
   socket.on("playback-drift-correction", ({ roomId, userId, currentTime }) => {
     const state = getAuthoritativePlayback(roomId);
     if (!state) return;
+    if (canControlPlayback(roomId, userId)) return;
     const drift = Math.abs(Number(currentTime || 0) - state.currentTime);
     if (drift > 1.5) {
       socket.emit("playback-state-sync", { ...state, reason: "drift-correction", correctedUserId: userId });
