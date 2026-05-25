@@ -26,6 +26,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const [callLayout, setCallLayout] = useState("grid");
   const [focusPrimary, setFocusPrimary] = useState("remote");
   const [copyNote, setCopyNote] = useState("");
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(() => (
     localStorage.getItem("havyn:guide:watch:armed") === "true" ||
     localStorage.getItem("havyn:guide:watch:v1") !== "done"
@@ -125,9 +126,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, [callLayout, canUseFocusLayout]);
 
   useEffect(() => {
-    media.browser?.setVisible?.(!guideOpen);
+    media.browser?.setVisible?.(!(guideOpen || devicesOpen));
     return () => media.browser?.setVisible?.(true);
-  }, [guideOpen, media.browser]);
+  }, [devicesOpen, guideOpen, media.browser]);
 
   useEffect(() => {
     const handleSelected = ({ media: selected }) => {
@@ -292,7 +293,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
                   <button type="button" onClick={() => setFocusPrimary((value) => value === "remote" ? "local" : "remote")}>Swap</button>
                 )}
               </div>
-              <CallControls call={call} />
+              <CallControls call={call} onDevicesOpenChange={setDevicesOpen} />
             </div>
             <VideoBubbleRail call={call} participants={room.participants} layout={callLayout} focusPrimary={focusPrimary} />
           </section>

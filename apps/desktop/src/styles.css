@@ -1760,20 +1760,38 @@ label {
 }
 
 .device-popover {
-  position: absolute;
-  z-index: 12;
-  top: calc(100% + 8px);
-  right: 0;
-  width: min(330px, calc(100vw - 40px));
+  position: fixed;
+  z-index: 2147482500;
+  top: 148px;
+  right: 18px;
+  width: min(420px, calc(100vw - 40px));
   padding: 12px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   border-radius: 10px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.42);
+  background:
+    radial-gradient(circle at 90% 0%, rgba(77,169,255,0.16), transparent 36%),
+    rgba(13,13,17,0.98);
+  box-shadow: 0 28px 80px rgba(0,0,0,0.52);
+}
+
+.device-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .device-popover strong {
   font-size: 13px;
+}
+
+.device-popover-head .icon-button {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .device-popover label {

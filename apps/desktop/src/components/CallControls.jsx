@@ -1,10 +1,23 @@
 import { Mic, MicOff, Phone, PhoneOff, Settings2, Video, VideoOff } from "lucide-react";
 import { useState } from "react";
 
-export default function CallControls({ call }) {
+export default function CallControls({ call, onDevicesOpenChange }) {
   const [devicesOpen, setDevicesOpen] = useState(false);
   const audioInputs = call.devices?.audioInputs || [];
   const videoInputs = call.devices?.videoInputs || [];
+
+  function toggleDevices() {
+    setDevicesOpen((value) => {
+      const next = !value;
+      onDevicesOpenChange?.(next);
+      return next;
+    });
+  }
+
+  function closeDevices() {
+    setDevicesOpen(false);
+    onDevicesOpenChange?.(false);
+  }
 
   return (
     <div className="call-control-stack">
@@ -15,7 +28,7 @@ export default function CallControls({ call }) {
           <>
             <button
               className={`icon-button ${devicesOpen ? "is-active" : ""}`}
-              onClick={() => setDevicesOpen((value) => !value)}
+              onClick={toggleDevices}
               title="Call devices"
             >
               <Settings2 size={17} />
@@ -32,7 +45,10 @@ export default function CallControls({ call }) {
       </div>
       {devicesOpen && (
       <div className="device-popover glass">
-        <strong>Call devices</strong>
+        <div className="device-popover-head">
+          <strong>Call devices</strong>
+          <button className="icon-button" type="button" title="Close devices" onClick={closeDevices}>×</button>
+        </div>
         <label>
           <span><Mic size={12} /> Microphone</span>
           <select
