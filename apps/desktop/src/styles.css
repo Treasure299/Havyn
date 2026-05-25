@@ -64,11 +64,26 @@ button:disabled, input:disabled, select:disabled {
 input, select {
   width: 100%;
   color: var(--text);
-  background: rgba(255,255,255,0.07);
+  color-scheme: dark;
+  background: #1b1b23;
   border: 1px solid var(--line);
   border-radius: 8px;
   outline: none;
   padding: 12px 13px;
+}
+
+select {
+  appearance: none;
+  background:
+    linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.82) 50%) calc(100% - 18px) 50% / 6px 6px no-repeat,
+    linear-gradient(135deg, rgba(255,255,255,0.82) 50%, transparent 50%) calc(100% - 13px) 50% / 6px 6px no-repeat,
+    #1b1b23;
+  padding-right: 34px;
+}
+
+select option {
+  color: #f5f5f5;
+  background: #17171d;
 }
 
 input:focus, select:focus {
@@ -366,7 +381,7 @@ label {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(430px, 1fr) repeat(2, minmax(300px, 0.72fr));
+  grid-template-columns: minmax(430px, 1fr) minmax(340px, 0.78fr);
   grid-auto-rows: minmax(180px, auto);
   gap: 14px;
   padding: 34px 48px;
@@ -416,12 +431,8 @@ label {
 }
 
 .public-rooms-panel {
-  grid-column: span 2;
+  grid-column: 2;
   min-height: 240px;
-}
-
-.invite-panel {
-  min-height: 180px;
 }
 
 .panel-title-row {
@@ -496,6 +507,146 @@ label {
   background: rgba(48,182,69,0.1);
   padding: 7px 11px;
   font-size: 12px;
+}
+
+.invite-toggle {
+  position: relative;
+}
+
+.invite-toggle.has-invites {
+  color: #fff;
+  border-color: rgba(77,169,255,0.36);
+  background: rgba(40,132,231,0.14);
+}
+
+.invite-toggle strong {
+  min-width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+}
+
+.invite-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  pointer-events: none;
+}
+
+.invite-drawer.is-open {
+  pointer-events: auto;
+}
+
+.drawer-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(0,0,0,0);
+  opacity: 0;
+}
+
+.invite-drawer.is-open .drawer-scrim {
+  background: rgba(0,0,0,0.48);
+  opacity: 1;
+}
+
+.drawer-panel {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  bottom: 18px;
+  width: min(390px, calc(100vw - 36px));
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 18px;
+  border-radius: 12px;
+  padding: 20px;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(77,169,255,0.18), transparent 34%),
+    rgba(14,14,19,0.92);
+  transform: translateX(calc(100% + 28px));
+  transition: transform 220ms ease;
+}
+
+.invite-drawer.is-open .drawer-panel {
+  transform: translateX(0);
+}
+
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.drawer-head h2 {
+  margin: 4px 0 0;
+}
+
+.invite-empty-or-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.invite-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.055);
+  padding: 14px;
+}
+
+.invite-card strong,
+.invite-card span,
+.invite-card small {
+  display: block;
+}
+
+.invite-card span,
+.invite-card small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.invite-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.invite-empty {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  border: 1px dashed rgba(255,255,255,0.12);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.035);
+  color: var(--muted);
+  text-align: center;
+  padding: 28px;
+}
+
+.invite-empty strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.invite-empty span {
+  max-width: 240px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .join-form {
