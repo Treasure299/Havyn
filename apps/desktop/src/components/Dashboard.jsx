@@ -79,6 +79,8 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   function openGuide() {
     setProfileOpen(false);
     setInvitesOpen(false);
+    localStorage.removeItem("havyn:guide:watch:v1");
+    localStorage.setItem("havyn:guide:watch:armed", "true");
     setTutorialOpen(false);
     window.requestAnimationFrame(() => setTutorialOpen(true));
   }

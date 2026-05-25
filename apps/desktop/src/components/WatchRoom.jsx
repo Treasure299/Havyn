@@ -25,7 +25,10 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
   const [callLayout, setCallLayout] = useState("grid");
   const [focusPrimary, setFocusPrimary] = useState("remote");
   const [copyNote, setCopyNote] = useState("");
-  const [guideOpen, setGuideOpen] = useState(() => localStorage.getItem("havyn:guide:watch:v1") !== "done");
+  const [guideOpen, setGuideOpen] = useState(() => (
+    localStorage.getItem("havyn:guide:watch:armed") === "true" ||
+    localStorage.getItem("havyn:guide:watch:v1") !== "done"
+  ));
   const callTileCount = (call.localStream ? 1 : 0) + call.streams.length;
   const canUseFocusLayout = call.joined && callTileCount === 2;
 
@@ -303,6 +306,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
         open={guideOpen}
         onClose={() => {
           localStorage.setItem("havyn:guide:watch:v1", "done");
+          localStorage.removeItem("havyn:guide:watch:armed");
           setGuideOpen(false);
         }}
       />
