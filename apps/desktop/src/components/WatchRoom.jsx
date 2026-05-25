@@ -157,7 +157,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
     },
     {
       targetClass: "guide-source-target",
-      position: "bottom-left",
+      position: "upper-left",
       title: "Sync source",
       body: "When Havyn detects a playable source, the host can sync it to the room. New participants will be brought to the active source automatically."
     },
@@ -169,13 +169,13 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
     },
     {
       targetClass: "guide-call-target",
-      position: "top-right",
+      position: "left-center",
       title: "Call",
       body: "Join optional voice/video here. You can resize this area and choose grid or focus layout for two-person calls."
     },
     {
       targetClass: "guide-chat-target",
-      position: "top-right",
+      position: "left-center",
       title: "Chat and people",
       body: "Chat stays beside the movie. The People drawer shows who is in the room, who is host, and who is ready."
     }

@@ -970,6 +970,17 @@ label {
   bottom: 28px;
 }
 
+.guide-card-upper-left {
+  left: 28px;
+  top: 96px;
+}
+
+.guide-card-left-center {
+  left: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .guide-card-head {
   display: flex;
   align-items: center;
