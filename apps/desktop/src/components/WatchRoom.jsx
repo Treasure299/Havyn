@@ -9,11 +9,12 @@ import IntegratedBrowserPanel from "./IntegratedBrowserPanel";
 import InteractiveGuide from "./InteractiveGuide";
 import Logo from "./Logo";
 import MediaDetectionPanel from "./MediaDetectionPanel";
+import NotificationBell from "./NotificationBell";
 import ParticipantsPanel from "./ParticipantsPanel";
 import PlaybackControls from "./PlaybackControls";
 import VideoBubbleRail from "./VideoBubbleRail";
 
-export default function WatchRoom({ user, roomState, onSignOut }) {
+export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const { room, socket } = roomState;
   const call = useWebRTC({ socket, room, user });
   const playbackRef = useRef(null);
@@ -199,6 +200,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
         </div>
         <div className="header-actions">
           <button className="icon-button" onClick={() => setGuideOpen(true)} title="Room guide"><HelpCircle size={18} /></button>
+          {social && <NotificationBell user={user} social={social} onJoinRoom={roomState.joinRoom} />}
           <select className="mode-select" value={room.playbackMode} onChange={(event) => roomState.setPlaybackMode(event.target.value)}>
             <option value="host-only">host-only</option>
             <option value="host-and-cohosts">host-and-cohosts</option>
@@ -212,6 +214,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
       </header>
 
       {roomState.permissionNotice && <div className="toast">{roomState.permissionNotice}</div>}
+      {social?.socialNote && <div className="toast social-toast">{social.socialNote}</div>}
       {roomState.actionNotice && <div className="action-toast">{roomState.actionNotice}</div>}
 
       <section

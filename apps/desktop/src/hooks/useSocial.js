@@ -234,6 +234,53 @@ export function useSocial(user, room) {
   }, [refreshSocial]);
 
   useEffect(() => {
+    if (!supabase || !userId) return undefined;
+
+    const showIncomingNotice = (message) => {
+      setSocialNote(message);
+      window.setTimeout(() => setSocialNote(""), 2200);
+    };
+
+    const channel = supabase
+      .channel(`havyn-social-notifications:${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "room_invites", filter: `invitee_user_id=eq.${userId}` },
+        (payload) => {
+          loadInvites();
+          if (payload.eventType === "INSERT" && payload.new?.status === "pending") {
+            showIncomingNotice("New room invite");
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friend_requests", filter: `addressee_user_id=eq.${userId}` },
+        (payload) => {
+          loadFriendRequests();
+          if (payload.eventType === "INSERT" && payload.new?.status === "pending") {
+            showIncomingNotice("New friend request");
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friendships", filter: `user_id=eq.${userId}` },
+        loadFriends
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "user_presence" },
+        loadFriends
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadFriendRequests, loadFriends, loadInvites, userId]);
+
+  useEffect(() => {
     if (!supabase || !roomId || !userId) return;
     const others = (room.participants || []).filter((participant) => participant.userId !== userId);
     if (!others.length) return;

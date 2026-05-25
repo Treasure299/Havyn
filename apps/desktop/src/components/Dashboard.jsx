@@ -1,4 +1,4 @@
-import { Bell, Check, Clock3, Globe2, HelpCircle, LogOut, Plus, Save, Send, Ticket, UserPlus, Users, X } from "lucide-react";
+import { Check, Clock3, Globe2, HelpCircle, LogOut, Plus, Save, Send, Ticket, UserPlus, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import BackgroundVideo from "./BackgroundVideo";
@@ -6,6 +6,7 @@ import CreateRoomModal from "./CreateRoomModal";
 import InteractiveGuide from "./InteractiveGuide";
 import JoinRoomForm from "./JoinRoomForm";
 import Logo from "./Logo";
+import NotificationBell from "./NotificationBell";
 
 function relativeTime(value) {
   if (!value) return "No recent activity";
@@ -19,7 +20,6 @@ function relativeTime(value) {
 
 export default function Dashboard({ user, auth, roomState, social, onSignOut }) {
   const [creating, setCreating] = useState(false);
-  const [invitesOpen, setInvitesOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(() => localStorage.getItem("havyn:guide:dashboard:v1") !== "done");
   const [username, setUsername] = useState(user.username || "");
@@ -29,19 +29,6 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   useEffect(() => {
     setUsername(user.username || "");
   }, [user.username]);
-
-  const notificationItems = [
-    ...social.invites.map((invite) => ({ ...invite, type: "room", sortAt: invite.createdAt })),
-    ...social.friendRequests.map((request) => ({ ...request, type: "friend", sortAt: request.createdAt }))
-  ].sort((a, b) => new Date(b.sortAt || 0).getTime() - new Date(a.sortAt || 0).getTime());
-  const notificationSignature = notificationItems.map((item) => `${item.type}:${item.id}`).join("|");
-  const notificationSeenKey = `havyn:notifications:seen:${user.id}`;
-  const [seenNotifications, setSeenNotifications] = useState(() => localStorage.getItem(notificationSeenKey) || "");
-  const hasUnreadNotifications = notificationItems.length > 0 && notificationSignature !== seenNotifications;
-
-  useEffect(() => {
-    setSeenNotifications(localStorage.getItem(notificationSeenKey) || "");
-  }, [notificationSeenKey]);
 
   async function saveUsername(event) {
     event.preventDefault();
@@ -66,11 +53,6 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
     if (sent) setFriendUsername("");
   }
 
-  async function acceptInvite(inviteId) {
-    const roomId = await social.acceptInvite(inviteId);
-    if (roomId) await roomState.joinRoom(roomId);
-  }
-
   function closeTutorial() {
     localStorage.setItem("havyn:guide:dashboard:v1", "done");
     setTutorialOpen(false);
@@ -78,28 +60,14 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
 
   function openGuide() {
     setProfileOpen(false);
-    setInvitesOpen(false);
     localStorage.removeItem("havyn:guide:watch:v1");
     localStorage.setItem("havyn:guide:watch:armed", "true");
     setTutorialOpen(false);
     window.requestAnimationFrame(() => setTutorialOpen(true));
   }
 
-  function toggleNotifications() {
-    setInvitesOpen((value) => {
-      const next = !value;
-      if (next) {
-        localStorage.setItem(notificationSeenKey, notificationSignature);
-        setSeenNotifications(notificationSignature);
-      }
-      return next;
-    });
-    setProfileOpen(false);
-  }
-
   function toggleProfile() {
     setProfileOpen((value) => !value);
-    setInvitesOpen(false);
   }
 
   const dashboardGuideSteps = [
@@ -136,44 +104,6 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
     }
   ];
 
-  const notificationMenu = invitesOpen ? createPortal(
-    <section className="notification-popover glass">
-      <div className="notification-head">
-        <strong>Notifications</strong>
-        <span>{notificationItems.length}</span>
-      </div>
-      <div className="notification-list">
-        {notificationItems.length ? notificationItems.map((item) => item.type === "room" ? (
-          <div className="notification-row" key={`room-${item.id}`}>
-            <div>
-              <strong>{item.roomName}</strong>
-              <span>{item.inviterName} invited you</span>
-              {item.mediaTitle && <small>{item.mediaTitle}</small>}
-            </div>
-            <button className="secondary-button" type="button" onClick={() => acceptInvite(item.id)}>Join</button>
-            <button className="icon-button" type="button" title="Dismiss" onClick={() => social.dismissInvite(item.id)}><X size={14} /></button>
-          </div>
-        ) : (
-          <div className="notification-row" key={`friend-${item.id}`}>
-            <div>
-              <strong>{item.displayName}</strong>
-              <span>@{item.username} sent a friend request</span>
-            </div>
-            <button className="icon-button" type="button" title="Accept" onClick={() => social.acceptFriendRequest(item.id)}><Check size={14} /></button>
-            <button className="icon-button" type="button" title="Decline" onClick={() => social.declineFriendRequest(item.id)}><X size={14} /></button>
-          </div>
-        )) : (
-          <div className="notification-empty">
-            <Bell size={22} />
-            <strong>No notifications</strong>
-            <span>Room invites and friend requests will appear here.</span>
-          </div>
-        )}
-      </div>
-    </section>,
-    document.body
-  ) : null;
-
   const profileMenu = profileOpen ? createPortal(
     <form className="profile-popover glass" onSubmit={saveUsername}>
       <strong>Profile</strong>
@@ -194,16 +124,7 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         <Logo />
         <div className="header-actions">
           <button className="icon-text" onClick={openGuide} title="How Havyn works"><HelpCircle size={17} /> Guide</button>
-          <div className="notification-menu-wrap">
-            <button
-              className={`icon-button notification-button ${hasUnreadNotifications ? "has-unread" : ""}`}
-              onClick={toggleNotifications}
-              title="Notifications"
-              type="button"
-            >
-            <Bell size={17} />
-            </button>
-          </div>
+          <NotificationBell user={user} social={social} onJoinRoom={roomState.joinRoom} onOpen={() => setProfileOpen(false)} />
           <div className="profile-menu-wrap guide-profile-target">
             <button className="user-chip profile-chip-button" type="button" onClick={toggleProfile}>
               {user.displayName}{user.username ? ` @${user.username}` : ""}
@@ -301,7 +222,6 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         open={tutorialOpen}
         onClose={closeTutorial}
       />
-      {notificationMenu}
       {profileMenu}
 
       {creating && <CreateRoomModal onClose={() => setCreating(false)} onCreate={roomState.createRoom} />}

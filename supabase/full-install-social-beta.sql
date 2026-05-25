@@ -284,3 +284,26 @@ create policy "users can create own friendships"
   on public.friendships for insert
   to authenticated
   with check (auth.uid() = user_id or auth.uid() = friend_user_id);
+
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.room_invites;
+  exception when duplicate_object then null;
+  end;
+
+  begin
+    alter publication supabase_realtime add table public.friend_requests;
+  exception when duplicate_object then null;
+  end;
+
+  begin
+    alter publication supabase_realtime add table public.friendships;
+  exception when duplicate_object then null;
+  end;
+
+  begin
+    alter publication supabase_realtime add table public.user_presence;
+  exception when duplicate_object then null;
+  end;
+end $$;
