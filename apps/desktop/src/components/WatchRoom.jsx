@@ -158,7 +158,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
   const watchGuideSteps = [
     {
       targetClass: "guide-browser-target",
-      position: "bottom-left",
+      position: "right-center",
       title: "Browser",
       body: "Open the page you want to watch here. Each person loads the page locally in their own Havyn browser session.",
       note: "Havyn syncs playback state. It does not stream, copy, or redistribute the video."
