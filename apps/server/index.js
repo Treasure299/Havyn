@@ -210,6 +210,12 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("playback-sync-request", ({ roomId }) => {
+    const targetRoomId = roomId || socket.data.roomId;
+    const state = getAuthoritativePlayback(targetRoomId);
+    if (state) socket.emit("playback-state-sync", { ...state, reason: "sync-request" });
+  });
+
   socket.on("chat-message", ({ roomId, user, message }) => {
     if (!message?.trim()) return;
     io.to(roomId).emit("chat-message", {

@@ -123,6 +123,29 @@ export function useWebRTC({ socket, room, user }) {
     reconnectTimersRef.current.set(peerUserId, timer);
   }, [closePeer, sendOffer, user.id]);
 
+  const watchRemoteTrack = useCallback((peerUserId, track) => {
+    const repair = () => schedulePeerRepair(peerUserId);
+    track.onended = repair;
+    track.onmute = () => {
+      window.setTimeout(() => {
+        if (track.muted || track.readyState !== "live") repair();
+      }, 2500);
+    };
+    track.onunmute = () => {
+      const timer = reconnectTimersRef.current.get(peerUserId);
+      if (timer) window.clearTimeout(timer);
+      reconnectTimersRef.current.delete(peerUserId);
+    };
+  }, [schedulePeerRepair]);
+
+  const publishRemoteStream = useCallback((peerUserId, stream) => {
+    stream.getTracks().forEach((track) => watchRemoteTrack(peerUserId, track));
+    setStreams((items) => {
+      const next = items.filter((item) => item.userId !== peerUserId);
+      return [...next, { userId: peerUserId, stream }];
+    });
+  }, [watchRemoteTrack]);
+
   const createPeer = useCallback((peerUserId) => {
     if (peersRef.current.has(peerUserId)) return peersRef.current.get(peerUserId);
     const peer = new RTCPeerConnection(rtcConfig);
@@ -148,10 +171,7 @@ export function useWebRTC({ socket, room, user }) {
 
     peer.ontrack = (event) => {
       const [stream] = event.streams;
-      setStreams((items) => {
-        const next = items.filter((item) => item.userId !== peerUserId);
-        return [...next, { userId: peerUserId, stream }];
-      });
+      if (stream) publishRemoteStream(peerUserId, stream);
     };
 
     const handlePeerState = () => {
@@ -164,7 +184,7 @@ export function useWebRTC({ socket, room, user }) {
 
     peersRef.current.set(peerUserId, peer);
     return peer;
-  }, [room?.roomId, schedulePeerRepair, socket, user.id]);
+  }, [publishRemoteStream, room?.roomId, schedulePeerRepair, socket, user.id]);
 
   createPeerRef.current = createPeer;
 

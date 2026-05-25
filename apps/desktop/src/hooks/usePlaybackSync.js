@@ -55,7 +55,10 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
 
   useEffect(() => {
     if (!room?.roomId || !playbackState) return undefined;
-    const timer = window.setInterval(() => {
+    const requestSync = () => {
+      socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
+    };
+    const driftTimer = window.setInterval(() => {
       if (typeof localCurrentTimeRef.current !== "number") return;
       // MVP drift correction is intentionally simple. Production can smooth playback
       // rate before seeking and should account for buffering, latency, and TURN paths.
@@ -65,7 +68,15 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
         currentTime: localCurrentTimeRef.current
       });
     }, 4000);
-    return () => window.clearInterval(timer);
+    const syncTimer = window.setInterval(requestSync, 30000);
+    socket.io.on("reconnect", requestSync);
+    window.addEventListener("focus", requestSync);
+    return () => {
+      window.clearInterval(driftTimer);
+      window.clearInterval(syncTimer);
+      socket.io.off("reconnect", requestSync);
+      window.removeEventListener("focus", requestSync);
+    };
   }, [socket, room?.roomId, user.id, playbackState]);
 
   function selectMedia(media) {
