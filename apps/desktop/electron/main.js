@@ -79,7 +79,7 @@ function createMainWindow() {
     minWidth: 1180,
     minHeight: 720,
     title: "Havyn",
-    icon: path.join(__dirname, "../public/brand/havyn-icon.png"),
+    icon: path.join(__dirname, "../public/brand/havyn-icon.ico"),
     backgroundColor: "#0B0B0F",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

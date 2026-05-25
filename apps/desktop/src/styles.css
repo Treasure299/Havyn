@@ -250,7 +250,8 @@ input:focus, select:focus {
   justify-content: space-between;
   padding: 0 42px;
   position: relative;
-  z-index: 2;
+  z-index: 80;
+  overflow: visible;
 }
 
 .public-nav {
@@ -261,9 +262,11 @@ input:focus, select:focus {
 }
 
 .header-actions {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
+  z-index: 90;
 }
 
 .minimal-hero {
@@ -738,6 +741,124 @@ label {
   line-height: 1.5;
 }
 
+.notification-menu-wrap {
+  position: relative;
+}
+
+.notification-button {
+  position: relative;
+}
+
+.notification-button.has-unread::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 0 2px #111115;
+}
+
+.notification-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 1200;
+  width: 380px;
+  max-height: min(520px, calc(100vh - 105px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  border-radius: 12px;
+  padding: 14px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(77,169,255,0.16), transparent 34%),
+    rgba(13,13,17,0.97);
+}
+
+.notification-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notification-head span {
+  min-width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.notification-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 9px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.045);
+  padding: 10px;
+}
+
+.notification-row strong,
+.notification-row span,
+.notification-row small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.notification-row span,
+.notification-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-row .secondary-button {
+  min-height: 32px;
+}
+
+.notification-empty {
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+  padding: 18px;
+}
+
+.notification-empty strong {
+  color: var(--text);
+}
+
+.notification-empty span {
+  max-width: 230px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .tutorial-backdrop {
   position: fixed;
   inset: 0;
@@ -886,9 +1007,9 @@ label {
   z-index: 981;
   border-radius: 10px;
   box-shadow:
-    0 0 0 2px rgba(77,169,255,0.74),
-    0 0 0 8px rgba(77,169,255,0.12),
-    0 20px 60px rgba(0,0,0,0.38);
+    inset 0 0 0 1px rgba(255,255,255,0.26),
+    0 0 0 1px rgba(77,169,255,0.44),
+    0 12px 36px rgba(0,0,0,0.26);
 }
 
 .join-form {
@@ -922,18 +1043,25 @@ label {
 
 .profile-menu-wrap {
   position: relative;
+  z-index: 1200;
 }
 
 .profile-chip-button {
   min-height: 40px;
   color: var(--text);
+  background: rgba(255,255,255,0.055);
+}
+
+.profile-chip-button:hover {
+  border-color: rgba(255,255,255,0.24);
+  background: rgba(255,255,255,0.085);
 }
 
 .profile-popover {
   position: absolute;
   right: 0;
   top: calc(100% + 10px);
-  z-index: 30;
+  z-index: 1200;
   width: 280px;
   display: grid;
   gap: 12px;

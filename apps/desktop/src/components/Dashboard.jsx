@@ -29,6 +29,19 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
     setUsername(user.username || "");
   }, [user.username]);
 
+  const notificationItems = [
+    ...social.invites.map((invite) => ({ ...invite, type: "room", sortAt: invite.createdAt })),
+    ...social.friendRequests.map((request) => ({ ...request, type: "friend", sortAt: request.createdAt }))
+  ].sort((a, b) => new Date(b.sortAt || 0).getTime() - new Date(a.sortAt || 0).getTime());
+  const notificationSignature = notificationItems.map((item) => `${item.type}:${item.id}`).join("|");
+  const notificationSeenKey = `havyn:notifications:seen:${user.id}`;
+  const [seenNotifications, setSeenNotifications] = useState(() => localStorage.getItem(notificationSeenKey) || "");
+  const hasUnreadNotifications = notificationItems.length > 0 && notificationSignature !== seenNotifications;
+
+  useEffect(() => {
+    setSeenNotifications(localStorage.getItem(notificationSeenKey) || "");
+  }, [notificationSeenKey]);
+
   async function saveUsername(event) {
     event.preventDefault();
     setUsernameNote("");
@@ -60,6 +73,23 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   function closeTutorial() {
     localStorage.setItem("havyn:guide:dashboard:v1", "done");
     setTutorialOpen(false);
+  }
+
+  function toggleNotifications() {
+    setInvitesOpen((value) => {
+      const next = !value;
+      if (next) {
+        localStorage.setItem(notificationSeenKey, notificationSignature);
+        setSeenNotifications(notificationSignature);
+      }
+      return next;
+    });
+    setProfileOpen(false);
+  }
+
+  function toggleProfile() {
+    setProfileOpen((value) => !value);
+    setInvitesOpen(false);
   }
 
   const dashboardGuideSteps = [
@@ -103,17 +133,54 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         <Logo />
         <div className="header-actions">
           <button className="icon-text" onClick={() => setTutorialOpen(true)} title="How Havyn works"><HelpCircle size={17} /> Guide</button>
-          <button
-            className={`icon-text invite-toggle ${social.invites.length ? "has-invites" : ""}`}
-            onClick={() => setInvitesOpen(true)}
-            title="Open invites"
-          >
+          <div className="notification-menu-wrap">
+            <button
+              className={`icon-button notification-button ${hasUnreadNotifications ? "has-unread" : ""}`}
+              onClick={toggleNotifications}
+              title="Notifications"
+              type="button"
+            >
             <Bell size={17} />
-            Invites
-            {social.invites.length > 0 && <strong>{social.invites.length}</strong>}
-          </button>
+            </button>
+            {invitesOpen && (
+              <section className="notification-popover glass">
+                <div className="notification-head">
+                  <strong>Notifications</strong>
+                  <span>{notificationItems.length}</span>
+                </div>
+                <div className="notification-list">
+                  {notificationItems.length ? notificationItems.map((item) => item.type === "room" ? (
+                    <div className="notification-row" key={`room-${item.id}`}>
+                      <div>
+                        <strong>{item.roomName}</strong>
+                        <span>{item.inviterName} invited you</span>
+                        {item.mediaTitle && <small>{item.mediaTitle}</small>}
+                      </div>
+                      <button className="secondary-button" type="button" onClick={() => acceptInvite(item.id)}>Join</button>
+                      <button className="icon-button" type="button" title="Dismiss" onClick={() => social.dismissInvite(item.id)}><X size={14} /></button>
+                    </div>
+                  ) : (
+                    <div className="notification-row" key={`friend-${item.id}`}>
+                      <div>
+                        <strong>{item.displayName}</strong>
+                        <span>@{item.username} sent a friend request</span>
+                      </div>
+                      <button className="icon-button" type="button" title="Accept" onClick={() => social.acceptFriendRequest(item.id)}><Check size={14} /></button>
+                      <button className="icon-button" type="button" title="Decline" onClick={() => social.declineFriendRequest(item.id)}><X size={14} /></button>
+                    </div>
+                  )) : (
+                    <div className="notification-empty">
+                      <Bell size={22} />
+                      <strong>No notifications</strong>
+                      <span>Room invites and friend requests will appear here.</span>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+          </div>
           <div className="profile-menu-wrap guide-profile-target">
-            <button className="user-chip profile-chip-button" type="button" onClick={() => setProfileOpen((value) => !value)}>
+            <button className="user-chip profile-chip-button" type="button" onClick={toggleProfile}>
               {user.displayName}{user.username ? ` @${user.username}` : ""}
             </button>
             {profileOpen && (
@@ -213,40 +280,6 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
           </div>
         </div>
       </section>
-
-      <aside className={`invite-drawer ${invitesOpen ? "is-open" : ""}`} aria-hidden={!invitesOpen}>
-        <button className="drawer-scrim" type="button" aria-label="Close invites" onClick={() => setInvitesOpen(false)} />
-        <section className="drawer-panel glass">
-          <div className="drawer-head">
-            <div>
-              <span className="eyebrow">Inbox</span>
-              <h2>Room invites</h2>
-            </div>
-            <button className="icon-button" type="button" title="Close invites" onClick={() => setInvitesOpen(false)}><X size={16} /></button>
-          </div>
-          <div className="invite-empty-or-list">
-            {social.invites.length ? social.invites.map((invite) => (
-              <div className="invite-card" key={invite.id}>
-                <div>
-                  <strong>{invite.roomName}</strong>
-                  <span>{invite.inviterName} invited you</span>
-                  {invite.mediaTitle && <small>{invite.mediaTitle}</small>}
-                </div>
-                <div className="invite-card-actions">
-                  <button className="secondary-button" type="button" onClick={() => acceptInvite(invite.id)}>Join</button>
-                  <button className="ghost-button" type="button" onClick={() => social.dismissInvite(invite.id)}>Dismiss</button>
-                </div>
-              </div>
-            )) : (
-              <div className="invite-empty">
-                <Bell size={30} />
-                <strong>No invites yet</strong>
-                <span>When someone invites you to a room, it will land here.</span>
-              </div>
-            )}
-          </div>
-        </section>
-      </aside>
 
       <InteractiveGuide
         storageKey="havyn:guide:dashboard:v1"
