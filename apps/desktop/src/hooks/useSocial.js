@@ -99,24 +99,55 @@ export function useSocial(user, room) {
       .order("created_at", { ascending: false })
       .limit(40);
 
-    const friendIds = (data || []).map((item) => item.friend_user_id);
+    const { data: acceptedRequests } = await supabase
+      .from("friend_requests")
+      .select("requester_user_id,addressee_user_id,responded_at,requester:profiles!friend_requests_requester_user_id_fkey(id,display_name,username,last_active_at),addressee:profiles!friend_requests_addressee_user_id_fkey(id,display_name,username,last_active_at)")
+      .eq("status", "accepted")
+      .or(`requester_user_id.eq.${userId},addressee_user_id.eq.${userId}`)
+      .limit(80);
+
+    const friendsById = new Map();
+    (data || []).forEach((item) => {
+      if (!item.friend_user_id) return;
+      friendsById.set(item.friend_user_id, {
+        userId: item.friend_user_id,
+        displayName: item.friend?.display_name || "Havyn user",
+        username: item.friend?.username || "",
+        lastActiveAt: item.friend?.last_active_at,
+        friendsSince: item.created_at
+      });
+    });
+
+    (acceptedRequests || []).forEach((item) => {
+      const isRequester = item.requester_user_id === userId;
+      const friendId = isRequester ? item.addressee_user_id : item.requester_user_id;
+      const profile = isRequester ? item.addressee : item.requester;
+      if (!friendId || friendsById.has(friendId)) return;
+      friendsById.set(friendId, {
+        userId: friendId,
+        displayName: profile?.display_name || "Havyn user",
+        username: profile?.username || "",
+        lastActiveAt: profile?.last_active_at,
+        friendsSince: item.responded_at
+      });
+    });
+
+    const friendRows = Array.from(friendsById.values());
+    const friendIds = friendRows.map((item) => item.userId);
     const { data: presenceRows } = friendIds.length
       ? await supabase.from("user_presence").select("user_id,online,last_active_at").in("user_id", friendIds)
       : { data: [] };
     const presenceByUser = new Map((presenceRows || []).map((item) => [item.user_id, item]));
 
-    setFriends((data || []).map((item) => {
-      const presence = presenceByUser.get(item.friend_user_id);
-      const activeAt = presence?.last_active_at || item.friend?.last_active_at;
+    setFriends(friendRows.map((item) => {
+      const presence = presenceByUser.get(item.userId);
+      const activeAt = presence?.last_active_at || item.lastActiveAt;
       return {
-        userId: item.friend_user_id,
-        displayName: item.friend?.display_name || "Havyn user",
-        username: item.friend?.username || "",
+        ...item,
         online: Boolean(presence?.online && isRecentlyActive(activeAt)),
-        lastActiveAt: activeAt,
-        friendsSince: item.created_at
+        lastActiveAt: activeAt
       };
-    }));
+    }).sort((a, b) => Number(b.online) - Number(a.online) || new Date(b.friendsSince || 0).getTime() - new Date(a.friendsSince || 0).getTime()));
   }, [userId]);
 
   const loadFriendRequests = useCallback(async () => {
@@ -318,6 +349,8 @@ export function useSocial(user, room) {
       { user_id: request.userId, friend_user_id: userId, created_at: now }
     ], { onConflict: "user_id,friend_user_id" });
     await Promise.all([loadFriendRequests(), loadFriends()]);
+    setSocialNote(`${request.displayName} added to friends`);
+    window.setTimeout(() => setSocialNote(""), 1800);
   }
 
   async function declineFriendRequest(requestId) {

@@ -1,5 +1,6 @@
 import { Bell, Check, Clock3, Globe2, HelpCircle, LogOut, Plus, Save, Send, Ticket, UserPlus, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import BackgroundVideo from "./BackgroundVideo";
 import CreateRoomModal from "./CreateRoomModal";
 import InteractiveGuide from "./InteractiveGuide";
@@ -133,6 +134,57 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
     }
   ];
 
+  const notificationMenu = invitesOpen ? createPortal(
+    <section className="notification-popover glass">
+      <div className="notification-head">
+        <strong>Notifications</strong>
+        <span>{notificationItems.length}</span>
+      </div>
+      <div className="notification-list">
+        {notificationItems.length ? notificationItems.map((item) => item.type === "room" ? (
+          <div className="notification-row" key={`room-${item.id}`}>
+            <div>
+              <strong>{item.roomName}</strong>
+              <span>{item.inviterName} invited you</span>
+              {item.mediaTitle && <small>{item.mediaTitle}</small>}
+            </div>
+            <button className="secondary-button" type="button" onClick={() => acceptInvite(item.id)}>Join</button>
+            <button className="icon-button" type="button" title="Dismiss" onClick={() => social.dismissInvite(item.id)}><X size={14} /></button>
+          </div>
+        ) : (
+          <div className="notification-row" key={`friend-${item.id}`}>
+            <div>
+              <strong>{item.displayName}</strong>
+              <span>@{item.username} sent a friend request</span>
+            </div>
+            <button className="icon-button" type="button" title="Accept" onClick={() => social.acceptFriendRequest(item.id)}><Check size={14} /></button>
+            <button className="icon-button" type="button" title="Decline" onClick={() => social.declineFriendRequest(item.id)}><X size={14} /></button>
+          </div>
+        )) : (
+          <div className="notification-empty">
+            <Bell size={22} />
+            <strong>No notifications</strong>
+            <span>Room invites and friend requests will appear here.</span>
+          </div>
+        )}
+      </div>
+    </section>,
+    document.body
+  ) : null;
+
+  const profileMenu = profileOpen ? createPortal(
+    <form className="profile-popover glass" onSubmit={saveUsername}>
+      <strong>Profile</strong>
+      <label>
+        Username
+        <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="choose_username" />
+      </label>
+      {usernameNote && <span className="action-note">{usernameNote}</span>}
+      <button className="secondary-button" type="submit"><Save size={15} /> Save username</button>
+    </form>,
+    document.body
+  ) : null;
+
   return (
     <main className="dashboard public-screen">
       <BackgroundVideo />
@@ -149,58 +201,11 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
             >
             <Bell size={17} />
             </button>
-            {invitesOpen && (
-              <section className="notification-popover glass">
-                <div className="notification-head">
-                  <strong>Notifications</strong>
-                  <span>{notificationItems.length}</span>
-                </div>
-                <div className="notification-list">
-                  {notificationItems.length ? notificationItems.map((item) => item.type === "room" ? (
-                    <div className="notification-row" key={`room-${item.id}`}>
-                      <div>
-                        <strong>{item.roomName}</strong>
-                        <span>{item.inviterName} invited you</span>
-                        {item.mediaTitle && <small>{item.mediaTitle}</small>}
-                      </div>
-                      <button className="secondary-button" type="button" onClick={() => acceptInvite(item.id)}>Join</button>
-                      <button className="icon-button" type="button" title="Dismiss" onClick={() => social.dismissInvite(item.id)}><X size={14} /></button>
-                    </div>
-                  ) : (
-                    <div className="notification-row" key={`friend-${item.id}`}>
-                      <div>
-                        <strong>{item.displayName}</strong>
-                        <span>@{item.username} sent a friend request</span>
-                      </div>
-                      <button className="icon-button" type="button" title="Accept" onClick={() => social.acceptFriendRequest(item.id)}><Check size={14} /></button>
-                      <button className="icon-button" type="button" title="Decline" onClick={() => social.declineFriendRequest(item.id)}><X size={14} /></button>
-                    </div>
-                  )) : (
-                    <div className="notification-empty">
-                      <Bell size={22} />
-                      <strong>No notifications</strong>
-                      <span>Room invites and friend requests will appear here.</span>
-                    </div>
-                  )}
-                </div>
-              </section>
-            )}
           </div>
           <div className="profile-menu-wrap guide-profile-target">
             <button className="user-chip profile-chip-button" type="button" onClick={toggleProfile}>
               {user.displayName}{user.username ? ` @${user.username}` : ""}
             </button>
-            {profileOpen && (
-              <form className="profile-popover glass" onSubmit={saveUsername}>
-                <strong>Profile</strong>
-                <label>
-                  Username
-                  <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="choose_username" />
-                </label>
-                {usernameNote && <span className="action-note">{usernameNote}</span>}
-                <button className="secondary-button" type="submit"><Save size={15} /> Save username</button>
-              </form>
-            )}
           </div>
           <button className="icon-button" onClick={onSignOut} title="Sign out"><LogOut size={18} /></button>
         </div>
@@ -294,6 +299,8 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         open={tutorialOpen}
         onClose={closeTutorial}
       />
+      {notificationMenu}
+      {profileMenu}
 
       {creating && <CreateRoomModal onClose={() => setCreating(false)} onCreate={roomState.createRoom} />}
     </main>

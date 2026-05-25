@@ -763,9 +763,9 @@ label {
 
 .notification-popover {
   position: fixed;
-  top: 142px;
-  right: 268px;
-  z-index: 6000;
+  top: 104px;
+  right: 146px;
+  z-index: 2147483000;
   width: 380px;
   max-height: min(520px, calc(100vh - 105px));
   display: grid;
@@ -922,7 +922,7 @@ label {
 .guide-overlay {
   position: fixed;
   inset: 0;
-  z-index: 5000;
+  z-index: 2147482900;
   pointer-events: none;
 }
 
@@ -1004,7 +1004,7 @@ label {
 
 .guide-highlight {
   position: relative;
-  z-index: 5001;
+  z-index: 2147482901;
   border-radius: 10px;
   box-shadow:
     inset 0 0 0 1px rgba(255,255,255,0.26),
@@ -1043,7 +1043,7 @@ label {
 
 .profile-menu-wrap {
   position: relative;
-  z-index: 6000;
+  z-index: 2147483000;
 }
 
 .profile-chip-button {
@@ -1059,9 +1059,9 @@ label {
 
 .profile-popover {
   position: fixed;
-  right: 116px;
-  top: 142px;
-  z-index: 6000;
+  right: 86px;
+  top: 104px;
+  z-index: 2147483000;
   width: 280px;
   display: grid;
   gap: 12px;

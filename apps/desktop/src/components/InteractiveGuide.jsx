@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 export default function InteractiveGuide({ storageKey, steps, open, onClose }) {
   const [index, setIndex] = useState(0);
@@ -27,7 +28,7 @@ export default function InteractiveGuide({ storageKey, steps, open, onClose }) {
 
   const lastStep = index === steps.length - 1;
 
-  return (
+  return createPortal(
     <section className="guide-overlay">
       <button className="guide-scrim" type="button" onClick={done} aria-label="Skip guide" />
       <aside className={`guide-card glass guide-card-${step.position || "center"}`}>
@@ -48,6 +49,7 @@ export default function InteractiveGuide({ storageKey, steps, open, onClose }) {
           </button>
         </div>
       </aside>
-    </section>
+    </section>,
+    document.body
   );
 }
