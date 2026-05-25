@@ -11,6 +11,7 @@ let mediaEventTimer;
 const tabs = new Map();
 const loadedExtensions = new Map();
 let adBlockEnabled = false;
+let browserVisible = true;
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
@@ -126,6 +127,7 @@ function showActiveTab() {
       // Ignore stale view removal during tab switches.
     }
   }
+  if (!browserVisible) return;
   const tab = activeTab();
   if (!tab) return;
   mainWindow.setBrowserView(tab.view);
@@ -292,8 +294,24 @@ ipcMain.handle("browser:destroy", () => {
 
 ipcMain.handle("browser:set-bounds", (_event, bounds) => {
   currentBounds = bounds;
-  activeTab()?.view.setBounds(bounds);
+  if (browserVisible) activeTab()?.view.setBounds(bounds);
   return true;
+});
+
+ipcMain.handle("browser:set-visible", (_event, visible) => {
+  browserVisible = Boolean(visible);
+  if (browserVisible) {
+    showActiveTab();
+  } else {
+    for (const tab of tabs.values()) {
+      try {
+        mainWindow?.removeBrowserView(tab.view);
+      } catch {
+        // Ignore stale view removal while hiding the native browser layer.
+      }
+    }
+  }
+  return { visible: browserVisible };
 });
 
 ipcMain.handle("browser:new-tab", async (_event, url) => {

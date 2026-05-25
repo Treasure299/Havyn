@@ -124,6 +124,11 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
   }, [callLayout, canUseFocusLayout]);
 
   useEffect(() => {
+    media.browser?.setVisible?.(!guideOpen);
+    return () => media.browser?.setVisible?.(true);
+  }, [guideOpen, media.browser]);
+
+  useEffect(() => {
     const handleSelected = ({ media: selected }) => {
       if (selected?.url) media.loadUrl(selected.url);
     };

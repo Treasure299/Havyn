@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("havyn", {
     create: (bounds) => ipcRenderer.invoke("browser:create", bounds),
     destroy: () => ipcRenderer.invoke("browser:destroy"),
     setBounds: (bounds) => ipcRenderer.invoke("browser:set-bounds", bounds),
+    setVisible: (visible) => ipcRenderer.invoke("browser:set-visible", visible),
     newTab: (url) => ipcRenderer.invoke("browser:new-tab", url),
     switchTab: (tabId) => ipcRenderer.invoke("browser:switch-tab", tabId),
     closeTab: (tabId) => ipcRenderer.invoke("browser:close-tab", tabId),
