@@ -1,4 +1,4 @@
-import { Copy, LogOut } from "lucide-react";
+import { Copy, HelpCircle, LogOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMediaDetection } from "../hooks/useMediaDetection";
 import { usePlaybackSync } from "../hooks/usePlaybackSync";
@@ -6,6 +6,7 @@ import { useWebRTC } from "../hooks/useWebRTC";
 import CallControls from "./CallControls";
 import ChatPanel from "./ChatPanel";
 import IntegratedBrowserPanel from "./IntegratedBrowserPanel";
+import InteractiveGuide from "./InteractiveGuide";
 import Logo from "./Logo";
 import MediaDetectionPanel from "./MediaDetectionPanel";
 import ParticipantsPanel from "./ParticipantsPanel";
@@ -24,6 +25,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
   const [callLayout, setCallLayout] = useState("grid");
   const [focusPrimary, setFocusPrimary] = useState("remote");
   const [copyNote, setCopyNote] = useState("");
+  const [guideOpen, setGuideOpen] = useState(() => localStorage.getItem("havyn:guide:watch:v1") !== "done");
   const callTileCount = (call.localStream ? 1 : 0) + call.streams.length;
   const canUseFocusLayout = call.joined && callTileCount === 2;
 
@@ -145,6 +147,40 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
     window.setTimeout(() => setCopyNote(""), 1800);
   };
 
+  const watchGuideSteps = [
+    {
+      targetClass: "guide-browser-target",
+      position: "bottom-left",
+      title: "Browser",
+      body: "Open the page you want to watch here. Each person loads the page locally in their own Havyn browser session.",
+      note: "Havyn syncs playback state. It does not stream, copy, or redistribute the video."
+    },
+    {
+      targetClass: "guide-source-target",
+      position: "bottom-left",
+      title: "Sync source",
+      body: "When Havyn detects a playable source, the host can sync it to the room. New participants will be brought to the active source automatically."
+    },
+    {
+      targetClass: "guide-controls-target",
+      position: "bottom-left",
+      title: "Playback control",
+      body: "This shows who can control playback based on the room mode. Host-only, cohost, and everyone modes are handled by the server."
+    },
+    {
+      targetClass: "guide-call-target",
+      position: "top-right",
+      title: "Call",
+      body: "Join optional voice/video here. You can resize this area and choose grid or focus layout for two-person calls."
+    },
+    {
+      targetClass: "guide-chat-target",
+      position: "top-right",
+      title: "Chat and people",
+      body: "Chat stays beside the movie. The People drawer shows who is in the room, who is host, and who is ready."
+    }
+  ];
+
   return (
     <main className="watch-room">
       <header className="room-header">
@@ -154,6 +190,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
           <span>Host: {room.participants.find((p) => p.userId === room.hostUserId)?.displayName || "Host"} - {room.playbackMode}</span>
         </div>
         <div className="header-actions">
+          <button className="icon-button" onClick={() => setGuideOpen(true)} title="Room guide"><HelpCircle size={18} /></button>
           <select className="mode-select" value={room.playbackMode} onChange={(event) => roomState.setPlaybackMode(event.target.value)}>
             <option value="host-only">host-only</option>
             <option value="host-and-cohosts">host-and-cohosts</option>
@@ -178,6 +215,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
           style={viewerHeight ? { gridTemplateRows: `${viewerHeight}px auto auto` } : undefined}
         >
           <IntegratedBrowserPanel
+            className="guide-browser-target"
             browser={media.browser}
             currentUrl={media.currentUrl}
             onLoadUrl={media.loadUrl}
@@ -191,19 +229,23 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
           />
           <div className="viewer-resize-handle" title="Resize viewing area" onMouseDown={startViewerResize} onDoubleClick={() => setViewerHeight(null)} />
           <div className="viewer-toolbar">
-            <MediaDetectionPanel
-              detectedMedia={media.detectedMedia}
-              canControl={playback.canControl}
-              onSelect={playback.selectMedia}
-              onScan={media.scanMedia}
-            />
-            <PlaybackControls
-              canControl={playback.canControl}
-              playbackMode={room.playbackMode}
-              playbackState={playback.playbackState}
-              onPlay={playback.play}
-              onPause={playback.pause}
-            />
+            <div className="guide-source-target">
+              <MediaDetectionPanel
+                detectedMedia={media.detectedMedia}
+                canControl={playback.canControl}
+                onSelect={playback.selectMedia}
+                onScan={media.scanMedia}
+              />
+            </div>
+            <div className="guide-controls-target">
+              <PlaybackControls
+                canControl={playback.canControl}
+                playbackMode={room.playbackMode}
+                playbackState={playback.playbackState}
+                onPlay={playback.play}
+                onPause={playback.pause}
+              />
+            </div>
           </div>
         </div>
         <div
@@ -218,7 +260,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
           className={`watch-side ${sideWidth < 310 ? "is-compact" : ""}`}
           style={{ gridTemplateRows: `${callHeight}px 8px minmax(0, 1fr) auto` }}
         >
-          <section className="call-panel glass">
+          <section className="call-panel glass guide-call-target">
             <div className="side-heading">
               <div className="side-heading-text">
                 <strong>Call</strong>
@@ -244,14 +286,26 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
             <VideoBubbleRail call={call} participants={room.participants} layout={callLayout} focusPrimary={focusPrimary} />
           </section>
           <div className="side-resize-handle" title="Resize call area" onMouseDown={startCallResize} onDoubleClick={() => setCallHeight(190)} />
-          <ChatPanel messages={roomState.messages} onSend={roomState.sendMessage} />
-          <ParticipantsPanel
-            participants={room.participants}
-            currentUserId={user.id}
-            onRoleChange={roomState.setParticipantRole}
-          />
+          <div className="guide-chat-target side-stack">
+            <ChatPanel messages={roomState.messages} onSend={roomState.sendMessage} />
+            <ParticipantsPanel
+              participants={room.participants}
+              currentUserId={user.id}
+              onRoleChange={roomState.setParticipantRole}
+            />
+          </div>
         </aside>
       </section>
+
+      <InteractiveGuide
+        storageKey="havyn:guide:watch:v1"
+        steps={watchGuideSteps}
+        open={guideOpen}
+        onClose={() => {
+          localStorage.setItem("havyn:guide:watch:v1", "done");
+          setGuideOpen(false);
+        }}
+      />
     </main>
   );
 }

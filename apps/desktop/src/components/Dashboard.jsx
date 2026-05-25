@@ -1,7 +1,8 @@
-import { Bell, Check, Clock3, Globe2, HelpCircle, LogOut, Plus, Send, Ticket, UserPlus, Users, X } from "lucide-react";
+import { Bell, Check, Clock3, Globe2, HelpCircle, LogOut, Plus, Save, Send, Ticket, UserPlus, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import BackgroundVideo from "./BackgroundVideo";
 import CreateRoomModal from "./CreateRoomModal";
+import InteractiveGuide from "./InteractiveGuide";
 import JoinRoomForm from "./JoinRoomForm";
 import Logo from "./Logo";
 
@@ -18,7 +19,8 @@ function relativeTime(value) {
 export default function Dashboard({ user, auth, roomState, social, onSignOut }) {
   const [creating, setCreating] = useState(false);
   const [invitesOpen, setInvitesOpen] = useState(false);
-  const [tutorialOpen, setTutorialOpen] = useState(() => localStorage.getItem("havyn:tutorial:v1") !== "done");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(() => localStorage.getItem("havyn:guide:dashboard:v1") !== "done");
   const [username, setUsername] = useState(user.username || "");
   const [usernameNote, setUsernameNote] = useState("");
   const [friendUsername, setFriendUsername] = useState("");
@@ -56,9 +58,43 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   }
 
   function closeTutorial() {
-    localStorage.setItem("havyn:tutorial:v1", "done");
+    localStorage.setItem("havyn:guide:dashboard:v1", "done");
     setTutorialOpen(false);
   }
+
+  const dashboardGuideSteps = [
+    {
+      targetClass: "guide-profile-target",
+      position: "top-right",
+      title: "Your profile",
+      body: "Set your username here. Friends use it to find and invite you.",
+      note: "Usernames are lowercase and can use letters, numbers, and underscores."
+    },
+    {
+      targetClass: "guide-create-target",
+      position: "bottom-left",
+      title: "Create a room",
+      body: "Start a private or public watch room. Private rooms are invite/code based, while public rooms show in the lobby."
+    },
+    {
+      targetClass: "guide-join-target",
+      position: "top-right",
+      title: "Join by code",
+      body: "Paste a room code here when someone sends one to you."
+    },
+    {
+      targetClass: "guide-friends-target",
+      position: "top-right",
+      title: "Friends",
+      body: "Send requests by username, accept incoming requests, see who is online, and invite friends into rooms."
+    },
+    {
+      targetClass: "guide-public-target",
+      position: "bottom-right",
+      title: "Public rooms",
+      body: "Public rooms appear here with what people are watching so others can join."
+    }
+  ];
 
   return (
     <main className="dashboard public-screen">
@@ -76,7 +112,22 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
             Invites
             {social.invites.length > 0 && <strong>{social.invites.length}</strong>}
           </button>
-          <span className="user-chip">{user.displayName}{user.username ? ` @${user.username}` : ""}</span>
+          <div className="profile-menu-wrap guide-profile-target">
+            <button className="user-chip profile-chip-button" type="button" onClick={() => setProfileOpen((value) => !value)}>
+              {user.displayName}{user.username ? ` @${user.username}` : ""}
+            </button>
+            {profileOpen && (
+              <form className="profile-popover glass" onSubmit={saveUsername}>
+                <strong>Profile</strong>
+                <label>
+                  Username
+                  <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="choose_username" />
+                </label>
+                {usernameNote && <span className="action-note">{usernameNote}</span>}
+                <button className="secondary-button" type="submit"><Save size={15} /> Save username</button>
+              </form>
+            )}
+          </div>
           <button className="icon-button" onClick={onSignOut} title="Sign out"><LogOut size={18} /></button>
         </div>
       </header>
@@ -85,26 +136,21 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         <div className="dashboard-copy">
           <h1>Start a room.</h1>
           <p>Create a room, join a code, or drop into a public watch already in motion.</p>
-          <button className="primary-button" onClick={() => setCreating(true)}><Plus size={18} /> Create room</button>
+          <button className="primary-button guide-create-target" onClick={() => setCreating(true)}><Plus size={18} /> Create room</button>
           {social.socialNote && <div className="social-note">{social.socialNote}</div>}
         </div>
 
-        <div className="glass dashboard-panel">
+        <div className="glass dashboard-panel guide-join-target">
           <Ticket size={24} />
           <h2>Join by code</h2>
           <JoinRoomForm onJoin={roomState.joinRoom} />
         </div>
 
-        <div className="glass recent-panel friends-panel">
+        <div className="glass recent-panel friends-panel guide-friends-target">
           <div className="panel-title-row">
             <Users size={22} />
             <h2>Friends</h2>
           </div>
-          <form className="username-form" onSubmit={saveUsername}>
-            <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="choose_username" />
-            <button className="secondary-button" type="submit">Save</button>
-          </form>
-          {usernameNote && <span className="action-note">{usernameNote}</span>}
           <form className="friend-request-form" onSubmit={sendFriendRequest}>
             <UserPlus size={16} />
             <input value={friendUsername} onChange={(event) => setFriendUsername(event.target.value.toLowerCase())} placeholder="friend_username" />
@@ -124,6 +170,10 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
               ))}
             </div>
           )}
+          <div className="friend-list-head">
+            <strong>Friends list</strong>
+            <span>{social.friends.length} friend{social.friends.length === 1 ? "" : "s"}</span>
+          </div>
           <div className="social-list">
             {social.friends.length ? social.friends.map((friend) => (
               <div className="social-row" key={friend.userId}>
@@ -134,11 +184,17 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
                 </div>
                 <button className="icon-button" type="button" title="Invite to a room" onClick={() => inviteFriend(friend)}><Send size={16} /></button>
               </div>
-            )) : <p>Add friends by username to invite them faster.</p>}
+            )) : (
+              <div className="empty-state compact-empty">
+                <Users size={22} />
+                <strong>No friends yet</strong>
+                <span>Send a request by username. Once accepted, their online status and last active time will show here.</span>
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="glass recent-panel public-rooms-panel">
+        <div className="glass recent-panel public-rooms-panel guide-public-target">
           <div className="panel-title-row">
             <Globe2 size={22} />
             <h2>Public rooms</h2>
@@ -192,21 +248,12 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         </section>
       </aside>
 
-      {tutorialOpen && (
-        <section className="tutorial-backdrop">
-          <div className="tutorial-card glass">
-            <Logo />
-            <h2>Welcome to Havyn</h2>
-            <div className="tutorial-steps">
-              <div><strong>1</strong><span>Create or join a room.</span></div>
-              <div><strong>2</strong><span>Open a video page, then sync the detected source.</span></div>
-              <div><strong>3</strong><span>Invite friends or join a public room from the dashboard.</span></div>
-              <div><strong>4</strong><span>Use chat and optional call while the movie stays in focus.</span></div>
-            </div>
-            <button className="primary-button" type="button" onClick={closeTutorial}>Enter Havyn</button>
-          </div>
-        </section>
-      )}
+      <InteractiveGuide
+        storageKey="havyn:guide:dashboard:v1"
+        steps={dashboardGuideSteps}
+        open={tutorialOpen}
+        onClose={closeTutorial}
+      />
 
       {creating && <CreateRoomModal onClose={() => setCreating(false)} onCreate={roomState.createRoom} />}
     </main>

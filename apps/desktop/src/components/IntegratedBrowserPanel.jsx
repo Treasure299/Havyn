@@ -5,7 +5,7 @@ function normalizeUrl(value) {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
-export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState }) {
+export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "" }) {
   const frameRef = useRef(null);
   const iframeRef = useRef(null);
   const [url, setUrl] = useState("https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html");
@@ -196,7 +196,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }, [browser, webPlaybackState]);
 
   return (
-    <section className="browser-shell">
+    <section className={`browser-shell ${className}`}>
       {browser && (
         <div className="browser-tabs glass">
           {tabs.map((tab) => (
