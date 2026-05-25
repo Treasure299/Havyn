@@ -1,5 +1,6 @@
-import { Mic, MicOff, Phone, PhoneOff, Settings2, Video, VideoOff } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff, Settings2, Video, VideoOff, X } from "lucide-react";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 
 export default function CallControls({ call, onDevicesOpenChange }) {
   const [devicesOpen, setDevicesOpen] = useState(false);
@@ -18,6 +19,44 @@ export default function CallControls({ call, onDevicesOpenChange }) {
     setDevicesOpen(false);
     onDevicesOpenChange?.(false);
   }
+
+  const devicePicker = devicesOpen ? createPortal(
+    <div className="device-popover glass">
+      <div className="device-popover-head">
+        <strong>Call devices</strong>
+        <button className="icon-button" type="button" title="Close devices" onClick={closeDevices}><X size={15} /></button>
+      </div>
+      <label>
+        <span><Mic size={12} /> Microphone</span>
+        <select
+          value={call.selectedAudioDeviceId}
+          onChange={(event) => call.selectAudioDevice(event.target.value)}
+          title="Microphone"
+        >
+          {audioInputs.length ? audioInputs.map((device, index) => (
+            <option value={device.deviceId} key={device.deviceId}>
+              {device.label || `Microphone ${index + 1}`}
+            </option>
+          )) : <option value="">Default microphone</option>}
+        </select>
+      </label>
+      <label>
+        <span><Video size={12} /> Camera</span>
+        <select
+          value={call.selectedVideoDeviceId}
+          onChange={(event) => call.selectVideoDevice(event.target.value)}
+          title="Camera"
+        >
+          {videoInputs.length ? videoInputs.map((device, index) => (
+            <option value={device.deviceId} key={device.deviceId}>
+              {device.label || `Camera ${index + 1}`}
+            </option>
+          )) : <option value="">Default camera</option>}
+        </select>
+      </label>
+    </div>,
+    document.body
+  ) : null;
 
   return (
     <div className="call-control-stack">
@@ -43,42 +82,7 @@ export default function CallControls({ call, onDevicesOpenChange }) {
           </>
         )}
       </div>
-      {devicesOpen && (
-      <div className="device-popover glass">
-        <div className="device-popover-head">
-          <strong>Call devices</strong>
-          <button className="icon-button" type="button" title="Close devices" onClick={closeDevices}>×</button>
-        </div>
-        <label>
-          <span><Mic size={12} /> Microphone</span>
-          <select
-            value={call.selectedAudioDeviceId}
-            onChange={(event) => call.selectAudioDevice(event.target.value)}
-            title="Microphone"
-          >
-            {audioInputs.length ? audioInputs.map((device, index) => (
-              <option value={device.deviceId} key={device.deviceId}>
-                {device.label || `Microphone ${index + 1}`}
-              </option>
-            )) : <option value="">Default microphone</option>}
-          </select>
-        </label>
-        <label>
-          <span><Video size={12} /> Camera</span>
-          <select
-            value={call.selectedVideoDeviceId}
-            onChange={(event) => call.selectVideoDevice(event.target.value)}
-            title="Camera"
-          >
-            {videoInputs.length ? videoInputs.map((device, index) => (
-              <option value={device.deviceId} key={device.deviceId}>
-                {device.label || `Camera ${index + 1}`}
-              </option>
-            )) : <option value="">Default camera</option>}
-          </select>
-        </label>
-      </div>
-      )}
+      {devicePicker}
       {call.callError && <span className="call-error">{call.callError}</span>}
     </div>
   );
