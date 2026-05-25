@@ -317,6 +317,10 @@ export function useSocial(user, room) {
 
   async function sendInvite(roomIdToInvite, inviteeUserId) {
     if (!supabase || !userId || !roomIdToInvite || !inviteeUserId) return false;
+    await supabase.from("room_members").upsert(
+      { room_id: roomIdToInvite, user_id: userId, role: room?.hostUserId === userId ? "host" : "viewer" },
+      { onConflict: "room_id,user_id" }
+    );
     const { error } = await supabase.from("room_invites").upsert(
       {
         room_id: roomIdToInvite,
@@ -328,7 +332,8 @@ export function useSocial(user, room) {
       },
       { onConflict: "room_id,inviter_user_id,invitee_user_id" }
     );
-    setSocialNote(error ? "Invite could not be sent" : "Invite sent in Havyn");
+    if (error) console.warn("Havyn invite failed", error);
+    setSocialNote(error ? `Invite could not be sent: ${error.message}` : "Invite sent in Havyn");
     window.setTimeout(() => setSocialNote(""), 1800);
     return !error;
   }
