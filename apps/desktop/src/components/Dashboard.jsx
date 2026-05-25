@@ -1,5 +1,5 @@
-import { Bell, Clock3, Globe2, LogOut, Plus, Send, Ticket, Users, X } from "lucide-react";
-import { useState } from "react";
+import { Bell, Check, Clock3, Globe2, HelpCircle, LogOut, Plus, Send, Ticket, UserPlus, Users, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import BackgroundVideo from "./BackgroundVideo";
 import CreateRoomModal from "./CreateRoomModal";
 import JoinRoomForm from "./JoinRoomForm";
@@ -15,18 +15,49 @@ function relativeTime(value) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-export default function Dashboard({ user, roomState, social, onSignOut }) {
+export default function Dashboard({ user, auth, roomState, social, onSignOut }) {
   const [creating, setCreating] = useState(false);
   const [invitesOpen, setInvitesOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(() => localStorage.getItem("havyn:tutorial:v1") !== "done");
+  const [username, setUsername] = useState(user.username || "");
+  const [usernameNote, setUsernameNote] = useState("");
+  const [friendUsername, setFriendUsername] = useState("");
 
-  async function invitePartner(person) {
+  useEffect(() => {
+    setUsername(user.username || "");
+  }, [user.username]);
+
+  async function saveUsername(event) {
+    event.preventDefault();
+    setUsernameNote("");
+    try {
+      await auth.updateProfile({ username });
+      setUsernameNote("Username saved");
+    } catch (error) {
+      setUsernameNote(error.message?.includes("duplicate") ? "That username is taken" : "Could not save username");
+    }
+    window.setTimeout(() => setUsernameNote(""), 2200);
+  }
+
+  async function inviteFriend(friend) {
     const roomId = await roomState.createRoom("Movie Night", { visibility: "private" });
-    if (roomId) await social.sendInvite(roomId, person.userId);
+    if (roomId) await social.sendInvite(roomId, friend.userId);
+  }
+
+  async function sendFriendRequest(event) {
+    event.preventDefault();
+    const sent = await social.sendFriendRequest(friendUsername);
+    if (sent) setFriendUsername("");
   }
 
   async function acceptInvite(inviteId) {
     const roomId = await social.acceptInvite(inviteId);
     if (roomId) await roomState.joinRoom(roomId);
+  }
+
+  function closeTutorial() {
+    localStorage.setItem("havyn:tutorial:v1", "done");
+    setTutorialOpen(false);
   }
 
   return (
@@ -35,6 +66,7 @@ export default function Dashboard({ user, roomState, social, onSignOut }) {
       <header className="app-header">
         <Logo />
         <div className="header-actions">
+          <button className="icon-text" onClick={() => setTutorialOpen(true)} title="How Havyn works"><HelpCircle size={17} /> Guide</button>
           <button
             className={`icon-text invite-toggle ${social.invites.length ? "has-invites" : ""}`}
             onClick={() => setInvitesOpen(true)}
@@ -44,7 +76,7 @@ export default function Dashboard({ user, roomState, social, onSignOut }) {
             Invites
             {social.invites.length > 0 && <strong>{social.invites.length}</strong>}
           </button>
-          <span className="user-chip">{user.displayName}</span>
+          <span className="user-chip">{user.displayName}{user.username ? ` @${user.username}` : ""}</span>
           <button className="icon-button" onClick={onSignOut} title="Sign out"><LogOut size={18} /></button>
         </div>
       </header>
@@ -63,22 +95,46 @@ export default function Dashboard({ user, roomState, social, onSignOut }) {
           <JoinRoomForm onJoin={roomState.joinRoom} />
         </div>
 
-        <div className="glass recent-panel social-panel">
+        <div className="glass recent-panel friends-panel">
           <div className="panel-title-row">
             <Users size={22} />
-            <h2>Recent people</h2>
+            <h2>Friends</h2>
           </div>
-          <div className="social-list">
-            {social.recentPeople.length ? social.recentPeople.map((person) => (
-              <div className="social-row" key={person.userId}>
-                <i className={person.online ? "presence-dot online" : "presence-dot"} />
-                <div>
-                  <strong>{person.displayName}</strong>
-                  <span>{person.online ? "Online now" : `Last active ${relativeTime(person.lastActiveAt)}`}</span>
+          <form className="username-form" onSubmit={saveUsername}>
+            <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="choose_username" />
+            <button className="secondary-button" type="submit">Save</button>
+          </form>
+          {usernameNote && <span className="action-note">{usernameNote}</span>}
+          <form className="friend-request-form" onSubmit={sendFriendRequest}>
+            <UserPlus size={16} />
+            <input value={friendUsername} onChange={(event) => setFriendUsername(event.target.value.toLowerCase())} placeholder="friend_username" />
+            <button className="icon-button" type="submit" title="Send friend request"><Send size={15} /></button>
+          </form>
+          {social.friendRequests.length > 0 && (
+            <div className="friend-requests">
+              {social.friendRequests.map((request) => (
+                <div className="friend-request-row" key={request.id}>
+                  <div>
+                    <strong>{request.displayName}</strong>
+                    <span>@{request.username}</span>
+                  </div>
+                  <button className="icon-button" type="button" title="Accept" onClick={() => social.acceptFriendRequest(request.id)}><Check size={15} /></button>
+                  <button className="icon-button" type="button" title="Decline" onClick={() => social.declineFriendRequest(request.id)}><X size={15} /></button>
                 </div>
-                <button className="icon-button" type="button" title="Invite to a room" onClick={() => invitePartner(person)}><Send size={16} /></button>
+              ))}
+            </div>
+          )}
+          <div className="social-list">
+            {social.friends.length ? social.friends.map((friend) => (
+              <div className="social-row" key={friend.userId}>
+                <i className={friend.online ? "presence-dot online" : "presence-dot"} />
+                <div>
+                  <strong>{friend.displayName}</strong>
+                  <span>{friend.online ? `@${friend.username} - online` : `@${friend.username} - ${relativeTime(friend.lastActiveAt)}`}</span>
+                </div>
+                <button className="icon-button" type="button" title="Invite to a room" onClick={() => inviteFriend(friend)}><Send size={16} /></button>
               </div>
-            )) : <p>People you watch with will appear here.</p>}
+            )) : <p>Add friends by username to invite them faster.</p>}
           </div>
         </div>
 
@@ -135,6 +191,22 @@ export default function Dashboard({ user, roomState, social, onSignOut }) {
           </div>
         </section>
       </aside>
+
+      {tutorialOpen && (
+        <section className="tutorial-backdrop">
+          <div className="tutorial-card glass">
+            <Logo />
+            <h2>Welcome to Havyn</h2>
+            <div className="tutorial-steps">
+              <div><strong>1</strong><span>Create or join a room.</span></div>
+              <div><strong>2</strong><span>Open a video page, then sync the detected source.</span></div>
+              <div><strong>3</strong><span>Invite friends or join a public room from the dashboard.</span></div>
+              <div><strong>4</strong><span>Use chat and optional call while the movie stays in focus.</span></div>
+            </div>
+            <button className="primary-button" type="button" onClick={closeTutorial}>Enter Havyn</button>
+          </div>
+        </section>
+      )}
 
       {creating && <CreateRoomModal onClose={() => setCreating(false)} onCreate={roomState.createRoom} />}
     </main>

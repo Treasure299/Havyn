@@ -426,7 +426,7 @@ label {
   font-size: 13px;
 }
 
-.social-panel {
+.social-panel, .friends-panel {
   min-height: 280px;
 }
 
@@ -506,6 +506,54 @@ label {
   border-radius: 999px;
   background: rgba(48,182,69,0.1);
   padding: 7px 11px;
+  font-size: 12px;
+}
+
+.username-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.friend-request-form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.035);
+  padding: 7px;
+}
+
+.friend-request-form input {
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.friend-requests {
+  display: grid;
+  gap: 8px;
+}
+
+.friend-request-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(77,169,255,0.18);
+  border-radius: 8px;
+  background: rgba(40,132,231,0.08);
+  padding: 10px;
+}
+
+.friend-request-row span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -647,6 +695,66 @@ label {
   max-width: 240px;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.tutorial-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(18px);
+}
+
+.tutorial-card {
+  width: min(520px, calc(100vw - 56px));
+  display: grid;
+  gap: 20px;
+  border-radius: 12px;
+  padding: 28px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(77,169,255,0.18), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgba(239,62,58,0.16), transparent 28%),
+    rgba(14,14,19,0.94);
+}
+
+.tutorial-card h2 {
+  margin: 0;
+  font-size: 30px;
+}
+
+.tutorial-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.tutorial-steps div {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 9px;
+  background: rgba(255,255,255,0.045);
+  padding: 10px;
+}
+
+.tutorial-steps strong {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(40,132,231,0.2);
+  color: #dff0ff;
+}
+
+.tutorial-steps span {
+  color: #d8d8dd;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .join-form {

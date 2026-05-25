@@ -38,5 +38,5 @@ export default function App() {
     return <WatchRoom user={auth.user} roomState={roomState} social={social} onSignOut={auth.signOut} />;
   }
 
-  return <Dashboard user={auth.user} roomState={roomState} social={social} onSignOut={auth.signOut} />;
+  return <Dashboard user={auth.user} auth={auth} roomState={roomState} social={social} onSignOut={auth.signOut} />;
 }

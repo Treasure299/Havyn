@@ -38,10 +38,11 @@ export function useAuth() {
       session.user.user_metadata?.display_name ||
       session.user.email?.split("@")[0] ||
       "Havyn User";
+    const username = session.user.user_metadata?.username?.trim().toLowerCase();
 
     supabase
       .from("profiles")
-      .upsert({ id: session.user.id, display_name: displayName }, { onConflict: "id" })
+      .upsert({ id: session.user.id, display_name: displayName, ...(username ? { username } : {}) }, { onConflict: "id" })
       .select()
       .single()
       .then(({ data }) => setProfile(data || { id: session.user.id, display_name: displayName }));
@@ -52,16 +53,17 @@ export function useAuth() {
     return {
       id: session.user.id,
       email: session.user.email,
-      displayName: profile?.display_name || session.user.email?.split("@")[0] || "Havyn User"
+      displayName: profile?.display_name || session.user.email?.split("@")[0] || "Havyn User",
+      username: profile?.username || ""
     };
   }, [session, profile]);
 
-  async function signUp({ email, password, displayName }) {
+  async function signUp({ email, password, displayName, username }) {
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { display_name: displayName },
+        data: { display_name: displayName, username: username?.trim().toLowerCase() },
         emailRedirectTo: authRedirectUrl
       }
     });
@@ -77,6 +79,23 @@ export function useAuth() {
     await supabase?.auth.signOut();
   }
 
+  async function updateProfile(patch) {
+    if (!supabase || !session?.user) return null;
+    const nextPatch = {
+      ...patch,
+      ...(patch.username ? { username: patch.username.trim().toLowerCase() } : {})
+    };
+    const { data, error } = await supabase
+      .from("profiles")
+      .update(nextPatch)
+      .eq("id", session.user.id)
+      .select()
+      .single();
+    if (error) throw error;
+    setProfile(data);
+    return data;
+  }
+
   return {
     user,
     session,
@@ -84,6 +103,7 @@ export function useAuth() {
     isSupabaseConfigured,
     signUp,
     signIn,
-    signOut
+    signOut,
+    updateProfile
   };
 }

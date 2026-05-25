@@ -10,7 +10,7 @@ Havyn does not stream, proxy, transmit, copy, scrape, or redistribute video file
 - Node.js + Express + Socket.IO signaling server
 - Supabase Auth for signup, login, logout, and profiles
 - Private room creation and room-code joining
-- Social Beta dashboard with recent watch partners, in-app invites, and public rooms
+- Social Beta dashboard with friends, usernames, in-app invites, and public rooms
 - In-memory live presence and participant status
 - Embedded Electron BrowserView with generic HTML5 video detection
 - Server-authoritative playback state
@@ -18,7 +18,7 @@ Havyn does not stream, proxy, transmit, copy, scrape, or redistribute video file
 - Realtime room chat through Socket.IO
 - Optional raw WebRTC peer-to-peer mesh calling for up to 4 users
 - Public free STUN server for local testing
-- Supabase SQL schema for profiles, rooms, members, chat messages, invites, public rooms, and social presence
+- Supabase SQL schema for profiles, rooms, members, chat messages, invites, friends, public rooms, and social presence
 
 ## MVP Limitations
 
@@ -61,7 +61,7 @@ Copy-Item apps/desktop/.env.example apps/desktop/.env
 1. Create a free Supabase project.
 2. Open the SQL editor.
 3. Run `supabase/schema.sql`.
-   - Existing projects that already ran the older schema can run `supabase/social-beta.sql` once instead.
+   - Existing projects that already ran the older schema can run `supabase/social-beta.sql` once, then `supabase/friends-beta.sql` once.
 4. In Supabase Auth settings, enable email/password auth.
 5. In Authentication > URL Configuration, set Site URL to your verification page. For the hosted MVP this is `https://havyn-socket-server.onrender.com/verify`.
 6. Add these Redirect URLs:
@@ -110,6 +110,14 @@ npm run dev
 For the cleanest test, create two Supabase accounts and run two desktop windows. Electron uses a persistent embedded browser partition, so each participant still loads the media locally inside their own session.
 
 If you need fully separate embedded browser sessions on one machine later, add a per-user Electron partition. The MVP keeps one persistent desktop partition for simplicity.
+
+## Friends Test
+
+1. Create two accounts and set a username for each from the dashboard.
+2. Send a friend request using the other user's username.
+3. Accept or decline the request from the receiving account.
+4. Confirm the friend list shows online status and last active time.
+5. Invite a friend to a private room from the friend list.
 
 ## Media Detection Test
 

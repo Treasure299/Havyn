@@ -29,6 +29,8 @@ function isRoomFresh(value) {
 
 export function useSocial(user, room) {
   const [recentPeople, setRecentPeople] = useState([]);
+  const [friends, setFriends] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
   const [invites, setInvites] = useState([]);
   const [publicRooms, setPublicRooms] = useState([]);
   const [socialNote, setSocialNote] = useState("");
@@ -88,6 +90,54 @@ export function useSocial(user, room) {
     })));
   }, [userId]);
 
+  const loadFriends = useCallback(async () => {
+    if (!supabase || !userId) return;
+    const { data } = await supabase
+      .from("friendships")
+      .select("friend_user_id,created_at,friend:profiles!friendships_friend_user_id_fkey(id,display_name,username,last_active_at)")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(40);
+
+    const friendIds = (data || []).map((item) => item.friend_user_id);
+    const { data: presenceRows } = friendIds.length
+      ? await supabase.from("user_presence").select("user_id,online,last_active_at").in("user_id", friendIds)
+      : { data: [] };
+    const presenceByUser = new Map((presenceRows || []).map((item) => [item.user_id, item]));
+
+    setFriends((data || []).map((item) => {
+      const presence = presenceByUser.get(item.friend_user_id);
+      const activeAt = presence?.last_active_at || item.friend?.last_active_at;
+      return {
+        userId: item.friend_user_id,
+        displayName: item.friend?.display_name || "Havyn user",
+        username: item.friend?.username || "",
+        online: Boolean(presence?.online && isRecentlyActive(activeAt)),
+        lastActiveAt: activeAt,
+        friendsSince: item.created_at
+      };
+    }));
+  }, [userId]);
+
+  const loadFriendRequests = useCallback(async () => {
+    if (!supabase || !userId) return;
+    const { data } = await supabase
+      .from("friend_requests")
+      .select("id,requester_user_id,created_at,requester:profiles!friend_requests_requester_user_id_fkey(id,display_name,username,last_active_at)")
+      .eq("addressee_user_id", userId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    setFriendRequests((data || []).map((item) => ({
+      id: item.id,
+      userId: item.requester_user_id,
+      displayName: item.requester?.display_name || "Havyn user",
+      username: item.requester?.username || "",
+      createdAt: item.created_at
+    })));
+  }, [userId]);
+
   const loadPublicRooms = useCallback(async () => {
     if (!supabase || !userId) return;
     const { data: rooms } = await supabase
@@ -115,9 +165,11 @@ export function useSocial(user, room) {
 
   const refreshSocial = useCallback(() => {
     loadRecentPeople();
+    loadFriends();
+    loadFriendRequests();
     loadInvites();
     loadPublicRooms();
-  }, [loadInvites, loadPublicRooms, loadRecentPeople]);
+  }, [loadFriendRequests, loadFriends, loadInvites, loadPublicRooms, loadRecentPeople]);
 
   useEffect(() => {
     if (!supabase || !userId) return undefined;
@@ -203,6 +255,80 @@ export function useSocial(user, room) {
     return !error;
   }
 
+  async function sendFriendRequest(username) {
+    if (!supabase || !userId) return false;
+    const normalized = username.trim().toLowerCase().replace(/^@/, "");
+    if (!/^[a-z0-9_]{3,24}$/.test(normalized)) {
+      setSocialNote("Use a valid username");
+      window.setTimeout(() => setSocialNote(""), 1800);
+      return false;
+    }
+    const { data: target, error: targetError } = await supabase
+      .from("profiles")
+      .select("id,display_name,username")
+      .eq("username", normalized)
+      .maybeSingle();
+    if (targetError || !target) {
+      setSocialNote("No user found with that username");
+      window.setTimeout(() => setSocialNote(""), 1800);
+      return false;
+    }
+    if (target.id === userId) {
+      setSocialNote("That is your username");
+      window.setTimeout(() => setSocialNote(""), 1800);
+      return false;
+    }
+    const { data: existingFriend } = await supabase
+      .from("friendships")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("friend_user_id", target.id)
+      .maybeSingle();
+    if (existingFriend) {
+      setSocialNote(`${target.display_name} is already your friend`);
+      window.setTimeout(() => setSocialNote(""), 1800);
+      return false;
+    }
+    const { error } = await supabase.from("friend_requests").upsert(
+      {
+        requester_user_id: userId,
+        addressee_user_id: target.id,
+        status: "pending",
+        created_at: new Date().toISOString(),
+        responded_at: null
+      },
+      { onConflict: "requester_user_id,addressee_user_id" }
+    );
+    setSocialNote(error ? "Friend request could not be sent" : `Friend request sent to @${normalized}`);
+    window.setTimeout(() => setSocialNote(""), 2200);
+    return !error;
+  }
+
+  async function acceptFriendRequest(requestId) {
+    if (!supabase || !userId) return;
+    const request = friendRequests.find((item) => item.id === requestId);
+    if (!request) return;
+    const now = new Date().toISOString();
+    await supabase
+      .from("friend_requests")
+      .update({ status: "accepted", responded_at: now })
+      .eq("id", requestId);
+    await supabase.from("friendships").upsert([
+      { user_id: userId, friend_user_id: request.userId, created_at: now },
+      { user_id: request.userId, friend_user_id: userId, created_at: now }
+    ], { onConflict: "user_id,friend_user_id" });
+    await Promise.all([loadFriendRequests(), loadFriends()]);
+  }
+
+  async function declineFriendRequest(requestId) {
+    if (!supabase) return;
+    await supabase
+      .from("friend_requests")
+      .update({ status: "declined", responded_at: new Date().toISOString() })
+      .eq("id", requestId);
+    await loadFriendRequests();
+  }
+
   async function acceptInvite(inviteId) {
     const invite = invites.find((item) => item.id === inviteId);
     if (!supabase || !invite) return null;
@@ -225,11 +351,16 @@ export function useSocial(user, room) {
 
   return {
     recentPeople: visiblePartners,
+    friends,
+    friendRequests,
     invites,
     publicRooms,
     socialNote,
     refreshSocial,
     sendInvite,
+    sendFriendRequest,
+    acceptFriendRequest,
+    declineFriendRequest,
     acceptInvite,
     dismissInvite
   };

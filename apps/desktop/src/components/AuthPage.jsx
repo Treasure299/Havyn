@@ -6,6 +6,7 @@ import Logo from "./Logo";
 export default function AuthPage({ auth, onBack }) {
   const [mode, setMode] = useState("signin");
   const [displayName, setDisplayName] = useState("");
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -17,7 +18,7 @@ export default function AuthPage({ auth, onBack }) {
     setNotice("");
     try {
       if (mode === "signup") {
-        await auth.signUp({ email, password, displayName });
+        await auth.signUp({ email, password, displayName, username });
         setNotice("Check your email to confirm your account, then return to Havyn and log in.");
       } else {
         await auth.signIn({ email, password });
@@ -39,10 +40,16 @@ export default function AuthPage({ auth, onBack }) {
         <Logo />
         <h2>{mode === "signup" ? "Create your Havyn account" : "Welcome back"}</h2>
         {mode === "signup" && (
-          <label>
-            Display name
-            <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="David" required />
-          </label>
+          <>
+            <label>
+              Display name
+              <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="David" required />
+            </label>
+            <label>
+              Username
+              <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="david" required />
+            </label>
+          </>
         )}
         <label>
           Email
