@@ -30,12 +30,13 @@ function normalizePlaybackState(state) {
   };
 }
 
-export function getOrCreateRoom(roomId, { roomName, hostUserId, hostName } = {}) {
+export function getOrCreateRoom(roomId, { roomName, hostUserId, hostName, visibility, isPublic } = {}) {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
       roomId,
       roomName: roomName || "Untitled Havyn Room",
       hostUserId,
+      visibility: isPublic || visibility === "public" ? "public" : "private",
       playbackMode: PLAYBACK_MODES.HOST_ONLY,
       participants: new Map(),
       chatMessages: [],
@@ -47,6 +48,7 @@ export function getOrCreateRoom(roomId, { roomName, hostUserId, hostName } = {})
   const room = rooms.get(roomId);
   if (!room.hostUserId && hostUserId) room.hostUserId = hostUserId;
   if (roomName) room.roomName = roomName;
+  if (visibility || typeof isPublic === "boolean") room.visibility = isPublic || visibility === "public" ? "public" : "private";
   if (hostName && hostUserId && !room.participants.has(hostUserId)) {
     addParticipant(roomId, { userId: hostUserId, displayName: hostName, role: ROOM_ROLES.HOST });
   }
@@ -57,11 +59,13 @@ export function restoreRoom(snapshot = {}) {
   const existed = rooms.has(snapshot.roomId);
   const room = getOrCreateRoom(snapshot.roomId, {
     roomName: snapshot.roomName,
-    hostUserId: snapshot.hostUserId
+    hostUserId: snapshot.hostUserId,
+    visibility: snapshot.visibility
   });
   if (existed) return room;
   if (snapshot.hostUserId) room.hostUserId = snapshot.hostUserId;
   if (snapshot.roomName) room.roomName = snapshot.roomName;
+  if (snapshot.visibility) room.visibility = snapshot.visibility;
   if (Object.values(PLAYBACK_MODES).includes(snapshot.playbackMode)) {
     room.playbackMode = snapshot.playbackMode;
   }
@@ -74,7 +78,8 @@ export function restoreRoom(snapshot = {}) {
 export function addParticipant(roomId, participant) {
   const room = getOrCreateRoom(roomId, {
     roomName: participant.roomName,
-    hostUserId: participant.isCreating ? participant.userId : undefined
+    hostUserId: participant.isCreating ? participant.userId : undefined,
+    visibility: participant.visibility
   });
 
   const existing = room.participants.get(participant.userId);
@@ -158,6 +163,8 @@ export function serializeRoom(roomId) {
     roomId: room.roomId,
     roomName: room.roomName,
     hostUserId: room.hostUserId,
+    visibility: room.visibility || "private",
+    isPublic: (room.visibility || "private") === "public",
     playbackMode: room.playbackMode,
     createdAt: room.createdAt,
     participants: listParticipants(roomId),

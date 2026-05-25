@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "./hooks/useAuth";
 import { useRoom } from "./hooks/useRoom";
+import { useSocial } from "./hooks/useSocial";
 import LandingPage from "./components/LandingPage";
 import AuthPage from "./components/AuthPage";
 import Dashboard from "./components/Dashboard";
@@ -10,6 +11,7 @@ export default function App() {
   const auth = useAuth();
   const [screen, setScreen] = useState("landing");
   const roomState = useRoom(auth.user);
+  const social = useSocial(auth.user, roomState.room);
 
   if (auth.loading) {
     return <div className="boot-screen">Opening Havyn</div>;
@@ -33,8 +35,8 @@ export default function App() {
   }
 
   if (roomState.room) {
-    return <WatchRoom user={auth.user} roomState={roomState} onSignOut={auth.signOut} />;
+    return <WatchRoom user={auth.user} roomState={roomState} social={social} onSignOut={auth.signOut} />;
   }
 
-  return <Dashboard user={auth.user} roomState={roomState} onSignOut={auth.signOut} />;
+  return <Dashboard user={auth.user} roomState={roomState} social={social} onSignOut={auth.signOut} />;
 }

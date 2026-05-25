@@ -88,6 +88,7 @@ export function useRoom(user) {
           roomId: currentRoom.roomId,
           roomName: currentRoom.roomName,
           hostUserId: currentRoom.hostUserId,
+          visibility: currentRoom.visibility,
           playbackMode: currentRoom.playbackMode,
           playbackState: projectedPlaybackState(currentRoom.playbackState)
         },
@@ -107,14 +108,16 @@ export function useRoom(user) {
     };
   }, [socket, user]);
 
-  async function createRoom(name) {
+  async function createRoom(name, options = {}) {
     if (!user) return null;
     leavingRoomIdRef.current = null;
     const roomId = crypto.randomUUID().slice(0, 8).toUpperCase();
     const roomName = name || "Friday Watch";
+    const visibility = options.visibility === "public" || options.isPublic ? "public" : "private";
     socket.emit("room-create", {
       roomId,
       roomName,
+      visibility,
       user: { userId: user.id, displayName: user.displayName }
     });
 
@@ -123,12 +126,25 @@ export function useRoom(user) {
         { id: user.id, display_name: user.displayName },
         { onConflict: "id" }
       );
-      await supabase.from("rooms").insert({
+      const roomInsert = {
         id: roomId,
         name: roomName,
         host_user_id: user.id,
-        playback_mode: "host-only"
-      });
+        playback_mode: "host-only",
+        visibility,
+        last_seen_at: new Date().toISOString()
+      };
+      const { error: insertError } = await supabase.from("rooms").insert(roomInsert);
+      if (insertError?.message?.includes("visibility") || insertError?.message?.includes("last_seen_at")) {
+        await supabase.from("rooms").insert({
+          id: roomId,
+          name: roomName,
+          host_user_id: user.id,
+          playback_mode: "host-only"
+        });
+      } else if (insertError) {
+        throw insertError;
+      }
       await supabase.from("room_members").insert({ room_id: roomId, user_id: user.id, role: "host" });
     }
     return roomId;
@@ -136,9 +152,45 @@ export function useRoom(user) {
 
   async function joinRoom(roomId) {
     if (!user) return;
+    const normalizedRoomId = roomId.trim().toUpperCase();
     leavingRoomIdRef.current = null;
+    let roomSnapshot = null;
+    if (supabase) {
+      let { data: savedRoom, error: savedRoomError } = await supabase
+        .from("rooms")
+        .select("id,name,host_user_id,visibility,playback_mode,active_media_url,active_media_title")
+        .eq("id", normalizedRoomId)
+        .maybeSingle();
+      if (savedRoomError?.message?.includes("visibility")) {
+        const fallback = await supabase
+          .from("rooms")
+          .select("id,name,host_user_id,playback_mode,active_media_url,active_media_title")
+          .eq("id", normalizedRoomId)
+          .maybeSingle();
+        savedRoom = fallback.data;
+      }
+      if (savedRoom) {
+        roomSnapshot = {
+          roomId: savedRoom.id,
+          roomName: savedRoom.name,
+          hostUserId: savedRoom.host_user_id,
+          visibility: savedRoom.visibility,
+          playbackMode: savedRoom.playback_mode,
+          playbackState: {
+            activeMediaUrl: savedRoom.active_media_url || "",
+            activeMediaTitle: savedRoom.active_media_title || "",
+            isPlaying: false,
+            currentTime: 0,
+            playbackRate: 1,
+            updatedAt: Date.now(),
+            controllerUserId: savedRoom.host_user_id
+          }
+        };
+      }
+    }
     socket.emit("room-join", {
-      roomId: roomId.trim().toUpperCase(),
+      roomId: normalizedRoomId,
+      room: roomSnapshot,
       user: { userId: user.id, displayName: user.displayName }
     });
     if (supabase) {
@@ -147,7 +199,7 @@ export function useRoom(user) {
         { onConflict: "id" }
       );
       await supabase.from("room_members").upsert(
-        { room_id: roomId.trim().toUpperCase(), user_id: user.id, role: "viewer" },
+        { room_id: normalizedRoomId, user_id: user.id, role: "viewer" },
         { onConflict: "room_id,user_id" }
       );
     }

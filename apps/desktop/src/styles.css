@@ -366,15 +366,16 @@ label {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(500px, 1.1fr) minmax(340px, 0.9fr);
-  grid-auto-rows: minmax(190px, auto);
-  gap: 16px;
-  padding: 42px 56px;
+  grid-template-columns: minmax(430px, 1fr) repeat(2, minmax(300px, 0.72fr));
+  grid-auto-rows: minmax(180px, auto);
+  gap: 14px;
+  padding: 34px 48px;
 }
 
 .dashboard-copy {
   grid-row: span 2;
   align-self: center;
+  padding-right: 18px;
 }
 
 .dashboard-panel, .recent-panel {
@@ -408,6 +409,93 @@ label {
 .recent-room span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.social-panel {
+  min-height: 280px;
+}
+
+.public-rooms-panel {
+  grid-column: span 2;
+  min-height: 240px;
+}
+
+.invite-panel {
+  min-height: 180px;
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.social-list {
+  display: grid;
+  gap: 10px;
+}
+
+.social-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.social-row, .public-room-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.045);
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 11px;
+}
+
+.public-room-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.social-row strong, .public-room-row strong {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.social-row span, .public-room-row span, .public-room-row small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.presence-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.presence-dot.online {
+  background: var(--green);
+  box-shadow: 0 0 14px rgba(48,182,69,0.5);
+}
+
+.social-note {
+  width: max-content;
+  max-width: 100%;
+  margin-top: 14px;
+  color: #b7dfc0;
+  border: 1px solid rgba(48,182,69,0.24);
+  border-radius: 999px;
+  background: rgba(48,182,69,0.1);
+  padding: 7px 11px;
+  font-size: 12px;
 }
 
 .join-form {

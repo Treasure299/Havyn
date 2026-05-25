@@ -10,6 +10,7 @@ Havyn does not stream, proxy, transmit, copy, scrape, or redistribute video file
 - Node.js + Express + Socket.IO signaling server
 - Supabase Auth for signup, login, logout, and profiles
 - Private room creation and room-code joining
+- Social Beta dashboard with recent watch partners, in-app invites, and public rooms
 - In-memory live presence and participant status
 - Embedded Electron BrowserView with generic HTML5 video detection
 - Server-authoritative playback state
@@ -17,7 +18,7 @@ Havyn does not stream, proxy, transmit, copy, scrape, or redistribute video file
 - Realtime room chat through Socket.IO
 - Optional raw WebRTC peer-to-peer mesh calling for up to 4 users
 - Public free STUN server for local testing
-- Supabase SQL schema for profiles, rooms, members, and chat messages
+- Supabase SQL schema for profiles, rooms, members, chat messages, invites, public rooms, and social presence
 
 ## MVP Limitations
 
@@ -60,8 +61,9 @@ Copy-Item apps/desktop/.env.example apps/desktop/.env
 1. Create a free Supabase project.
 2. Open the SQL editor.
 3. Run `supabase/schema.sql`.
+   - Existing projects that already ran the older schema can run `supabase/social-beta.sql` once instead.
 4. In Supabase Auth settings, enable email/password auth.
-5. In Authentication > URL Configuration, set Site URL to `http://127.0.0.1:5173`.
+5. In Authentication > URL Configuration, set Site URL to your verification page. For the hosted MVP this is `https://havyn-socket-server.onrender.com/verify`.
 6. Add these Redirect URLs:
    - `http://127.0.0.1:5173/**`
    - `http://localhost:5173/**`
@@ -73,6 +75,7 @@ Desktop `.env`:
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 VITE_SOCKET_SERVER_URL=http://localhost:4000
+VITE_AUTH_REDIRECT_URL=https://havyn-socket-server.onrender.com/verify
 ```
 
 Server `.env`:

@@ -78,13 +78,14 @@ function emitRoomState(roomId) {
 }
 
 io.on("connection", (socket) => {
-  socket.on("room-create", ({ roomId, roomName, user }) => {
-    getOrCreateRoom(roomId, { roomName, hostUserId: user.userId });
+  socket.on("room-create", ({ roomId, roomName, user, visibility }) => {
+    getOrCreateRoom(roomId, { roomName, hostUserId: user.userId, visibility });
     socket.join(roomId);
     addParticipant(roomId, {
       ...user,
       socketId: socket.id,
       roomName,
+      visibility,
       isCreating: true,
       role: "host"
     });
@@ -100,8 +101,10 @@ io.on("connection", (socket) => {
     emitRoomState(roomId);
   });
 
-  socket.on("room-join", ({ roomId, user }) => {
-    const room = getOrCreateRoom(roomId);
+  socket.on("room-join", ({ roomId, user, room: roomSnapshot }) => {
+    const room = roomSnapshot?.roomId
+      ? restoreRoom(roomSnapshot)
+      : getOrCreateRoom(roomId);
     socket.join(roomId);
     addParticipant(roomId, { ...user, socketId: socket.id });
     socket.data.roomId = roomId;
