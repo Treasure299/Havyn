@@ -16,6 +16,15 @@ export function useRoom(user) {
     roomRef.current = room;
   }, [room]);
 
+  function projectedPlaybackState(state) {
+    if (!state?.isPlaying) return state;
+    return {
+      ...state,
+      currentTime: state.currentTime + ((Date.now() - state.updatedAt) / 1000) * (state.playbackRate || 1),
+      updatedAt: Date.now()
+    };
+  }
+
   function playTone(kind) {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -80,7 +89,7 @@ export function useRoom(user) {
           roomName: currentRoom.roomName,
           hostUserId: currentRoom.hostUserId,
           playbackMode: currentRoom.playbackMode,
-          playbackState: currentRoom.playbackState
+          playbackState: projectedPlaybackState(currentRoom.playbackState)
         },
         user: {
           userId: user.id,
@@ -172,6 +181,16 @@ export function useRoom(user) {
     socket.emit("room-role-update", { roomId: room.roomId, actorUserId: user.id, targetUserId, role });
   }
 
+  function updatePlaybackSnapshot(playbackState) {
+    if (!playbackState) return;
+    setRoom((currentRoom) => {
+      if (!currentRoom) return currentRoom;
+      const nextRoom = { ...currentRoom, playbackState };
+      roomRef.current = nextRoom;
+      return nextRoom;
+    });
+  }
+
   return {
     socket,
     room,
@@ -183,6 +202,7 @@ export function useRoom(user) {
     leaveRoom,
     sendMessage,
     setPlaybackMode,
-    setParticipantRole
+    setParticipantRole,
+    updatePlaybackSnapshot
   };
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-export function usePlaybackSync({ socket, room, user, applyPlayback, localCurrentTime }) {
+export function usePlaybackSync({ socket, room, user, applyPlayback, localCurrentTime, onPlaybackState }) {
   const [playbackState, setPlaybackState] = useState(null);
   const localCurrentTimeRef = useRef(localCurrentTime);
   const role = room?.participants?.find((participant) => participant.userId === user.id)?.role || "viewer";
@@ -19,6 +19,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   const applyRemoteState = useCallback((state, action = "sync") => {
     if (!state) return;
     setPlaybackState(state);
+    onPlaybackState?.(state);
     if (state.controllerUserId === user.id && !state.correctedUserId) return;
     applyPlayback?.({
       action: state.isPlaying ? "play" : "pause",
@@ -26,7 +27,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       playbackRate: state.playbackRate,
       reason: action
     });
-  }, [applyPlayback, user.id]);
+  }, [applyPlayback, onPlaybackState, user.id]);
 
   useEffect(() => {
     const sync = (state) => applyRemoteState(state, "sync");

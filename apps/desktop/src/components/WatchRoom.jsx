@@ -17,6 +17,7 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
   const call = useWebRTC({ socket, room, user });
   const playbackRef = useRef(null);
   const webVideoRef = useRef(null);
+  const autoLoadedMediaUrlRef = useRef("");
   const [sideWidth, setSideWidth] = useState(336);
   const [viewerHeight, setViewerHeight] = useState(null);
   const [callHeight, setCallHeight] = useState(190);
@@ -103,7 +104,8 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
     room,
     user,
     applyPlayback: media.applyPlayback,
-    localCurrentTime: media.detectedMedia[0]?.currentTime
+    localCurrentTime: media.detectedMedia[0]?.currentTime,
+    onPlaybackState: roomState.updatePlaybackSnapshot
   });
   const mediaRef = useRef(media);
 
@@ -123,6 +125,17 @@ export default function WatchRoom({ user, roomState, onSignOut }) {
     socket.on("media-selected", handleSelected);
     return () => socket.off("media-selected", handleSelected);
   }, [media, socket]);
+
+  useEffect(() => {
+    const activeUrl = playback.playbackState?.activeMediaUrl || room.playbackState?.activeMediaUrl;
+    if (!activeUrl || activeUrl === autoLoadedMediaUrlRef.current) return;
+    if (media.currentUrl === activeUrl) {
+      autoLoadedMediaUrlRef.current = activeUrl;
+      return;
+    }
+    autoLoadedMediaUrlRef.current = activeUrl;
+    media.loadUrl(activeUrl);
+  }, [media, media.currentUrl, playback.playbackState?.activeMediaUrl, room.playbackState?.activeMediaUrl]);
 
   const inviteLink = `havyn://room/${room.roomId}`;
   const copyRoomCode = async () => {
