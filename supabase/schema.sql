@@ -156,22 +156,10 @@ create policy "authenticated users can join rooms"
   to authenticated
   with check (auth.uid() = user_id);
 
-create policy "room members can read members"
+create policy "authenticated users can read room members"
   on public.room_members for select
   to authenticated
-  using (
-    user_id = auth.uid()
-    or exists (
-      select 1 from public.rooms
-      where rooms.id = room_members.room_id
-      and rooms.visibility = 'public'
-    )
-    or exists (
-      select 1 from public.room_members member_check
-      where member_check.room_id = room_members.room_id
-      and member_check.user_id = auth.uid()
-    )
-  );
+  using (true);
 
 create policy "room members can insert chat"
   on public.chat_messages for insert
@@ -224,22 +212,15 @@ create policy "invite participants can read invites"
   to authenticated
   using (auth.uid() = invitee_user_id or auth.uid() = inviter_user_id);
 
-create policy "room members and hosts can create invites"
+create policy "room hosts can create invites"
   on public.room_invites for insert
   to authenticated
   with check (
     auth.uid() = inviter_user_id
-    and (
-      exists (
-        select 1 from public.room_members
-        where room_members.room_id = room_invites.room_id
-        and room_members.user_id = auth.uid()
-      )
-      or exists (
-        select 1 from public.rooms
-        where rooms.id = room_invites.room_id
-        and rooms.host_user_id = auth.uid()
-      )
+    and exists (
+      select 1 from public.rooms
+      where rooms.id = room_invites.room_id
+      and rooms.host_user_id = auth.uid()
     )
   );
 

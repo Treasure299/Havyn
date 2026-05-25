@@ -145,10 +145,7 @@ export function useRoom(user) {
       } else if (insertError) {
         throw insertError;
       }
-      await supabase.from("room_members").upsert(
-        { room_id: roomId, user_id: user.id, role: "host" },
-        { onConflict: "room_id,user_id" }
-      );
+      await supabase.from("room_members").insert({ room_id: roomId, user_id: user.id, role: "host" });
     }
     return roomId;
   }

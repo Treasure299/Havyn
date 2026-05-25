@@ -62,22 +62,11 @@ create policy "room members can read rooms"
   );
 
 drop policy if exists "room members can read members" on public.room_members;
-create policy "room members can read members"
+drop policy if exists "authenticated users can read room members" on public.room_members;
+create policy "authenticated users can read room members"
   on public.room_members for select
   to authenticated
-  using (
-    user_id = auth.uid()
-    or exists (
-      select 1 from public.rooms
-      where rooms.id = room_members.room_id
-      and rooms.visibility = 'public'
-    )
-    or exists (
-      select 1 from public.room_members member_check
-      where member_check.room_id = room_members.room_id
-      and member_check.user_id = auth.uid()
-    )
-  );
+  using (true);
 
 drop policy if exists "presence is readable by authenticated users" on public.user_presence;
 create policy "presence is readable by authenticated users"
@@ -123,22 +112,16 @@ create policy "invite participants can read invites"
 
 drop policy if exists "room members can create invites" on public.room_invites;
 drop policy if exists "room members and hosts can create invites" on public.room_invites;
-create policy "room members and hosts can create invites"
+drop policy if exists "room hosts can create invites" on public.room_invites;
+create policy "room hosts can create invites"
   on public.room_invites for insert
   to authenticated
   with check (
     auth.uid() = inviter_user_id
-    and (
-      exists (
-        select 1 from public.room_members
-        where room_members.room_id = room_invites.room_id
-        and room_members.user_id = auth.uid()
-      )
-      or exists (
-        select 1 from public.rooms
-        where rooms.id = room_invites.room_id
-        and rooms.host_user_id = auth.uid()
-      )
+    and exists (
+      select 1 from public.rooms
+      where rooms.id = room_invites.room_id
+      and rooms.host_user_id = auth.uid()
     )
   );
 
