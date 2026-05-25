@@ -75,6 +75,13 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
     setTutorialOpen(false);
   }
 
+  function openGuide() {
+    setProfileOpen(false);
+    setInvitesOpen(false);
+    setTutorialOpen(false);
+    window.requestAnimationFrame(() => setTutorialOpen(true));
+  }
+
   function toggleNotifications() {
     setInvitesOpen((value) => {
       const next = !value;
@@ -132,7 +139,7 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
       <header className="app-header">
         <Logo />
         <div className="header-actions">
-          <button className="icon-text" onClick={() => setTutorialOpen(true)} title="How Havyn works"><HelpCircle size={17} /> Guide</button>
+          <button className="icon-text" onClick={openGuide} title="How Havyn works"><HelpCircle size={17} /> Guide</button>
           <div className="notification-menu-wrap">
             <button
               className={`icon-button notification-button ${hasUnreadNotifications ? "has-unread" : ""}`}
