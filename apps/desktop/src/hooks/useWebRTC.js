@@ -63,6 +63,7 @@ export function useWebRTC({ socket, room, user }) {
   const cameraOffRef = useRef(cameraOff);
   const joinedRef = useRef(joined);
   const reconnectTimersRef = useRef(new Map());
+  const negotiateTimersRef = useRef(new Map());
   const audioStatsRef = useRef(new Map());
   const createPeerRef = useRef(null);
 
@@ -92,6 +93,9 @@ export function useWebRTC({ socket, room, user }) {
     const timer = reconnectTimersRef.current.get(peerUserId);
     if (timer) window.clearTimeout(timer);
     reconnectTimersRef.current.delete(peerUserId);
+    const negotiateTimer = negotiateTimersRef.current.get(peerUserId);
+    if (negotiateTimer) window.clearTimeout(negotiateTimer);
+    negotiateTimersRef.current.delete(peerUserId);
     audioStatsRef.current.delete(peerUserId);
     const peer = peersRef.current.get(peerUserId);
     if (peer) {
@@ -111,6 +115,20 @@ export function useWebRTC({ socket, room, user }) {
     socket.emit("webrtc-offer", { roomId: room.roomId, fromUserId: user.id, toUserId: peerUserId, offer });
   }, [room?.roomId, socket, user.id]);
 
+  const shouldInitiateOffer = useCallback((peerUserId) => String(user.id) > String(peerUserId), [user.id]);
+
+  const scheduleNegotiation = useCallback((peerUserId, delay = 350) => {
+    if (!joinedRef.current || !localStreamRef.current || !shouldInitiateOffer(peerUserId)) return;
+    const currentTimer = negotiateTimersRef.current.get(peerUserId);
+    if (currentTimer) window.clearTimeout(currentTimer);
+    const timer = window.setTimeout(async () => {
+      negotiateTimersRef.current.delete(peerUserId);
+      if (!joinedRef.current || !localStreamRef.current) return;
+      await sendOffer(peerUserId);
+    }, delay);
+    negotiateTimersRef.current.set(peerUserId, timer);
+  }, [sendOffer, shouldInitiateOffer]);
+
   const schedulePeerRepair = useCallback((peerUserId) => {
     if (!joinedRef.current || reconnectTimersRef.current.has(peerUserId)) return;
     const timer = window.setTimeout(async () => {
@@ -118,12 +136,12 @@ export function useWebRTC({ socket, room, user }) {
       if (!joinedRef.current || !localStreamRef.current) return;
       closePeer(peerUserId);
       createPeerRef.current?.(peerUserId);
-      if (String(user.id) > String(peerUserId)) {
+      if (shouldInitiateOffer(peerUserId)) {
         await sendOffer(peerUserId);
       }
     }, 1200);
     reconnectTimersRef.current.set(peerUserId, timer);
-  }, [closePeer, sendOffer, user.id]);
+  }, [closePeer, sendOffer, shouldInitiateOffer]);
 
   const watchRemoteTrack = useCallback((peerUserId, track) => {
     const repair = () => schedulePeerRepair(peerUserId);
@@ -146,6 +164,9 @@ export function useWebRTC({ socket, room, user }) {
       const next = items.filter((item) => item.userId !== peerUserId);
       return [...next, { userId: peerUserId, stream }];
     });
+    const negotiateTimer = negotiateTimersRef.current.get(peerUserId);
+    if (negotiateTimer) window.clearTimeout(negotiateTimer);
+    negotiateTimersRef.current.delete(peerUserId);
   }, [watchRemoteTrack]);
 
   const createPeer = useCallback((peerUserId) => {
@@ -251,6 +272,8 @@ export function useWebRTC({ socket, room, user }) {
     socket.emit("call-leave", { roomId: room.roomId, userId: user.id });
     reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     reconnectTimersRef.current.clear();
+    negotiateTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    negotiateTimersRef.current.clear();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
     peersRef.current.forEach((peer) => {
@@ -336,22 +359,38 @@ export function useWebRTC({ socket, room, user }) {
   }, [joined, schedulePeerRepair, sendOffer, streams]);
 
   useEffect(() => {
+    if (!joined || !localStreamRef.current) return;
+    const connectedUsers = room?.participants?.filter((participant) => (
+      participant.userId !== user.id && participant.callStatus === "connected"
+    )) || [];
+    const connectedUserIds = new Set(connectedUsers.map((participant) => participant.userId));
+
+    peersRef.current.forEach((_peer, peerUserId) => {
+      if (!connectedUserIds.has(peerUserId)) closePeer(peerUserId);
+    });
+
+    connectedUsers.forEach((participant) => {
+      const peer = createPeer(participant.userId);
+      const hasRemoteStream = streams.some((item) => item.userId === participant.userId);
+      if (!hasRemoteStream || peer.connectionState === "new" || peer.connectionState === "connecting") {
+        scheduleNegotiation(participant.userId);
+      }
+    });
+  }, [closePeer, createPeer, joined, room?.participants, scheduleNegotiation, streams, user.id]);
+
+  useEffect(() => {
     const handleCallUsers = async (users) => {
       for (const peerUser of users) {
         if (peerUser.userId === user.id) continue;
         createPeer(peerUser.userId);
-        if (String(user.id) > String(peerUser.userId)) {
-          await sendOffer(peerUser.userId);
-        }
+        scheduleNegotiation(peerUser.userId, 100);
       }
     };
 
     const handleCallUserJoined = async ({ user: peerUser }) => {
       if (!joinedRef.current || !peerUser?.userId || peerUser.userId === user.id) return;
       createPeer(peerUser.userId);
-      if (String(user.id) > String(peerUser.userId)) {
-        await sendOffer(peerUser.userId);
-      }
+      scheduleNegotiation(peerUser.userId, 100);
     };
 
     const handleOffer = async ({ fromUserId, offer }) => {
@@ -410,10 +449,11 @@ export function useWebRTC({ socket, room, user }) {
       socket.off("call-full", handleCallFull);
       socket.io.off("reconnect", handleReconnect);
     };
-  }, [closePeer, createPeer, joined, room?.roomId, sendOffer, socket, user.displayName, user.id]);
+  }, [closePeer, createPeer, joined, room?.roomId, scheduleNegotiation, socket, user.displayName, user.id]);
 
   useEffect(() => () => {
     reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    negotiateTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     peersRef.current.forEach((peer) => {
       peer.onconnectionstatechange = null;
