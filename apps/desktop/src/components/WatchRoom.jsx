@@ -20,6 +20,8 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const playbackRef = useRef(null);
   const webVideoRef = useRef(null);
   const autoLoadedMediaUrlRef = useRef("");
+  const autoSyncKeyRef = useRef("");
+  const suppressMediaEventsUntilRef = useRef(0);
   const [sideWidth, setSideWidth] = useState(336);
   const [viewerHeight, setViewerHeight] = useState(null);
   const [callHeight, setCallHeight] = useState(190);
@@ -85,6 +87,8 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const handleMediaEvent = useCallback((event) => {
     if (!room) return;
     if (event.controlledByHavyn) return;
+    const isPlaybackEvent = ["play", "pause", "seeked", "ratechange"].includes(event.eventName);
+    if (isPlaybackEvent && Date.now() < suppressMediaEventsUntilRef.current) return;
     const playbackApi = playbackRef.current;
     const payload = { roomId: room.roomId, userId: user.id, currentTime: event.media.currentTime };
 
@@ -132,7 +136,10 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
 
   useEffect(() => {
     const handleSelected = ({ media: selected }) => {
-      if (selected?.url) media.loadUrl(selected.url);
+      if (selected?.url) {
+        suppressMediaEventsUntilRef.current = Date.now() + 12_000;
+        media.loadUrl(selected.url);
+      }
     };
     socket.on("media-selected", handleSelected);
     return () => socket.off("media-selected", handleSelected);
@@ -146,8 +153,26 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       return;
     }
     autoLoadedMediaUrlRef.current = activeUrl;
-    media.loadUrl(activeUrl);
+    suppressMediaEventsUntilRef.current = Date.now() + 12_000;
+    media.loadUrl(activeUrl).then(() => {
+      window.setTimeout(() => {
+        socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
+      }, 900);
+    });
   }, [media, media.currentUrl, playback.playbackState?.activeMediaUrl, room.playbackState?.activeMediaUrl]);
+
+  useEffect(() => {
+    const state = playback.playbackState || room.playbackState;
+    const firstMedia = media.detectedMedia[0];
+    if (!state?.activeMediaUrl || !firstMedia) return;
+    const key = `${state.activeMediaUrl}|${firstMedia.id || firstMedia.index || 0}|${Math.round(firstMedia.duration || 0)}`;
+    if (autoSyncKeyRef.current === key) return;
+    autoSyncKeyRef.current = key;
+    suppressMediaEventsUntilRef.current = Date.now() + 8000;
+    window.setTimeout(() => {
+      socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
+    }, 350);
+  }, [media.detectedMedia, playback.playbackState, room.playbackState, room.roomId, socket, user.id]);
 
   const inviteLink = `havyn://room/${room.roomId}`;
   const copyRoomCode = async () => {
@@ -216,6 +241,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
 
       {roomState.permissionNotice && <div className="toast">{roomState.permissionNotice}</div>}
       {social?.socialNote && <div className="toast social-toast">{social.socialNote}</div>}
+      {call.callNotice && <div className="toast">{call.callNotice}</div>}
       {roomState.actionNotice && <div className="action-toast">{roomState.actionNotice}</div>}
 
       <section

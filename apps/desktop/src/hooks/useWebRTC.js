@@ -52,6 +52,7 @@ export function useWebRTC({ socket, room, user }) {
   const [muted, setMuted] = useState(true);
   const [cameraOff, setCameraOff] = useState(true);
   const [callError, setCallError] = useState("");
+  const [callNotice, setCallNotice] = useState("");
   const [streams, setStreams] = useState([]);
   const [localPreviewStream, setLocalPreviewStream] = useState(null);
   const [devices, setDevices] = useState({ audioInputs: [], videoInputs: [] });
@@ -78,6 +79,11 @@ export function useWebRTC({ socket, room, user }) {
   useEffect(() => {
     joinedRef.current = joined;
   }, [joined]);
+
+  function notifyCall(message, timeout = 2200) {
+    setCallNotice(message);
+    if (timeout) window.setTimeout(() => setCallNotice(""), timeout);
+  }
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -244,14 +250,20 @@ export function useWebRTC({ socket, room, user }) {
 
   async function joinCall() {
     setCallError("");
+    notifyCall("Joining call...", 0);
     let stream = await navigator.mediaDevices.getUserMedia(buildMediaConstraints(selectedAudioDeviceId, selectedVideoDeviceId)).catch(() => null);
     if (!stream) {
       stream = await navigator.mediaDevices.getUserMedia(mediaConstraints).catch((error) => {
-        setCallError(error.message || "Camera or microphone could not be opened.");
+        const message = error.message || "Camera or microphone could not be opened.";
+        setCallError(message);
+        notifyCall("Call could not be joined.");
         return null;
       });
     }
-    if (!stream) return;
+    if (!stream) {
+      notifyCall("Call could not be joined.");
+      return;
+    }
     stream.getAudioTracks().forEach((track) => { track.enabled = true; });
     stream.getVideoTracks().forEach((track) => { track.enabled = true; });
     localStreamRef.current = stream;
@@ -265,10 +277,11 @@ export function useWebRTC({ socket, room, user }) {
       muted: false,
       cameraOff: false
     });
+    notifyCall("Joined call");
     await refreshDevices();
   }
 
-  function leaveCall() {
+  function leaveCall(showNotice = true) {
     socket.emit("call-leave", { roomId: room.roomId, userId: user.id });
     reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     reconnectTimersRef.current.clear();
@@ -287,6 +300,7 @@ export function useWebRTC({ socket, room, user }) {
     setJoined(false);
     setMuted(true);
     setCameraOff(true);
+    if (showNotice) notifyCall("Left call");
   }
 
   function toggleMute() {
@@ -418,7 +432,8 @@ export function useWebRTC({ socket, room, user }) {
     const handleUserLeft = ({ userId }) => closePeer(userId);
     const handleCallFull = ({ message }) => {
       setCallError(message);
-      leaveCall();
+      notifyCall(message || "Call could not be joined.");
+      leaveCall(false);
     };
     const handleReconnect = () => {
       if (!joinedRef.current || !localStreamRef.current) return;
@@ -473,6 +488,7 @@ export function useWebRTC({ socket, room, user }) {
     muted,
     cameraOff,
     callError,
+    callNotice,
     devices,
     selectedAudioDeviceId,
     selectedVideoDeviceId,
