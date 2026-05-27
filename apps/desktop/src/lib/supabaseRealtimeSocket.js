@@ -97,7 +97,7 @@ export class SupabaseRealtimeSocket {
     if (!this.room.playbackState.controllerUserId) this.room.playbackState.controllerUserId = this.room.hostUserId;
 
     this.channel = supabase.channel(`havyn-room:${roomId}`, {
-      config: { broadcast: { self: true }, presence: { key: user.userId } }
+      config: { broadcast: { self: true, ack: true }, presence: { key: user.userId } }
     });
     this.bindRoomChannel();
     this.channel.subscribe(async (status) => {
@@ -228,8 +228,21 @@ export class SupabaseRealtimeSocket {
     this.emitRoomState();
   }
 
-  broadcast(event, payload) {
-    this.channel?.send({ type: "broadcast", event, payload });
+  async broadcast(event, payload) {
+    if (!this.channel) return;
+    const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : { value: payload };
+    const result = await this.channel.send({
+      type: "broadcast",
+      event,
+      payload: {
+        ...body,
+        roomId: body.roomId || this.room?.roomId,
+        senderUserId: body.senderUserId || this.user?.userId
+      }
+    });
+    if (result !== "ok") {
+      console.warn(`[Havyn] Supabase signal failed for ${event}`, result);
+    }
   }
 
   async leaveRoom({ roomId, userId }) {

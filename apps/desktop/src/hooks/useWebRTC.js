@@ -338,7 +338,18 @@ export function useWebRTC({ socket, room, user }) {
   useEffect(() => {
     const handleCallUsers = async (users) => {
       for (const peerUser of users) {
+        if (peerUser.userId === user.id) continue;
         createPeer(peerUser.userId);
+        if (String(user.id) > String(peerUser.userId)) {
+          await sendOffer(peerUser.userId);
+        }
+      }
+    };
+
+    const handleCallUserJoined = async ({ user: peerUser }) => {
+      if (!joinedRef.current || !peerUser?.userId || peerUser.userId === user.id) return;
+      createPeer(peerUser.userId);
+      if (String(user.id) > String(peerUser.userId)) {
         await sendOffer(peerUser.userId);
       }
     };
@@ -381,6 +392,7 @@ export function useWebRTC({ socket, room, user }) {
     };
 
     socket.on("call-users", handleCallUsers);
+    socket.on("call-user-joined", handleCallUserJoined);
     socket.on("webrtc-offer", handleOffer);
     socket.on("webrtc-answer", handleAnswer);
     socket.on("webrtc-ice-candidate", handleIce);
@@ -390,6 +402,7 @@ export function useWebRTC({ socket, room, user }) {
 
     return () => {
       socket.off("call-users", handleCallUsers);
+      socket.off("call-user-joined", handleCallUserJoined);
       socket.off("webrtc-offer", handleOffer);
       socket.off("webrtc-answer", handleAnswer);
       socket.off("webrtc-ice-candidate", handleIce);
