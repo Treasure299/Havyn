@@ -74,6 +74,7 @@ Desktop `.env`:
 ```env
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_SIGNALING_PROVIDER=socket
 VITE_SOCKET_SERVER_URL=http://localhost:4000
 VITE_AUTH_REDIRECT_URL=https://havyn-socket-server.onrender.com/verify
 ```
@@ -251,3 +252,17 @@ After Koyeb is healthy, rebuild the desktop app with:
 VITE_SOCKET_SERVER_URL=https://YOUR-KOYEB-DOMAIN
 VITE_AUTH_REDIRECT_URL=https://YOUR-KOYEB-DOMAIN/verify
 ```
+
+## Supabase Realtime Signaling
+
+For no-card testing without Render/Koyeb/Oracle, Havyn can use Supabase Realtime instead of the Socket.IO server. This keeps room sync, chat, WebRTC signaling, and presence inside Supabase channels.
+
+Set the desktop app to:
+
+```env
+VITE_SIGNALING_PROVIDER=supabase
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+`VITE_SOCKET_SERVER_URL` is ignored when `VITE_SIGNALING_PROVIDER=supabase`, but can stay in the file as a fallback value. Rebuild and repackage the desktop app after changing Vite env values.
