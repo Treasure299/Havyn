@@ -227,3 +227,27 @@ See `deploy/oracle/README.md`. After the Oracle server is live, package the desk
 ```env
 VITE_SOCKET_SERVER_URL=http://YOUR_ORACLE_PUBLIC_IP:4000
 ```
+
+## Koyeb Free Socket Server
+
+If Oracle account setup is blocked, Koyeb is the simpler free fallback. Havyn includes:
+
+```bash
+Procfile
+deploy/koyeb/
+```
+
+Use the GitHub repo root, expose port `4000`, and set:
+
+```env
+NODE_ENV=production
+PORT=4000
+CLIENT_ORIGIN=*
+```
+
+After Koyeb is healthy, rebuild the desktop app with:
+
+```env
+VITE_SOCKET_SERVER_URL=https://YOUR-KOYEB-DOMAIN
+VITE_AUTH_REDIRECT_URL=https://YOUR-KOYEB-DOMAIN/verify
+```
