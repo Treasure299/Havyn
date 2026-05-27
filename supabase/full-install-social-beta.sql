@@ -19,6 +19,7 @@ create table if not exists public.rooms (
   is_public boolean generated always as (visibility = 'public') stored,
   active_media_url text,
   active_media_title text,
+  active_media_state jsonb,
   last_seen_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

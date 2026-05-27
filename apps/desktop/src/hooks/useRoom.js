@@ -25,6 +25,56 @@ export function useRoom(user) {
     };
   }
 
+  function normalizeSavedPlaybackState(savedRoom) {
+    const savedState = savedRoom?.active_media_state;
+    if (!savedState || typeof savedState !== "object") {
+      return {
+        activeMediaUrl: savedRoom?.active_media_url || "",
+        activeMediaTitle: savedRoom?.active_media_title || "",
+        isPlaying: false,
+        currentTime: 0,
+        playbackRate: 1,
+        updatedAt: Date.now(),
+        controllerUserId: savedRoom?.host_user_id
+      };
+    }
+    return projectedPlaybackState({
+      activeMediaUrl: savedState.activeMediaUrl || savedRoom?.active_media_url || "",
+      activeMediaTitle: savedState.activeMediaTitle || savedRoom?.active_media_title || "",
+      isPlaying: Boolean(savedState.isPlaying),
+      currentTime: Number(savedState.currentTime || 0),
+      playbackRate: Number(savedState.playbackRate || 1),
+      updatedAt: Number(savedState.updatedAt || Date.now()),
+      controllerUserId: savedState.controllerUserId || savedRoom?.host_user_id
+    });
+  }
+
+  async function loadSavedRoomSnapshot(roomId) {
+    if (!supabase) return null;
+    let { data: savedRoom, error: savedRoomError } = await supabase
+      .from("rooms")
+      .select("id,name,host_user_id,visibility,playback_mode,active_media_url,active_media_title,active_media_state")
+      .eq("id", roomId)
+      .maybeSingle();
+    if (savedRoomError?.message?.includes("active_media_state") || savedRoomError?.message?.includes("visibility")) {
+      const fallback = await supabase
+        .from("rooms")
+        .select("id,name,host_user_id,playback_mode,active_media_url,active_media_title")
+        .eq("id", roomId)
+        .maybeSingle();
+      savedRoom = fallback.data;
+    }
+    if (!savedRoom) return null;
+    return {
+      roomId: savedRoom.id,
+      roomName: savedRoom.name,
+      hostUserId: savedRoom.host_user_id,
+      visibility: savedRoom.visibility,
+      playbackMode: savedRoom.playback_mode,
+      playbackState: normalizeSavedPlaybackState(savedRoom)
+    };
+  }
+
   function playTone(kind) {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -78,13 +128,14 @@ export function useRoom(user) {
   useEffect(() => {
     if (!user) return undefined;
 
-    const resumeRoom = () => {
+    const resumeRoom = async () => {
       const currentRoom = roomRef.current;
       if (!currentRoom?.roomId) return;
       if (leavingRoomIdRef.current === currentRoom.roomId) return;
+      const savedSnapshot = await loadSavedRoomSnapshot(currentRoom.roomId);
       const participant = currentRoom.participants?.find((item) => item.userId === user.id);
       socket.emit("room-resume", {
-        room: {
+        room: savedSnapshot || {
           roomId: currentRoom.roomId,
           roomName: currentRoom.roomName,
           hostUserId: currentRoom.hostUserId,
@@ -106,6 +157,20 @@ export function useRoom(user) {
       socket.off("connect", resumeRoom);
       socket.io.off("reconnect", resumeRoom);
     };
+  }, [socket, user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const sendHeartbeat = () => {
+      socket.emit("havyn-heartbeat", {
+        roomId: roomRef.current?.roomId,
+        userId: user.id,
+        sentAt: Date.now()
+      });
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 25_000);
+    return () => window.clearInterval(timer);
   }, [socket, user]);
 
   async function createRoom(name, options = {}) {
@@ -156,37 +221,7 @@ export function useRoom(user) {
     leavingRoomIdRef.current = null;
     let roomSnapshot = null;
     if (supabase) {
-      let { data: savedRoom, error: savedRoomError } = await supabase
-        .from("rooms")
-        .select("id,name,host_user_id,visibility,playback_mode,active_media_url,active_media_title")
-        .eq("id", normalizedRoomId)
-        .maybeSingle();
-      if (savedRoomError?.message?.includes("visibility")) {
-        const fallback = await supabase
-          .from("rooms")
-          .select("id,name,host_user_id,playback_mode,active_media_url,active_media_title")
-          .eq("id", normalizedRoomId)
-          .maybeSingle();
-        savedRoom = fallback.data;
-      }
-      if (savedRoom) {
-        roomSnapshot = {
-          roomId: savedRoom.id,
-          roomName: savedRoom.name,
-          hostUserId: savedRoom.host_user_id,
-          visibility: savedRoom.visibility,
-          playbackMode: savedRoom.playback_mode,
-          playbackState: {
-            activeMediaUrl: savedRoom.active_media_url || "",
-            activeMediaTitle: savedRoom.active_media_title || "",
-            isPlaying: false,
-            currentTime: 0,
-            playbackRate: 1,
-            updatedAt: Date.now(),
-            controllerUserId: savedRoom.host_user_id
-          }
-        };
-      }
+      roomSnapshot = await loadSavedRoomSnapshot(normalizedRoomId);
     }
     socket.emit("room-join", {
       roomId: normalizedRoomId,

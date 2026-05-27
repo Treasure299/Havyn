@@ -78,6 +78,14 @@ function emitRoomState(roomId) {
 }
 
 io.on("connection", (socket) => {
+  socket.on("havyn-heartbeat", ({ roomId, userId, sentAt }) => {
+    socket.data.lastHeartbeatAt = Date.now();
+    if (roomId && userId) {
+      updateParticipant(roomId, userId, { online: true, socketId: socket.id, lastSeenAt: new Date().toISOString() });
+    }
+    socket.emit("havyn-heartbeat-ack", { sentAt, receivedAt: Date.now() });
+  });
+
   socket.on("room-create", ({ roomId, roomName, user, visibility }) => {
     getOrCreateRoom(roomId, { roomName, hostUserId: user.userId, visibility });
     socket.join(roomId);

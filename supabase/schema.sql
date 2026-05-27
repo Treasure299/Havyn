@@ -16,6 +16,7 @@ create table if not exists public.rooms (
   is_public boolean generated always as (visibility = 'public') stored,
   active_media_url text,
   active_media_title text,
+  active_media_state jsonb,
   last_seen_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -28,6 +29,7 @@ alter table public.profiles
 alter table public.rooms
   add column if not exists visibility text not null default 'private' check (visibility in ('private', 'public')),
   add column if not exists is_public boolean generated always as (visibility = 'public') stored,
+  add column if not exists active_media_state jsonb,
   add column if not exists last_seen_at timestamptz not null default now();
 
 create table if not exists public.room_members (

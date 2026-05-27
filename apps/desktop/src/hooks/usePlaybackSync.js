@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 export function usePlaybackSync({ socket, room, user, applyPlayback, localCurrentTime, onPlaybackState }) {
   const [playbackState, setPlaybackState] = useState(null);
   const localCurrentTimeRef = useRef(localCurrentTime);
+  const playbackStateRef = useRef(null);
   const role = room?.participants?.find((participant) => participant.userId === user.id)?.role || "viewer";
 
   useEffect(() => {
@@ -15,6 +17,20 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     if (room.playbackMode === "host-and-cohosts") return ["host", "cohost"].includes(role);
     return role === "host";
   }, [room, role]);
+
+  useEffect(() => {
+    playbackStateRef.current = playbackState || room?.playbackState || null;
+  }, [playbackState, room?.playbackState]);
+
+  function projectedPlaybackState(state) {
+    if (!state) return state;
+    if (!state.isPlaying) return { ...state, updatedAt: Date.now() };
+    return {
+      ...state,
+      currentTime: Number(state.currentTime || 0) + ((Date.now() - Number(state.updatedAt || Date.now())) / 1000) * Number(state.playbackRate || 1),
+      updatedAt: Date.now()
+    };
+  }
 
   const applyRemoteState = useCallback((state, action = "sync") => {
     if (!state) return;
@@ -78,6 +94,35 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       window.removeEventListener("focus", requestSync);
     };
   }, [socket, room?.roomId, user.id, playbackState]);
+
+  useEffect(() => {
+    if (!supabase || !room?.roomId || room.hostUserId !== user.id) return undefined;
+    const persistPlayback = () => {
+      const state = projectedPlaybackState(playbackStateRef.current);
+      if (!state?.activeMediaUrl) return;
+      supabase
+        .from("rooms")
+        .update({
+          active_media_url: state.activeMediaUrl || null,
+          active_media_title: state.activeMediaTitle || null,
+          active_media_state: {
+            isPlaying: Boolean(state.isPlaying),
+            currentTime: Number(state.currentTime || 0),
+            updatedAt: Number(state.updatedAt || Date.now()),
+            playbackRate: Number(state.playbackRate || 1),
+            activeMediaUrl: state.activeMediaUrl || "",
+            activeMediaTitle: state.activeMediaTitle || "",
+            controllerUserId: state.controllerUserId || user.id
+          },
+          updated_at: new Date().toISOString(),
+          last_seen_at: new Date().toISOString()
+        })
+        .eq("id", room.roomId);
+    };
+    persistPlayback();
+    const timer = window.setInterval(persistPlayback, 5_000);
+    return () => window.clearInterval(timer);
+  }, [room?.hostUserId, room?.roomId, user.id]);
 
   function selectMedia(media) {
     socket.emit("media-selected", {
