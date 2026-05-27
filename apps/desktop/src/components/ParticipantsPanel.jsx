@@ -3,19 +3,20 @@ import { useState } from "react";
 
 export default function ParticipantsPanel({ participants = [], currentUserId, onRoleChange }) {
   const [open, setOpen] = useState(false);
-  const current = participants.find((participant) => participant.userId === currentUserId);
+  const uniqueParticipants = Array.from(new Map(participants.map((participant) => [participant.userId, participant])).values());
+  const current = uniqueParticipants.find((participant) => participant.userId === currentUserId);
   const canManageRoles = current?.role === "host";
 
   return (
     <section className={`participants-panel glass ${open ? "is-open" : ""}`}>
       <button className="participants-toggle" type="button" onClick={() => setOpen((value) => !value)}>
         <span>People</span>
-        <strong>{participants.length}</strong>
+        <strong>{uniqueParticipants.length}</strong>
         <ChevronDown size={17} />
       </button>
       {open && (
         <div className="participant-list">
-          {participants.map((participant) => (
+          {uniqueParticipants.map((participant) => (
             <div className="participant-row" key={participant.userId}>
               <div>
                 <strong>{participant.displayName}</strong>

@@ -69,10 +69,10 @@ export class SupabaseRealtimeSocket {
     if (event === "room-playback-mode") return this.setPlaybackMode(payload);
     if (event === "room-role-update") return this.setParticipantRole(payload);
     if (event === "media-detected") return this.mediaDetected(payload);
-    if (event === "media-selected") return this.selectMedia(payload);
-    if (event.startsWith("playback-") || event === "media-ended") return this.handlePlayback(event, payload);
     if (event === "playback-drift-correction") return this.driftCorrection(payload);
     if (event === "playback-sync-request") return this.syncPlayback(payload);
+    if (event === "media-selected") return this.selectMedia(payload);
+    if (["playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"].includes(event)) return this.handlePlayback(event, payload);
     if (event === "call-join") return this.joinCall(payload);
     if (event === "call-leave") return this.leaveCall(payload);
     if (event === "call-status") return this.callStatus(payload);
@@ -186,7 +186,21 @@ export class SupabaseRealtimeSocket {
 
   participants() {
     if (!this.channel) return [];
-    return Object.values(this.channel.presenceState()).flat().map((item) => ({ ...item, online: true }));
+    const byUser = new Map();
+    Object.values(this.channel.presenceState()).flat().forEach((item) => {
+      if (!item?.userId) return;
+      const current = byUser.get(item.userId);
+      const itemSeenAt = new Date(item.lastSeenAt || item.joinedAt || 0).getTime();
+      const currentSeenAt = new Date(current?.lastSeenAt || current?.joinedAt || 0).getTime();
+      if (!current || itemSeenAt >= currentSeenAt) {
+        byUser.set(item.userId, { ...current, ...item, online: true });
+      }
+    });
+    return Array.from(byUser.values()).sort((a, b) => {
+      const roleScore = { host: 0, cohost: 1, viewer: 2 };
+      return (roleScore[a.role] ?? 3) - (roleScore[b.role] ?? 3)
+        || String(a.displayName || "").localeCompare(String(b.displayName || ""));
+    });
   }
 
   currentParticipant(userId) {

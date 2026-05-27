@@ -1631,10 +1631,14 @@ label {
 .participants-panel {
   padding: 8px;
   align-self: end;
+  overflow: hidden;
 }
 
 .participants-panel.is-open {
   padding: 12px;
+  align-self: stretch;
+  max-height: min(46vh, 440px);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .participants-toggle {
@@ -1649,6 +1653,17 @@ label {
   color: var(--text);
   padding: 0 4px;
   text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  border-radius: 7px;
+}
+
+.participants-panel.is-open .participant-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
 }
 
 .participants-toggle span {
