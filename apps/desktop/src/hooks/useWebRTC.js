@@ -63,6 +63,7 @@ export function useWebRTC({ socket, room, user }) {
   const cameraOffRef = useRef(cameraOff);
   const joinedRef = useRef(joined);
   const reconnectTimersRef = useRef(new Map());
+  const iceRestartTimersRef = useRef(new Map());
   const audioStatsRef = useRef(new Map());
   const createPeerRef = useRef(null);
 
@@ -92,6 +93,9 @@ export function useWebRTC({ socket, room, user }) {
     const timer = reconnectTimersRef.current.get(peerUserId);
     if (timer) window.clearTimeout(timer);
     reconnectTimersRef.current.delete(peerUserId);
+    const iceTimer = iceRestartTimersRef.current.get(peerUserId);
+    if (iceTimer) window.clearTimeout(iceTimer);
+    iceRestartTimersRef.current.delete(peerUserId);
     audioStatsRef.current.delete(peerUserId);
     const peer = peersRef.current.get(peerUserId);
     if (peer) {
@@ -111,7 +115,17 @@ export function useWebRTC({ socket, room, user }) {
     socket.emit("webrtc-offer", { roomId: room.roomId, fromUserId: user.id, toUserId: peerUserId, offer });
   }, [room?.roomId, socket, user.id]);
 
-  const schedulePeerRepair = useCallback((peerUserId) => {
+  const scheduleIceRestart = useCallback((peerUserId, delay = 3500) => {
+    if (!joinedRef.current || iceRestartTimersRef.current.has(peerUserId)) return;
+    const timer = window.setTimeout(async () => {
+      iceRestartTimersRef.current.delete(peerUserId);
+      if (!joinedRef.current || !localStreamRef.current) return;
+      await sendOffer(peerUserId);
+    }, delay);
+    iceRestartTimersRef.current.set(peerUserId, timer);
+  }, [sendOffer]);
+
+  const schedulePeerRepair = useCallback((peerUserId, delay = 12_000) => {
     if (!joinedRef.current || reconnectTimersRef.current.has(peerUserId)) return;
     const timer = window.setTimeout(async () => {
       reconnectTimersRef.current.delete(peerUserId);
@@ -121,24 +135,24 @@ export function useWebRTC({ socket, room, user }) {
       if (String(user.id) > String(peerUserId)) {
         await sendOffer(peerUserId);
       }
-    }, 1200);
+    }, delay);
     reconnectTimersRef.current.set(peerUserId, timer);
   }, [closePeer, sendOffer, user.id]);
 
   const watchRemoteTrack = useCallback((peerUserId, track) => {
-    const repair = () => schedulePeerRepair(peerUserId);
-    track.onended = repair;
+    track.onended = () => schedulePeerRepair(peerUserId, 1500);
     track.onmute = () => {
       window.setTimeout(() => {
-        if (track.muted || track.readyState !== "live") repair();
-      }, 2500);
+        if (track.muted && track.readyState === "live") scheduleIceRestart(peerUserId);
+        if (track.readyState !== "live") schedulePeerRepair(peerUserId, 1500);
+      }, 5000);
     };
     track.onunmute = () => {
-      const timer = reconnectTimersRef.current.get(peerUserId);
-      if (timer) window.clearTimeout(timer);
-      reconnectTimersRef.current.delete(peerUserId);
+      const iceTimer = iceRestartTimersRef.current.get(peerUserId);
+      if (iceTimer) window.clearTimeout(iceTimer);
+      iceRestartTimersRef.current.delete(peerUserId);
     };
-  }, [schedulePeerRepair]);
+  }, [scheduleIceRestart, schedulePeerRepair]);
 
   const publishRemoteStream = useCallback((peerUserId, stream) => {
     stream.getTracks().forEach((track) => watchRemoteTrack(peerUserId, track));
@@ -177,8 +191,22 @@ export function useWebRTC({ socket, room, user }) {
     };
 
     const handlePeerState = () => {
-      if (["failed", "disconnected", "closed"].includes(peer.connectionState) || ["failed", "disconnected"].includes(peer.iceConnectionState)) {
-        schedulePeerRepair(peerUserId);
+      if (peer.connectionState === "connected" || peer.iceConnectionState === "connected") {
+        const timer = reconnectTimersRef.current.get(peerUserId);
+        if (timer) window.clearTimeout(timer);
+        reconnectTimersRef.current.delete(peerUserId);
+        const iceTimer = iceRestartTimersRef.current.get(peerUserId);
+        if (iceTimer) window.clearTimeout(iceTimer);
+        iceRestartTimersRef.current.delete(peerUserId);
+        return;
+      }
+      if (["failed", "closed"].includes(peer.connectionState) || peer.iceConnectionState === "failed") {
+        schedulePeerRepair(peerUserId, 1500);
+        return;
+      }
+      if (peer.connectionState === "disconnected" || peer.iceConnectionState === "disconnected") {
+        scheduleIceRestart(peerUserId);
+        schedulePeerRepair(peerUserId, 18_000);
       }
     };
     peer.onconnectionstatechange = handlePeerState;
@@ -186,7 +214,7 @@ export function useWebRTC({ socket, room, user }) {
 
     peersRef.current.set(peerUserId, peer);
     return peer;
-  }, [publishRemoteStream, room?.roomId, schedulePeerRepair, socket, user.id]);
+  }, [publishRemoteStream, room?.roomId, scheduleIceRestart, schedulePeerRepair, socket, user.id]);
 
   createPeerRef.current = createPeer;
 
@@ -251,6 +279,8 @@ export function useWebRTC({ socket, room, user }) {
     socket.emit("call-leave", { roomId: room.roomId, userId: user.id });
     reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     reconnectTimersRef.current.clear();
+    iceRestartTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    iceRestartTimersRef.current.clear();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
     peersRef.current.forEach((peer) => {
@@ -294,15 +324,15 @@ export function useWebRTC({ socket, room, user }) {
     if (!joined) return undefined;
     const repairTimer = window.setInterval(() => {
       peersRef.current.forEach((peer, peerUserId) => {
-        if (peer.connectionState === "connected" && peer.iceConnectionState === "connected") return;
-        schedulePeerRepair(peerUserId);
+        if (peer.connectionState === "failed" || peer.connectionState === "closed" || peer.iceConnectionState === "failed") {
+          schedulePeerRepair(peerUserId, 1500);
+          return;
+        }
+        if (peer.connectionState === "disconnected" || peer.iceConnectionState === "disconnected") {
+          scheduleIceRestart(peerUserId);
+        }
       });
     }, 15_000);
-    const iceRefreshTimer = window.setInterval(() => {
-      peersRef.current.forEach((_peer, peerUserId) => {
-        sendOffer(peerUserId);
-      });
-    }, 4 * 60_000);
     const audioStatsTimer = window.setInterval(async () => {
       for (const [peerUserId, peer] of peersRef.current.entries()) {
         const remoteAudioTrack = streams.find((item) => item.userId === peerUserId)?.stream?.getAudioTracks()[0];
@@ -322,18 +352,17 @@ export function useWebRTC({ socket, room, user }) {
         const stalled = previous && previous.packets === audioPackets && previous.bytes === audioBytes;
         const stalledChecks = stalled ? previous.stalledChecks + 1 : 0;
         audioStatsRef.current.set(peerUserId, { packets: audioPackets, bytes: audioBytes, stalledChecks });
-        if (stalledChecks >= 2) {
+        if (stalledChecks >= 6) {
           audioStatsRef.current.delete(peerUserId);
-          schedulePeerRepair(peerUserId);
+          scheduleIceRestart(peerUserId);
         }
       }
     }, 10_000);
     return () => {
       window.clearInterval(repairTimer);
-      window.clearInterval(iceRefreshTimer);
       window.clearInterval(audioStatsTimer);
     };
-  }, [joined, schedulePeerRepair, sendOffer, streams]);
+  }, [joined, scheduleIceRestart, schedulePeerRepair, streams]);
 
   useEffect(() => {
     const handleCallUsers = async (users) => {
@@ -414,6 +443,7 @@ export function useWebRTC({ socket, room, user }) {
 
   useEffect(() => () => {
     reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    iceRestartTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     peersRef.current.forEach((peer) => {
       peer.onconnectionstatechange = null;
