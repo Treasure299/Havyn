@@ -213,3 +213,17 @@ Call test:
 - Add deep-link handling for `havyn://room/:roomId`.
 - Add site-specific handlers only where legally and technically appropriate.
 - Add app packaging and auto-update after the local MVP is stable.
+
+## Oracle Always Free Socket Server
+
+For longer external MVP tests, Render Free can restart or spin down. Havyn includes an Oracle VM deployment kit for the Socket.IO server:
+
+```bash
+deploy/oracle/
+```
+
+See `deploy/oracle/README.md`. After the Oracle server is live, package the desktop app with:
+
+```env
+VITE_SOCKET_SERVER_URL=http://YOUR_ORACLE_PUBLIC_IP:4000
+```

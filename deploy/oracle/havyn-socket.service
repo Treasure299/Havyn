@@ -1,0 +1,18 @@
+[Unit]
+Description=Havyn Socket.IO signaling server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=havyn
+WorkingDirectory=/opt/havyn/apps/server
+EnvironmentFile=/opt/havyn/apps/server/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
