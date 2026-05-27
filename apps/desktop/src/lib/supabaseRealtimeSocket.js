@@ -144,6 +144,12 @@ export class SupabaseRealtimeSocket {
     broadcastEvents.forEach((event) => {
       this.channel.on("broadcast", { event }, ({ payload }) => {
         if (["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate"].includes(event) && payload.toUserId !== this.user?.userId) return;
+        if (["playback-state-sync", "playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"].includes(event)) {
+          this.updatePlaybackState(payload);
+        }
+        if (event === "media-selected" && payload?.playbackState) {
+          this.updatePlaybackState(payload.playbackState);
+        }
         if (event === "presence-patch") {
           if (payload.targetUserId === this.user?.userId) this.refreshPresence(payload.patch);
           return;
@@ -211,6 +217,15 @@ export class SupabaseRealtimeSocket {
     if (!this.room) return;
     this.room.participants = this.participants();
     this.localEmit("room-state", { ...this.room, participants: this.room.participants });
+  }
+
+  updatePlaybackState(state) {
+    if (!this.room || !state) return;
+    this.room.playbackState = {
+      ...this.room.playbackState,
+      ...state
+    };
+    this.emitRoomState();
   }
 
   broadcast(event, payload) {
