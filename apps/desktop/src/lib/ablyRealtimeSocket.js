@@ -105,7 +105,7 @@ export class AblyRealtimeSocket {
     if (event === "room-role-update") return this.setParticipantRole(payload);
     if (event === "media-detected") return this.mediaDetected(payload);
     if (event === "playback-drift-correction") return this.driftCorrection(payload);
-    if (event === "playback-sync-request") return this.syncPlayback(payload);
+    if (event === "playback-sync-request") return this.requestPlaybackSync(payload);
     if (event === "media-selected") return this.selectMedia(payload);
     if (PLAYBACK_EVENTS.includes(event)) return this.handlePlayback(event, payload);
     if (event === "call-join") return this.joinCall(payload);
@@ -155,6 +155,7 @@ export class AblyRealtimeSocket {
       "chat-message",
       "room-action",
       "permission-denied",
+      "playback-sync-request",
       "playback-state-sync",
       ...PLAYBACK_EVENTS,
       "media-selected",
@@ -173,6 +174,11 @@ export class AblyRealtimeSocket {
       this.channel.subscribe(event, (message) => {
         const payload = message.data;
         if (DIRECT_EVENTS.includes(event) && payload.toUserId !== this.user?.userId) return;
+        if (event === "playback-sync-request") {
+          this.answerPlaybackSync(payload);
+          return;
+        }
+        if (event === "playback-state-sync" && payload.targetUserId && payload.targetUserId !== this.user?.userId) return;
         if (["playback-state-sync", ...PLAYBACK_EVENTS].includes(event)) {
           this.updatePlaybackState(payload);
         }
@@ -406,6 +412,27 @@ export class AblyRealtimeSocket {
   syncPlayback() {
     const state = projectedPlaybackState(this.room?.playbackState);
     if (state) this.localEmit("playback-state-sync", { ...state, reason: "sync-request" });
+  }
+
+  requestPlaybackSync({ userId } = {}) {
+    this.syncPlayback();
+    this.broadcast("playback-sync-request", {
+      userId: userId || this.user?.userId,
+      requestedAt: Date.now()
+    });
+  }
+
+  answerPlaybackSync({ userId } = {}) {
+    if (!userId || userId === this.user?.userId) return;
+    const current = this.currentParticipant(this.user?.userId);
+    if (!current || !this.canControl(this.user.userId)) return;
+    const state = projectedPlaybackState(this.room?.playbackState);
+    if (!state) return;
+    this.broadcast("playback-state-sync", {
+      ...state,
+      reason: "sync-response",
+      targetUserId: userId
+    });
   }
 
   joinCall({ user, muted, cameraOff }) {

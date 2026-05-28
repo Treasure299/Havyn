@@ -65,7 +65,6 @@ export function useWebRTC({ socket, room, user }) {
   const joinedRef = useRef(joined);
   const reconnectTimersRef = useRef(new Map());
   const negotiateTimersRef = useRef(new Map());
-  const audioStatsRef = useRef(new Map());
   const createPeerRef = useRef(null);
 
   useEffect(() => {
@@ -102,7 +101,6 @@ export function useWebRTC({ socket, room, user }) {
     const negotiateTimer = negotiateTimersRef.current.get(peerUserId);
     if (negotiateTimer) window.clearTimeout(negotiateTimer);
     negotiateTimersRef.current.delete(peerUserId);
-    audioStatsRef.current.delete(peerUserId);
     const peer = peersRef.current.get(peerUserId);
     if (peer) {
       peer.onconnectionstatechange = null;
@@ -154,7 +152,7 @@ export function useWebRTC({ socket, room, user }) {
     track.onended = repair;
     track.onmute = () => {
       window.setTimeout(() => {
-        if (track.muted || track.readyState !== "live") repair();
+        if (track.readyState !== "live") repair();
       }, 2500);
     };
     track.onunmute = () => {
@@ -340,37 +338,11 @@ export function useWebRTC({ socket, room, user }) {
         sendOffer(peerUserId);
       });
     }, 4 * 60_000);
-    const audioStatsTimer = window.setInterval(async () => {
-      for (const [peerUserId, peer] of peersRef.current.entries()) {
-        const remoteAudioTrack = streams.find((item) => item.userId === peerUserId)?.stream?.getAudioTracks()[0];
-        if (!remoteAudioTrack || remoteAudioTrack.muted || remoteAudioTrack.readyState !== "live") continue;
-        const stats = await peer.getStats().catch(() => null);
-        if (!stats) continue;
-        let audioPackets = 0;
-        let audioBytes = 0;
-        stats.forEach((report) => {
-          if (report.type === "inbound-rtp" && report.kind === "audio" && !report.isRemote) {
-            audioPackets += Number(report.packetsReceived || 0);
-            audioBytes += Number(report.bytesReceived || 0);
-          }
-        });
-        if (!audioPackets && !audioBytes) continue;
-        const previous = audioStatsRef.current.get(peerUserId);
-        const stalled = previous && previous.packets === audioPackets && previous.bytes === audioBytes;
-        const stalledChecks = stalled ? previous.stalledChecks + 1 : 0;
-        audioStatsRef.current.set(peerUserId, { packets: audioPackets, bytes: audioBytes, stalledChecks });
-        if (stalledChecks >= 2) {
-          audioStatsRef.current.delete(peerUserId);
-          schedulePeerRepair(peerUserId);
-        }
-      }
-    }, 10_000);
     return () => {
       window.clearInterval(repairTimer);
       window.clearInterval(iceRefreshTimer);
-      window.clearInterval(audioStatsTimer);
     };
-  }, [joined, schedulePeerRepair, sendOffer, streams]);
+  }, [joined, schedulePeerRepair, sendOffer]);
 
   useEffect(() => {
     if (!joined || !localStreamRef.current) return;
