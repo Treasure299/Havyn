@@ -34,6 +34,20 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
 
   const applyRemoteState = useCallback((state, action = "sync") => {
     if (!state) return;
+    const incomingUpdatedAt = Number(state.updatedAt || 0);
+    const currentUpdatedAt = Number(playbackStateRef.current?.updatedAt || 0);
+    const isCorrectionForMe = state.correctedUserId === user.id;
+
+    if (
+      incomingUpdatedAt &&
+      currentUpdatedAt &&
+      incomingUpdatedAt + 250 < currentUpdatedAt &&
+      !isCorrectionForMe
+    ) {
+      return;
+    }
+
+    playbackStateRef.current = state;
     setPlaybackState(state);
     onPlaybackState?.(state);
     if (state.controllerUserId === user.id && !state.correctedUserId) return;

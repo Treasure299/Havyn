@@ -347,7 +347,6 @@ export class AblyRealtimeSocket {
     this.refreshPresence({ mediaReady: true });
     this.broadcast("media-detected", { userId, media });
     this.broadcast("participant-media-ready", { userId, mediaReady: true });
-    this.syncPlayback({});
   }
 
   selectMedia({ userId, media }) {
@@ -415,7 +414,6 @@ export class AblyRealtimeSocket {
   }
 
   requestPlaybackSync({ userId } = {}) {
-    this.syncPlayback();
     this.broadcast("playback-sync-request", {
       userId: userId || this.user?.userId,
       requestedAt: Date.now()

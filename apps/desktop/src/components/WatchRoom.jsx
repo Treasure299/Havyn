@@ -21,6 +21,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const webVideoRef = useRef(null);
   const autoLoadedMediaUrlRef = useRef("");
   const autoSyncKeyRef = useRef("");
+  const autoSyncTimersRef = useRef([]);
   const suppressMediaEventsUntilRef = useRef(0);
   const [sideWidth, setSideWidth] = useState(336);
   const [viewerHeight, setViewerHeight] = useState(null);
@@ -169,10 +170,17 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     if (autoSyncKeyRef.current === key) return;
     autoSyncKeyRef.current = key;
     suppressMediaEventsUntilRef.current = Date.now() + 8000;
-    window.setTimeout(() => {
-      socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
-    }, 350);
+    autoSyncTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    autoSyncTimersRef.current = [350, 1200, 2400].map((delay) => (
+      window.setTimeout(() => {
+        socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
+      }, delay)
+    ));
   }, [media.detectedMedia, playback.playbackState, room.playbackState, room.roomId, socket, user.id]);
+
+  useEffect(() => () => {
+    autoSyncTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+  }, []);
 
   const inviteLink = `havyn://room/${room.roomId}`;
   const copyRoomCode = async () => {
