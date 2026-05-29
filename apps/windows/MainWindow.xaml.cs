@@ -137,6 +137,8 @@ public partial class MainWindow : Window
 
     private void ShowFullscreenLayout()
     {
+        MoveBrowserTo(FullscreenBrowserHost);
+        ApplyMediaFullscreenStyles(true);
         StandardOverlay.Visibility = Visibility.Collapsed;
         FullscreenOverlay.Visibility = Visibility.Visible;
         PositionFullscreenBubbles();
@@ -146,8 +148,23 @@ public partial class MainWindow : Window
 
     private void ShowStandardLayout()
     {
+        ApplyMediaFullscreenStyles(false);
+        MoveBrowserTo(StandardBrowserHost);
         StandardOverlay.Visibility = Visibility.Visible;
         Fade(FullscreenOverlay, 0, 120, () => FullscreenOverlay.Visibility = Visibility.Collapsed);
+    }
+
+    private void MoveBrowserTo(Grid host)
+    {
+        if (Browser.Parent is Panel currentParent)
+        {
+            currentParent.Children.Remove(Browser);
+        }
+
+        if (!host.Children.Contains(Browser))
+        {
+            host.Children.Insert(0, Browser);
+        }
     }
 
     private void PositionFullscreenBubbles()
@@ -179,7 +196,8 @@ public partial class MainWindow : Window
 
     private void Bubble_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not Border bubble || e.OriginalSource is Rectangle) return;
+        if (sender is not Border bubble) return;
+        if (ReferenceEquals(e.OriginalSource, ResizeYou) || ReferenceEquals(e.OriginalSource, ResizeAuen)) return;
         activeBubble = bubble;
         dragStart = e.GetPosition(BubbleCanvas);
         dragOriginLeft = Canvas.GetLeft(bubble);
@@ -311,6 +329,66 @@ public partial class MainWindow : Window
         {
             Browser.GetMainFrame().EvaluateScriptAsync(script);
         }
+    }
+
+    private void ApplyMediaFullscreenStyles(bool enabled)
+    {
+        if (!Browser.IsBrowserInitialized) return;
+
+        var script = enabled
+            ? """
+              (() => {
+                const video = document.querySelector('video');
+                if (!video) return 'no-video';
+                if (!window.__havynFullscreenRestore) {
+                  window.__havynFullscreenRestore = {
+                    videoStyle: video.getAttribute('style') || '',
+                    bodyOverflow: document.body.style.overflow || '',
+                    htmlOverflow: document.documentElement.style.overflow || ''
+                  };
+                }
+                let style = document.getElementById('__havynFullscreenMediaStyle');
+                if (!style) {
+                  style = document.createElement('style');
+                  style.id = '__havynFullscreenMediaStyle';
+                  document.head.appendChild(style);
+                }
+                style.textContent = `
+                  video {
+                    position: fixed !important;
+                    inset: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: none !important;
+                    max-height: none !important;
+                    object-fit: contain !important;
+                    background: #000 !important;
+                    z-index: 2147483000 !important;
+                  }
+                `;
+                document.documentElement.style.overflow = 'hidden';
+                document.body.style.overflow = 'hidden';
+                return 'fullscreen-video';
+              })();
+              """
+            : """
+              (() => {
+                const style = document.getElementById('__havynFullscreenMediaStyle');
+                if (style) style.remove();
+                const restore = window.__havynFullscreenRestore;
+                const video = document.querySelector('video');
+                if (restore && video) {
+                  if (restore.videoStyle) video.setAttribute('style', restore.videoStyle);
+                  else video.removeAttribute('style');
+                  document.body.style.overflow = restore.bodyOverflow || '';
+                  document.documentElement.style.overflow = restore.htmlOverflow || '';
+                }
+                window.__havynFullscreenRestore = null;
+                return 'restored-video';
+              })();
+              """;
+
+        Browser.GetMainFrame().EvaluateScriptAsync(script);
     }
 
     private void Browser_LoadingStateChanged(object? sender, LoadingStateChangedEventArgs e)

@@ -146,21 +146,6 @@
             </RadialGradientBrush>
         </Grid.Background>
 
-        <cefSharp:ChromiumWebBrowser x:Name="Browser"
-                                     Address="https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html"
-                                     FrameLoadEnd="Browser_FrameLoadEnd"
-                                     LoadingStateChanged="Browser_LoadingStateChanged" />
-
-        <Border x:Name="CinemaShade" IsHitTestVisible="False">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                    <GradientStop Color="#90000000" Offset="0" />
-                    <GradientStop Color="#00000000" Offset="0.42" />
-                    <GradientStop Color="#B5000000" Offset="1" />
-                </LinearGradientBrush>
-            </Border.Background>
-        </Border>
-
         <Grid x:Name="StandardOverlay" Margin="14">
             <Grid.RowDefinitions>
                 <RowDefinition Height="64" />
@@ -208,32 +193,55 @@
                     <ColumnDefinition Width="390" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0" Style="{StaticResource GlassPanelStyle}" VerticalAlignment="Top" Margin="0,14,18,0" Padding="8">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <Button Style="{StaticResource IconButton}" Content="Back" Click="Back_Click" />
-                        <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Next" Click="Forward_Click" />
-                        <TextBox x:Name="AddressBox"
-                                 Grid.Column="2"
-                                 Height="42"
-                                 Margin="8,0"
-                                 VerticalContentAlignment="Center"
-                                 Background="#DD17181E"
-                                 BorderBrush="#34FFFFFF"
-                                 Foreground="{StaticResource InkBrush}"
-                                 CaretBrush="{StaticResource InkBrush}"
-                                 FontSize="15"
-                                 Padding="14,0"
-                                 KeyDown="AddressBox_KeyDown"
-                                 Text="https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html" />
-                        <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="Go" Click="Load_Click" />
-                    </Grid>
-                </Border>
+                <Grid Grid.Column="0" Margin="0,14,18,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Style="{StaticResource GlassPanelStyle}" Padding="8">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Button Style="{StaticResource IconButton}" Content="Back" Click="Back_Click" />
+                            <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Next" Click="Forward_Click" />
+                            <TextBox x:Name="AddressBox"
+                                     Grid.Column="2"
+                                     Height="42"
+                                     Margin="8,0"
+                                     VerticalContentAlignment="Center"
+                                     Background="#DD17181E"
+                                     BorderBrush="#34FFFFFF"
+                                     Foreground="{StaticResource InkBrush}"
+                                     CaretBrush="{StaticResource InkBrush}"
+                                     FontSize="15"
+                                     Padding="14,0"
+                                     KeyDown="AddressBox_KeyDown"
+                                     Text="https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html" />
+                            <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="Go" Click="Load_Click" />
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="StandardBrowserFrame"
+                            Grid.Row="1"
+                            Margin="0,14,0,0"
+                            CornerRadius="18"
+                            ClipToBounds="True"
+                            Background="#FF050507"
+                            BorderBrush="#22FFFFFF"
+                            BorderThickness="1">
+                        <Grid x:Name="StandardBrowserHost">
+                            <cefSharp:ChromiumWebBrowser x:Name="Browser"
+                                                         Address="https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html"
+                                                         FrameLoadEnd="Browser_FrameLoadEnd"
+                                                         LoadingStateChanged="Browser_LoadingStateChanged" />
+                        </Grid>
+                    </Border>
+                </Grid>
 
                 <StackPanel Grid.Column="1" VerticalAlignment="Top" Margin="0,96,0,0">
                     <Border Style="{StaticResource GlassPanelStyle}" Padding="12">
@@ -267,6 +275,18 @@
         </Grid>
 
         <Grid x:Name="FullscreenOverlay" Visibility="Collapsed" Opacity="0">
+            <Grid x:Name="FullscreenBrowserHost" Background="#FF020204" />
+
+            <Border x:Name="CinemaShade" IsHitTestVisible="False">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#26000000" Offset="0" />
+                        <GradientStop Color="#00000000" Offset="0.45" />
+                        <GradientStop Color="#82000000" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+
             <Border IsHitTestVisible="False">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
