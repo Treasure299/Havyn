@@ -163,30 +163,46 @@
             </Grid>
         </DataTemplate>
 
-        <DataTemplate x:Key="PlaybackStripTemplate">
+        <DataTemplate x:Key="MediaSourceTemplate">
             <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="16" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <Slider x:Name="ProgressSlider"
-                        Minimum="0"
-                        Maximum="100"
-                        Value="38"
-                        VerticalAlignment="Center" />
-                <Grid Grid.Row="1">
+                <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="PlaybackTimeText"
-                               Text="40:04 / 1:17:36"
-                               VerticalAlignment="Center"
-                               Margin="2,0,18,0"
-                               Foreground="{StaticResource InkBrush}" />
-                    <StackPanel Grid.Column="1" Orientation="Horizontal">
-                        <Button Content="Sync source" MinWidth="128" ToolTip="Sync the detected source to the room" />
-                        <Button Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Content="First Sync Play" Click="FirstSyncPlay_Click" ToolTip="Start playback for everyone" />
+                    <StackPanel VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="SOURCE"
+                                       FontSize="10"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontWeight="Bold" />
+                            <TextBlock x:Name="MediaStatusPill"
+                                       Text="Searching"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource BlueBrush}"
+                                       Margin="10,0,0,0" />
+                        </StackPanel>
+                        <TextBlock x:Name="MediaSourceStateText"
+                                   Text="Looking for media"
+                                   FontSize="17"
+                                   FontWeight="Bold"
+                                   Margin="0,4,0,0" />
+                        <TextBlock x:Name="MediaSourceHintText"
+                                   Text="Open a video page. Havyn will detect a playable source here."
+                                   FontSize="12"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   Margin="0,3,0,0" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="SyncSourceButton"
+                                Content="Sync source"
+                                MinWidth="128"
+                                IsEnabled="False"
+                                Opacity="0.5"
+                                Click="SyncSource_Click"
+                                ToolTip="Sync the detected source to the room" />
                         <Button Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="⛶" Click="Fullscreen_Click" ToolTip="Enter fullscreen" />
                     </StackPanel>
                 </Grid>
@@ -371,7 +387,7 @@
                           ShowsPreview="True" />
 
             <Border Grid.Row="3" Style="{StaticResource GlassPanelStyle}" VerticalAlignment="Bottom" Padding="16,10">
-                <ContentControl Content="playback" ContentTemplate="{StaticResource PlaybackStripTemplate}" />
+                <ContentControl Content="source" ContentTemplate="{StaticResource MediaSourceTemplate}" />
             </Border>
         </Grid>
 
@@ -502,7 +518,7 @@
                         Style="{StaticResource GlassPanelStyle}"
                         Padding="14,10"
                         Margin="0,0,0,0">
-                    <ContentControl Content="playback" ContentTemplate="{StaticResource PlaybackStripTemplate}" />
+                    <ContentControl Content="source" ContentTemplate="{StaticResource MediaSourceTemplate}" />
                 </Border>
             </Grid>
         </Grid>

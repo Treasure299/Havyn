@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private bool mediaFullscreenStylesActive;
     private bool adBlockerEnabled = true;
     private bool participantsOpen;
+    private bool mediaDetected;
     private readonly DispatcherTimer chatIdleTimer;
 
     public MainWindow()
@@ -47,8 +48,10 @@ public partial class MainWindow : Window
     public void UpdateDetectedMedia(string title)
     {
         var label = string.IsNullOrWhiteSpace(title) ? "Detected video" : title;
+        mediaDetected = true;
         MediaTitleText.Text = label;
         FullscreenMediaTitleText.Text = label;
+        UpdateMediaSourceStatus("Ready to sync", label, "Detected");
     }
 
     public void UpdatePlaybackSnapshot(string eventName, double currentTime, double duration, bool paused)
@@ -94,6 +97,8 @@ public partial class MainWindow : Window
             target = $"https://{target}";
         }
 
+        mediaDetected = false;
+        UpdateMediaSourceStatus("Looking for media", "Open a video page. Havyn will detect a playable source here.", "Searching");
         Browser.Load(target);
     }
 
@@ -127,6 +132,37 @@ public partial class MainWindow : Window
         foreach (var chevron in FindVisualChildren<TextBlock>(Root).Where(item => item.Name == "ParticipantsChevron"))
         {
             chevron.Text = participantsOpen ? "^" : "v";
+        }
+    }
+
+    private void SyncSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (!mediaDetected) return;
+        UpdateMediaSourceStatus("Source synced", "Participants will load this media source.", "Active");
+    }
+
+    private void UpdateMediaSourceStatus(string state, string hint, string pill)
+    {
+        foreach (var text in FindVisualChildren<TextBlock>(Root))
+        {
+            switch (text.Name)
+            {
+                case "MediaSourceStateText":
+                    text.Text = state;
+                    break;
+                case "MediaSourceHintText":
+                    text.Text = hint;
+                    break;
+                case "MediaStatusPill":
+                    text.Text = pill;
+                    break;
+            }
+        }
+
+        foreach (var button in FindVisualChildren<Button>(Root).Where(item => item.Name == "SyncSourceButton"))
+        {
+            button.IsEnabled = mediaDetected;
+            button.Opacity = mediaDetected ? 1 : 0.5;
         }
     }
 
