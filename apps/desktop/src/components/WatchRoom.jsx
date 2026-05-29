@@ -310,7 +310,6 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
             }}
             onWebMediaEvent={handleMediaEvent}
             webPlaybackState={playback.playbackState}
-            layoutSignal={focusMode ? "cinema" : "normal"}
           />
           <div className="viewer-resize-handle" title="Resize viewing area" onMouseDown={startViewerResize} onDoubleClick={() => setViewerHeight(null)} />
           <div className="viewer-toolbar">

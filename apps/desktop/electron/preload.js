@@ -22,7 +22,6 @@ contextBridge.exposeInMainWorld("havyn", {
     loadUnpackedExtension: () => ipcRenderer.invoke("browser:load-unpacked-extension"),
     toggleAdBlock: () => ipcRenderer.invoke("browser:toggle-adblock"),
     getAdBlockState: () => ipcRenderer.invoke("browser:get-adblock-state"),
-    getPreloadUrl: () => ipcRenderer.invoke("app:get-browser-preload-url"),
     applyPlayback: (state) => ipcRenderer.invoke("browser:apply-playback", state),
     scanMedia: () => ipcRenderer.invoke("browser:scan-media"),
     onTabs: (callback) => {

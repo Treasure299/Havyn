@@ -111,7 +111,6 @@ function createMainWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true,
       sandbox: false
     }
   });
@@ -466,8 +465,6 @@ ipcMain.handle("browser:toggle-adblock", async () => {
 });
 
 ipcMain.handle("browser:get-adblock-state", () => adBlockStateForUrl());
-
-ipcMain.handle("app:get-browser-preload-url", () => `file://${path.join(__dirname, "browserPreload.js").replace(/\\/g, "/")}`);
 
 ipcMain.handle("browser:apply-playback", async (_event, state) => {
   const tab = activeTab();

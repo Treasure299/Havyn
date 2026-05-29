@@ -1,6 +1,6 @@
 {
   "name": "havyn",
-  "version": "0.1.5",
+  "version": "0.1.4",
   "private": true,
   "description": "Havyn MVP monorepo for local desktop watch parties.",
   "scripts": {
