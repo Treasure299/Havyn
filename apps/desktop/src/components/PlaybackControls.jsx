@@ -13,8 +13,14 @@ export default function PlaybackControls({ canControl, playbackMode, playbackSta
   return (
     <div className="sync-strip">
       <span><Lock size={14} /> {syncLabel({ canControl, playbackMode })}</span>
-      <button className="mini-play-button" disabled={!canControl || !hasMedia} onClick={isPlaying ? onPause : onPlay} title={isPlaying ? "Pause room" : "Play room"}>
+      <button
+        className={`first-sync-button ${isPlaying ? "is-playing" : ""}`}
+        disabled={!canControl || !hasMedia}
+        onClick={isPlaying ? onPause : onPlay}
+        title={isPlaying ? "Pause synced playback" : "First Sync Play"}
+      >
         {isPlaying ? <Pause size={15} /> : <Play size={15} fill="currentColor" />}
+        <strong>{isPlaying ? "Pause" : "First Sync Play"}</strong>
       </button>
     </div>
   );

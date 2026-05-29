@@ -181,6 +181,21 @@ input:focus, select:focus {
   background: rgba(255,255,255,0.07);
 }
 
+.icon-button {
+  position: relative;
+}
+
+.button-dot {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 0 0 2px rgba(14,14,19,0.96);
+}
+
 .icon-button.is-active {
   color: #dff0ff;
   border-color: rgba(77,169,255,0.48);
@@ -1197,7 +1212,7 @@ label {
   min-height: 0;
   display: grid;
   grid-template-rows: auto auto 1fr auto;
-  gap: 6px;
+  gap: 5px;
   overflow: hidden;
 }
 
@@ -1306,10 +1321,10 @@ label {
   min-width: 0;
   min-height: 420px;
   border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.16);
+  border: 1px solid rgba(255,255,255,0.11);
   background: #050507;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04), 0 28px 80px rgba(0,0,0,0.35);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.035), 0 30px 90px rgba(0,0,0,0.42);
 }
 
 .viewer-resize-handle {
@@ -1511,15 +1526,30 @@ label {
   gap: 7px;
 }
 
-.mini-play-button {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(255,255,255,0.075);
-  color: #fff;
+.first-sync-button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(77,169,255,0.42);
+  background:
+    linear-gradient(180deg, rgba(77,169,255,0.2), rgba(40,132,231,0.13)),
+    rgba(255,255,255,0.06);
+  color: #eef7ff;
+  padding: 0 13px;
+  box-shadow: 0 10px 30px rgba(40,132,231,0.14);
+}
+
+.first-sync-button.is-playing {
+  border-color: rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.07);
+  box-shadow: none;
+}
+
+.first-sync-button strong {
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .chat-panel, .participants-panel, .call-panel {
@@ -1532,6 +1562,19 @@ label {
 
 .chat-panel {
   grid-template-rows: auto 1fr auto;
+  background: rgba(14,14,18,0.48);
+  border-color: rgba(255,255,255,0.07);
+  box-shadow: none;
+  opacity: 0.74;
+  transition: opacity 180ms ease, background 180ms ease, border-color 180ms ease;
+}
+
+.chat-panel:hover,
+.chat-panel:focus-within,
+.chat-panel.has-new-message {
+  opacity: 1;
+  background: rgba(14,14,18,0.84);
+  border-color: rgba(255,255,255,0.12);
 }
 
 .call-panel {
@@ -1592,7 +1635,7 @@ label {
   gap: 3px;
   padding: 10px;
   border-radius: 8px;
-  background: rgba(255,255,255,0.055);
+  background: rgba(255,255,255,0.04);
 }
 
 .message span {
@@ -1608,7 +1651,7 @@ label {
 }
 
 .system-message {
-  background: rgba(40,132,231,0.1);
+  background: rgba(40,132,231,0.08);
 }
 
 .chat-form {
@@ -2028,6 +2071,88 @@ label {
   background: rgba(239, 62, 58, 0.14);
   border: 1px solid rgba(239, 62, 58, 0.35);
   backdrop-filter: blur(16px);
+}
+
+.watch-room.is-focus-mode {
+  min-height: 100vh;
+  background: #030304;
+}
+
+.watch-room.is-focus-mode .room-header {
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+}
+
+.watch-room.is-focus-mode .watch-layout {
+  height: 100vh;
+  padding: 8px;
+  grid-template-columns: minmax(640px, 1fr) 6px minmax(300px, 23vw) !important;
+  background:
+    radial-gradient(circle at 26% 0%, rgba(40,132,231,0.08), transparent 32%),
+    #030304;
+}
+
+.watch-room.is-focus-mode .watch-main {
+  grid-template-rows: minmax(0, 1fr) 4px auto !important;
+  padding-right: 6px;
+}
+
+.watch-room.is-focus-mode .browser-tabs,
+.watch-room.is-focus-mode .browser-bar,
+.watch-room.is-focus-mode .media-title-strip {
+  display: none;
+}
+
+.watch-room.is-focus-mode .browser-shell {
+  grid-template-rows: 1fr;
+}
+
+.watch-room.is-focus-mode .browser-frame {
+  min-height: 0;
+  border-color: rgba(255,255,255,0.06);
+  box-shadow: 0 30px 110px rgba(0,0,0,0.52);
+}
+
+.watch-room.is-focus-mode .viewer-toolbar {
+  min-height: 42px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  opacity: 0.72;
+  transition: opacity 160ms ease;
+}
+
+.watch-room.is-focus-mode .viewer-toolbar:hover {
+  opacity: 1;
+}
+
+.watch-room.is-focus-mode .watch-side {
+  grid-template-rows: minmax(210px, 34vh) 4px minmax(0, 1fr) auto !important;
+  gap: 8px;
+  padding-left: 6px;
+}
+
+.watch-room.is-focus-mode .call-panel {
+  background: rgba(14,14,18,0.5);
+  border-color: rgba(255,255,255,0.07);
+  padding: 10px;
+}
+
+.watch-room.is-focus-mode .chat-panel {
+  opacity: 0.32;
+  background: rgba(10,10,13,0.38);
+}
+
+.watch-room.is-focus-mode .chat-panel:hover,
+.watch-room.is-focus-mode .chat-panel:focus-within,
+.watch-room.is-focus-mode .chat-panel.has-new-message {
+  opacity: 0.96;
+}
+
+.watch-room.is-focus-mode .participants-panel {
+  background: rgba(14,14,18,0.42);
+  border-color: rgba(255,255,255,0.06);
 }
 
 .action-toast {

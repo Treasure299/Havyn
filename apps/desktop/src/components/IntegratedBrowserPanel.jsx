@@ -15,6 +15,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   const [activeTabId, setActiveTabId] = useState("");
   const [notice, setNotice] = useState("");
   const [adBlockEnabled, setAdBlockEnabled] = useState(false);
+  const [adBlockBypassed, setAdBlockBypassed] = useState(false);
 
   const updateBrowserBounds = useCallback(() => {
     if (!browser || !frameRef.current) return;
@@ -81,12 +82,22 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }, [browser]);
 
   useEffect(() => {
-    browser?.getAdBlockState?.().then((state) => setAdBlockEnabled(Boolean(state?.enabled)));
+    browser?.getAdBlockState?.().then((state) => {
+      setAdBlockEnabled(Boolean(state?.enabled));
+      setAdBlockBypassed(Boolean(state?.bypassed));
+    });
   }, [browser]);
 
   useEffect(() => {
     if (!browser?.onAdBlockState) return undefined;
-    return browser.onAdBlockState((state) => setAdBlockEnabled(Boolean(state?.enabled)));
+    return browser.onAdBlockState((state) => {
+      setAdBlockEnabled(Boolean(state?.enabled));
+      setAdBlockBypassed(Boolean(state?.bypassed));
+      if (state?.bypassed) {
+        setNotice(state.bypassReason || "Ad blocker bypassed for playback stability");
+        window.setTimeout(() => setNotice(""), 2200);
+      }
+    });
   }, [browser]);
 
   function submit(event) {
@@ -138,7 +149,8 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   async function toggleAdBlock() {
     const result = await browser?.toggleAdBlock?.();
     setAdBlockEnabled(Boolean(result?.enabled));
-    setNotice(result?.error || (result?.enabled ? "Ad blocker on. Reloading tab" : "Ad blocker off. Reloading tab"));
+    setAdBlockBypassed(Boolean(result?.bypassed));
+    setNotice(result?.error || result?.bypassReason || (result?.enabled ? "Ad blocker on. Reloading tab" : "Ad blocker off. Reloading tab"));
     window.setTimeout(() => setNotice(""), 2200);
   }
 
@@ -246,10 +258,11 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
           <button
             className={`icon-button ${adBlockEnabled ? "is-active" : ""}`}
             type="button"
-            title={adBlockEnabled ? "Ad blocker on" : "Ad blocker off"}
+            title={adBlockBypassed ? "Ad blocker bypassed on this streaming site" : adBlockEnabled ? "Ad blocker on" : "Ad blocker off"}
             onClick={toggleAdBlock}
           >
             <Shield size={18} />
+            {adBlockBypassed && <b className="button-dot" />}
           </button>
         )}
         {!browser && <button className="icon-button" type="button" title="Load local test video" onClick={loadTestVideo}><Film size={18} /></button>}

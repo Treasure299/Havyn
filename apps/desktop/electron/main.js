@@ -10,11 +10,12 @@ let currentBounds;
 let mediaEventTimer;
 const tabs = new Map();
 const loadedExtensions = new Map();
-let adBlockEnabled = false;
+let adBlockDesired = true;
 let browserVisible = true;
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
+app.setAppUserModelId("app.havyn.desktop");
 app.userAgentFallback = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 
 const profileName = process.env.HAVYN_PROFILE;
@@ -31,16 +32,40 @@ function browserSession() {
 }
 
 async function setAdBlockState(enabled) {
-  adBlockEnabled = Boolean(enabled);
-  return adBlockEnabled;
+  adBlockDesired = Boolean(enabled);
+  emitAdBlockState();
+  return adBlockDesired;
 }
 
-function isYouTubeUrl(url = "") {
+function isMainstreamStreamingUrl(url = "") {
   return /(^https?:\/\/)?([^/]+\.)?(youtube\.com|youtu\.be)\b/i.test(url);
 }
 
+function isAdBlockBypassUrl(url = "") {
+  return [
+    /(^https?:\/\/)?([^/]+\.)?(youtube\.com|youtu\.be)\b/i,
+    /(^https?:\/\/)?([^/]+\.)?netflix\.com\b/i,
+    /(^https?:\/\/)?([^/]+\.)?(primevideo\.com|amazon\.[^/]+\/gp\/video|amazon\.[^/]+\/Prime-Video)\b/i,
+    /(^https?:\/\/)?([^/]+\.)?(hulu\.com|disneyplus\.com|max\.com|hbomax\.com|peacocktv\.com|paramountplus\.com|twitch\.tv|apple\.com\/tv)\b/i
+  ].some((pattern) => pattern.test(url));
+}
+
+function adBlockStateForUrl(url = activeTab()?.url || "") {
+  const bypassed = adBlockDesired && isAdBlockBypassUrl(url);
+  return {
+    enabled: adBlockDesired && !bypassed,
+    desiredEnabled: adBlockDesired,
+    bypassed,
+    bypassReason: bypassed ? "Ad blocker is bypassed on this streaming site for playback stability." : ""
+  };
+}
+
+function emitAdBlockState(url) {
+  mainWindow?.webContents.send("browser:adblock-state", adBlockStateForUrl(url));
+}
+
 function shouldBlockRequest(url = "", resourceType = "") {
-  if (!adBlockEnabled || isYouTubeUrl(url)) return false;
+  if (!adBlockDesired || isAdBlockBypassUrl(url)) return false;
   if (resourceType === "mainFrame") return false;
   return [
     /(^|\.)doubleclick\.net\//i,
@@ -161,7 +186,7 @@ function createBrowserTab(initialUrl = "about:blank") {
   const wc = view.webContents;
   wc.setUserAgent(app.userAgentFallback);
   wc.setWindowOpenHandler(({ url }) => {
-    if (adBlockEnabled) {
+    if (adBlockStateForUrl(tab.url).enabled) {
       if (tab.id === activeTabId) {
         mainWindow?.webContents.send("browser:load-state", {
           type: "warning",
@@ -235,12 +260,14 @@ function createBrowserTab(initialUrl = "about:blank") {
     tab.cacheMissRetried = false;
     tab.url = url;
     if (tab.id === activeTabId) mainWindow?.webContents.send("browser:navigation", { url });
+    if (tab.id === activeTabId) emitAdBlockState(url);
     emitTabs();
   });
   wc.on("did-navigate-in-page", (_event, url) => {
     tab.cacheMissRetried = false;
     tab.url = url;
     if (tab.id === activeTabId) mainWindow?.webContents.send("browser:navigation", { url });
+    if (tab.id === activeTabId) emitAdBlockState(url);
     emitTabs();
   });
 
@@ -326,6 +353,7 @@ ipcMain.handle("browser:switch-tab", (_event, tabId) => {
   showActiveTab();
   const tab = activeTab();
   if (tab?.url) mainWindow?.webContents.send("browser:navigation", { url: tab.url });
+  emitAdBlockState(tab?.url);
   scanTabMedia(tab);
   return { activeTabId, tabs: serializeTabs() };
 });
@@ -350,16 +378,15 @@ ipcMain.handle("browser:load-url", async (_event, url) => {
   const tab = ensureActiveTab();
   const normalized = /^https?:\/\//i.test(url) ? url : `https://${url}`;
   mainWindow?.webContents.send("browser:load-state", { type: "loading", url: normalized });
-  if (isYouTubeUrl(normalized)) {
+  if (isMainstreamStreamingUrl(normalized)) {
     await resetTroubledSiteData(normalized);
   }
-  if (isYouTubeUrl(normalized) && adBlockEnabled) {
-    await setAdBlockState(false).catch(() => {});
-    mainWindow?.webContents.send("browser:adblock-state", { enabled: adBlockEnabled });
+  if (adBlockStateForUrl(normalized).bypassed) {
+    emitAdBlockState(normalized);
     mainWindow?.webContents.send("browser:load-state", {
       type: "warning",
       url: normalized,
-      message: "Ad blocker bypassed for YouTube so the page can render normally."
+      message: "Ad blocker bypassed on this streaming site for playback stability."
     });
   }
   await tab.view.webContents.loadURL(normalized).catch((error) => {
@@ -429,21 +456,15 @@ ipcMain.handle("browser:load-unpacked-extension", async () => {
 ipcMain.handle("browser:toggle-adblock", async () => {
   try {
     const tab = activeTab();
-    if (!adBlockEnabled && isYouTubeUrl(tab?.url)) {
-      return {
-        enabled: false,
-        error: "Ad blocker is bypassed on YouTube because it breaks the embedded page."
-      };
-    }
-    await setAdBlockState(!adBlockEnabled);
+    await setAdBlockState(!adBlockDesired);
     tab?.view.webContents.reload();
-    return { enabled: adBlockEnabled };
+    return adBlockStateForUrl(tab?.url);
   } catch (error) {
-    return { enabled: adBlockEnabled, error: error.message || "Ad blocker could not be updated." };
+    return { ...adBlockStateForUrl(), error: error.message || "Ad blocker could not be updated." };
   }
 });
 
-ipcMain.handle("browser:get-adblock-state", () => ({ enabled: adBlockEnabled }));
+ipcMain.handle("browser:get-adblock-state", () => adBlockStateForUrl());
 
 ipcMain.handle("browser:apply-playback", async (_event, state) => {
   const tab = activeTab();

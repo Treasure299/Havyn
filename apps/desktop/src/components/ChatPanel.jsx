@@ -1,8 +1,20 @@
 import { Send } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-export default function ChatPanel({ messages, onSend }) {
+export default function ChatPanel({ messages, onSend, className = "" }) {
   const [draft, setDraft] = useState("");
+  const [isFresh, setIsFresh] = useState(false);
+  const lastMessageCountRef = useRef(messages.length);
+
+  useEffect(() => {
+    if (messages.length > lastMessageCountRef.current) {
+      setIsFresh(true);
+      const timer = window.setTimeout(() => setIsFresh(false), 4200);
+      lastMessageCountRef.current = messages.length;
+      return () => window.clearTimeout(timer);
+    }
+    lastMessageCountRef.current = messages.length;
+  }, [messages.length]);
 
   function submit(event) {
     event.preventDefault();
@@ -12,7 +24,7 @@ export default function ChatPanel({ messages, onSend }) {
   }
 
   return (
-    <section className="chat-panel glass">
+    <section className={`chat-panel glass ${className} ${isFresh ? "has-new-message" : ""}`}>
       <h2>Chat</h2>
       <div className="message-list">
         {messages.map((message) => (

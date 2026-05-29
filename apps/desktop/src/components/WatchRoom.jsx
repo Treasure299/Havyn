@@ -1,4 +1,4 @@
-import { Copy, HelpCircle, LogOut } from "lucide-react";
+import { Copy, HelpCircle, LogOut, Maximize2, Minimize2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMediaDetection } from "../hooks/useMediaDetection";
 import { usePlaybackSync } from "../hooks/usePlaybackSync";
@@ -30,12 +30,22 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const [focusPrimary, setFocusPrimary] = useState("remote");
   const [copyNote, setCopyNote] = useState("");
   const [devicesOpen, setDevicesOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
   const [guideOpen, setGuideOpen] = useState(() => (
     localStorage.getItem("havyn:guide:watch:armed") === "true" ||
     localStorage.getItem("havyn:guide:watch:v1") !== "done"
   ));
   const callTileCount = (call.localStream ? 1 : 0) + call.streams.length;
   const canUseFocusLayout = call.joined && callTileCount === 2;
+
+  function toggleFocusMode() {
+    setFocusMode((next) => {
+      const enabled = !next;
+      if (enabled) document.documentElement.requestFullscreen?.().catch(() => {});
+      else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      return enabled;
+    });
+  }
 
   function startSideResize(event) {
     event.preventDefault();
@@ -136,6 +146,14 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, [devicesOpen, guideOpen, media.browser]);
 
   useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) setFocusMode(false);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
     const handleSelected = ({ media: selected }) => {
       if (selected?.url) {
         suppressMediaEventsUntilRef.current = Date.now() + 12_000;
@@ -225,7 +243,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   ];
 
   return (
-    <main className="watch-room">
+    <main className={`watch-room ${focusMode ? "is-focus-mode" : ""}`}>
       <header className="room-header">
         <Logo compact />
         <div className="room-title">
@@ -234,6 +252,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
         </div>
         <div className="header-actions">
           <button className="icon-button" onClick={() => setGuideOpen(true)} title="Room guide"><HelpCircle size={18} /></button>
+          <button className="icon-button" onClick={toggleFocusMode} title={focusMode ? "Exit focus mode" : "Focus mode"}>
+            {focusMode ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+          </button>
           {social && <NotificationBell user={user} social={social} onJoinRoom={roomState.joinRoom} />}
           <select className="mode-select" value={room.playbackMode} onChange={(event) => roomState.setPlaybackMode(event.target.value)}>
             <option value="host-only">host-only</option>
@@ -333,7 +354,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           </section>
           <div className="side-resize-handle" title="Resize call area" onMouseDown={startCallResize} onDoubleClick={() => setCallHeight(190)} />
           <div className="guide-chat-target side-stack">
-            <ChatPanel messages={roomState.messages} onSend={roomState.sendMessage} />
+            <ChatPanel messages={roomState.messages} onSend={roomState.sendMessage} className="focus-chat-overlay" />
             <ParticipantsPanel
               participants={room.participants}
               currentUserId={user.id}
