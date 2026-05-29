@@ -1359,9 +1359,21 @@ label {
 .dom-webview {
   width: 100%;
   height: 100%;
-  display: flex;
+  display: block;
   border: 0;
   background: #050507;
+}
+
+.cinema-webview {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.cinema-webview.is-ready {
+  opacity: 1;
 }
 
 .web-preview-note {
@@ -2241,9 +2253,9 @@ label {
 
 .watch-room.is-focus-mode .watch-layout {
   height: 100vh;
+  display: block;
+  position: relative;
   padding: 10px;
-  grid-template-columns: minmax(660px, 1fr) 0 minmax(320px, 21vw) !important;
-  gap: 0;
   background:
     linear-gradient(90deg, rgba(255,255,255,0.025), transparent 38%),
     rgba(255,255,255,0.025);
@@ -2253,9 +2265,11 @@ label {
 }
 
 .watch-room.is-focus-mode .watch-main {
+  width: 100%;
+  height: 100%;
   grid-template-rows: minmax(0, 1fr) 0 auto !important;
   padding-right: 0;
-  border-radius: 11px 0 0 11px;
+  border-radius: 11px;
   overflow: hidden;
 }
 
@@ -2266,17 +2280,18 @@ label {
 }
 
 .watch-room.is-focus-mode .browser-shell {
+  height: 100%;
   grid-template-rows: 1fr;
-  padding-top: 58px;
+  padding-top: 0;
   background:
-    linear-gradient(180deg, rgba(7,7,10,0.92), rgba(7,7,10,0.1) 70px, transparent 110px);
+    linear-gradient(180deg, rgba(7,7,10,0.26), transparent 110px);
 }
 
 .watch-room.is-focus-mode .browser-frame {
   min-height: 0;
   border-color: rgba(255,255,255,0.045);
-  border-radius: 0 0 0 11px;
-  box-shadow: inset -90px 0 80px rgba(0,0,0,0.22), 0 30px 110px rgba(0,0,0,0.52);
+  border-radius: 11px;
+  box-shadow: inset -160px 0 110px rgba(0,0,0,0.3), 0 30px 110px rgba(0,0,0,0.52);
 }
 
 .watch-room.is-focus-mode .viewer-resize-handle,
@@ -2289,7 +2304,7 @@ label {
   left: 24px;
   bottom: 22px;
   width: min(560px, calc(100vw - 430px));
-  z-index: 222;
+  z-index: 322;
   min-height: 46px;
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 6px;
@@ -2311,28 +2326,37 @@ label {
 }
 
 .watch-room.is-focus-mode .watch-side {
-  position: relative;
+  position: fixed;
+  top: 82px;
+  right: 24px;
+  bottom: 24px;
+  width: min(370px, 24vw);
+  min-width: 300px;
   display: block;
   padding-left: 0;
   pointer-events: none;
-  border-radius: 0 11px 11px 0;
-  background:
-    linear-gradient(90deg, rgba(0,0,0,0.18), rgba(6,6,9,0.72) 18%, rgba(6,6,9,0.55)),
-    radial-gradient(circle at 80% 8%, rgba(77,169,255,0.08), transparent 34%);
-  box-shadow: inset 1px 0 0 rgba(255,255,255,0.045);
+  z-index: 321;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .watch-room.is-focus-mode .call-panel {
   position: absolute;
-  top: 76px;
-  right: 12px;
-  left: 12px;
+  top: 0;
+  right: 0;
+  left: 0;
   width: auto;
-  height: min(42vh, 390px);
-  padding: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+  height: min(42vh, 350px);
+  padding: 10px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(77,169,255,0.12), transparent 36%),
+    linear-gradient(180deg, rgba(22,22,28,0.62), rgba(8,8,11,0.5)),
+    rgba(8,8,10,0.44);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 13px;
+  box-shadow: 0 24px 72px rgba(0,0,0,0.42);
+  backdrop-filter: blur(22px);
   pointer-events: auto;
 }
 
@@ -2346,11 +2370,11 @@ label {
 
 .watch-room.is-focus-mode .side-stack {
   position: absolute;
-  right: 12px;
-  left: 12px;
-  bottom: 16px;
+  right: 0;
+  left: 0;
+  bottom: 0;
   width: auto;
-  height: min(33vh, 265px);
+  height: min(34vh, 270px);
   display: block;
   pointer-events: none;
 }

@@ -11,6 +11,15 @@ let scanTimer = null;
 let lastTimeUpdateAt = 0;
 let lastResumeDismissAt = 0;
 
+function sendPageSignal(channel, payload) {
+  ipcRenderer.send(channel, payload);
+  try {
+    ipcRenderer.sendToHost(channel, payload);
+  } catch {
+    // BrowserView does not have an embedder host; webview does.
+  }
+}
+
 function readableDocuments() {
   const docs = [document];
   for (const frame of Array.from(window.frames || [])) {
@@ -86,7 +95,7 @@ function emitDetected(force = false) {
   ]));
   if (force || signature !== lastSignature) {
     lastSignature = signature;
-    ipcRenderer.send("browser:media-detected-from-page", { tabId, media });
+    sendPageSignal("browser:media-detected-from-page", { tabId, media });
   }
   return media;
 }
@@ -102,7 +111,7 @@ function emitEvent(eventName, video) {
     controlledByHavyn: Date.now() < applyingRemoteUntil
   };
   lastMediaEvent = payload;
-  ipcRenderer.send("browser:media-event-from-page", payload);
+  sendPageSignal("browser:media-event-from-page", payload);
   if (["loadedmetadata", "canplay", "playing"].includes(eventName)) emitDetected(true);
 }
 

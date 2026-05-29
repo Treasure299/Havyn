@@ -468,6 +468,7 @@ ipcMain.handle("browser:toggle-adblock", async () => {
 ipcMain.handle("browser:get-adblock-state", () => adBlockStateForUrl());
 
 ipcMain.handle("app:get-browser-preload-url", () => `file://${path.join(__dirname, "browserPreload.js").replace(/\\/g, "/")}`);
+ipcMain.handle("app:get-browser-partition", () => browserPartition());
 
 ipcMain.handle("browser:apply-playback", async (_event, state) => {
   const tab = activeTab();

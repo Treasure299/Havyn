@@ -141,9 +141,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, [callLayout, canUseFocusLayout]);
 
   useEffect(() => {
-    media.browser?.setVisible?.(!(guideOpen || devicesOpen || focusMode));
+    media.browser?.setVisible?.(!(guideOpen || devicesOpen));
     return () => media.browser?.setVisible?.(true);
-  }, [devicesOpen, focusMode, guideOpen, media.browser]);
+  }, [devicesOpen, guideOpen, media.browser]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
