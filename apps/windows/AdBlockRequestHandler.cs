@@ -7,11 +7,13 @@ internal sealed class HavynAdBlockRequestHandler : RequestHandler
 {
     private readonly Func<bool> isEnabled;
     private readonly HavynAdBlockResourceRequestHandler resourceHandler;
+    private readonly FilterListAdBlockEngine engine;
 
     public HavynAdBlockRequestHandler(Func<bool> isEnabled)
     {
         this.isEnabled = isEnabled;
-        resourceHandler = new HavynAdBlockResourceRequestHandler(isEnabled);
+        engine = new FilterListAdBlockEngine();
+        resourceHandler = new HavynAdBlockResourceRequestHandler(isEnabled, engine);
     }
 
     protected override IResourceRequestHandler? GetResourceRequestHandler(
@@ -36,6 +38,7 @@ internal sealed class HavynAdBlockRequestHandler : RequestHandler
 internal sealed class HavynAdBlockResourceRequestHandler : ResourceRequestHandler
 {
     private readonly Func<bool> isEnabled;
+    private readonly FilterListAdBlockEngine engine;
 
     private static readonly string[] SafeStreamingHosts =
     [
@@ -52,53 +55,10 @@ internal sealed class HavynAdBlockResourceRequestHandler : ResourceRequestHandle
         "twitch.tv"
     ];
 
-    private static readonly string[] BlockedHostParts =
-    [
-        "doubleclick.net",
-        "googlesyndication.com",
-        "googleadservices.com",
-        "adservice.google.",
-        "adnxs.com",
-        "adsystem.com",
-        "adform.net",
-        "taboola.com",
-        "outbrain.com",
-        "popads.net",
-        "propellerads.com",
-        "mgid.com",
-        "scorecardresearch.com",
-        "zedo.com",
-        "exoclick.com",
-        "trafficjunky.net",
-        "adskeeper.com",
-        "adsterra.com",
-        "analytics.google.com",
-        "googletagmanager.com",
-        "facebook.net",
-        "hotjar.com"
-    ];
-
-    private static readonly string[] BlockedPathParts =
-    [
-        "/ads?",
-        "/ads/",
-        "/adserver",
-        "/prebid",
-        "/popunder",
-        "/popup",
-        "/banner",
-        "/vast",
-        "/vpaid",
-        "/doubleclick",
-        "googleads",
-        "ad_tag",
-        "adunit",
-        "adclick"
-    ];
-
-    public HavynAdBlockResourceRequestHandler(Func<bool> isEnabled)
+    public HavynAdBlockResourceRequestHandler(Func<bool> isEnabled, FilterListAdBlockEngine engine)
     {
         this.isEnabled = isEnabled;
+        this.engine = engine;
     }
 
     protected override CefReturnValue OnBeforeResourceLoad(
@@ -134,7 +94,30 @@ internal sealed class HavynAdBlockResourceRequestHandler : ResourceRequestHandle
             return false;
         }
 
-        var haystack = (host + uri.PathAndQuery).ToLowerInvariant();
-        return BlockedHostParts.Any(haystack.Contains) || BlockedPathParts.Any(haystack.Contains);
+        if (LooksLikeMediaRequest(uri))
+        {
+            return false;
+        }
+
+        return engine.ShouldBlock(uri);
+    }
+
+    private static bool LooksLikeMediaRequest(Uri uri)
+    {
+        var path = uri.AbsolutePath.ToLowerInvariant();
+        return path.EndsWith(".m3u8", StringComparison.Ordinal) ||
+               path.EndsWith(".mpd", StringComparison.Ordinal) ||
+               path.EndsWith(".mp4", StringComparison.Ordinal) ||
+               path.EndsWith(".m4v", StringComparison.Ordinal) ||
+               path.EndsWith(".webm", StringComparison.Ordinal) ||
+               path.EndsWith(".m4s", StringComparison.Ordinal) ||
+               path.EndsWith(".ts", StringComparison.Ordinal) ||
+               path.EndsWith(".mov", StringComparison.Ordinal) ||
+               path.EndsWith(".aac", StringComparison.Ordinal) ||
+               path.EndsWith(".mp3", StringComparison.Ordinal) ||
+               path.EndsWith(".ogg", StringComparison.Ordinal) ||
+               path.Contains("/hls/", StringComparison.Ordinal) ||
+               path.Contains("/dash/", StringComparison.Ordinal) ||
+               path.Contains("/manifest", StringComparison.Ordinal);
     }
 }
