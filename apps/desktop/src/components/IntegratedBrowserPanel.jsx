@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Compass, ExternalLink, Film, FolderPlus, Plus, Puzzle, Radar, RefreshCw, RotateCw, Shield, X } from "lucide-react";
+import { domBrowserEvents, registerDomBrowser } from "../lib/domBrowserBridge";
 
 function normalizeUrl(value) {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
-export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "" }) {
+export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "", layoutSignal = "" }) {
   const frameRef = useRef(null);
   const iframeRef = useRef(null);
+  const webviewRef = useRef(null);
   const [url, setUrl] = useState("https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html");
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewBlocked, setPreviewBlocked] = useState(false);
@@ -16,9 +18,11 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   const [notice, setNotice] = useState("");
   const [adBlockEnabled, setAdBlockEnabled] = useState(false);
   const [adBlockBypassed, setAdBlockBypassed] = useState(false);
+  const [preloadUrl, setPreloadUrl] = useState("");
+  const useDomWebview = Boolean(browser?.isDomWebview);
 
   const updateBrowserBounds = useCallback(() => {
-    if (!browser || !frameRef.current) return;
+    if (!browser || browser.isDomWebview || !frameRef.current) return;
     const rect = frameRef.current.getBoundingClientRect();
     browser.setBounds({
       x: Math.round(rect.left),
@@ -29,7 +33,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }, [browser]);
 
   useLayoutEffect(() => {
-    if (!browser || !frameRef.current) return undefined;
+    if (!browser || browser.isDomWebview || !frameRef.current) return undefined;
     const createBounds = () => {
       const rect = frameRef.current.getBoundingClientRect();
       browser.create({
@@ -52,18 +56,132 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }, [browser, updateBrowserBounds]);
 
   useEffect(() => {
+    if (!browser || browser.isDomWebview) return undefined;
+    const timers = [0, 80, 220, 520].map((delay) => window.setTimeout(updateBrowserBounds, delay));
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [browser, layoutSignal, updateBrowserBounds]);
+
+  useEffect(() => {
+    window.havyn?.browser?.getPreloadUrl?.().then(setPreloadUrl).catch(() => {});
+  }, []);
+
+  const emitTabs = useCallback((nextTabs = tabs, nextActiveTabId = activeTabId) => {
+    domBrowserEvents.tabs({ tabs: nextTabs, activeTabId: nextActiveTabId });
+  }, [activeTabId, tabs]);
+
+  const scanDomMedia = useCallback(async () => {
+    const webview = webviewRef.current;
+    if (!webview) return [];
+    const media = await webview.executeJavaScript("window.__havynScanMedia?.() || []", true).catch(() => []);
+    const normalized = (media || []).map((item) => ({ ...item, url: webview.getURL?.() || item.url }));
+    if (normalized.length) {
+      domBrowserEvents.mediaDetected(normalized);
+      onWebMediaDetected?.(normalized, null);
+    }
+    return normalized;
+  }, [onWebMediaDetected]);
+
+  useEffect(() => {
+    if (!useDomWebview) return undefined;
+    const webview = webviewRef.current;
+    if (!webview) return undefined;
+    const handleLoad = () => {
+      const activeUrl = webview.getURL?.() || "";
+      setUrl(activeUrl || url);
+      domBrowserEvents.navigation({ url: activeUrl });
+      window.setTimeout(scanDomMedia, 500);
+      window.setTimeout(scanDomMedia, 1800);
+    };
+    const handleNavigate = (event) => {
+      setUrl(event.url);
+      domBrowserEvents.navigation({ url: event.url });
+    };
+    const handleConsole = async () => {
+      const event = await webview.executeJavaScript("window.__havynReadMediaEvent?.()", true).catch(() => null);
+      if (event) {
+        domBrowserEvents.mediaEvent(event);
+        onWebMediaEvent?.(event);
+      }
+    };
+    webview.addEventListener("did-finish-load", handleLoad);
+    webview.addEventListener("dom-ready", handleLoad);
+    webview.addEventListener("did-navigate", handleNavigate);
+    webview.addEventListener("did-navigate-in-page", handleNavigate);
+    webview.addEventListener("console-message", handleConsole);
+    return () => {
+      webview.removeEventListener("did-finish-load", handleLoad);
+      webview.removeEventListener("dom-ready", handleLoad);
+      webview.removeEventListener("did-navigate", handleNavigate);
+      webview.removeEventListener("did-navigate-in-page", handleNavigate);
+      webview.removeEventListener("console-message", handleConsole);
+    };
+  }, [onWebMediaEvent, preloadUrl, scanDomMedia, url, useDomWebview]);
+
+  useEffect(() => {
+    if (!useDomWebview) return undefined;
+    const unregister = registerDomBrowser({
+      loadUrl: async (nextUrl) => {
+        const normalized = normalizeUrl(nextUrl);
+        setUrl(normalized);
+        domBrowserEvents.loadState({ type: "loading", url: normalized });
+        await webviewRef.current?.loadURL(normalized);
+        return normalized;
+      },
+      reload: () => webviewRef.current?.reload(),
+      back: () => webviewRef.current?.canGoBack?.() && webviewRef.current.goBack(),
+      forward: () => webviewRef.current?.canGoForward?.() && webviewRef.current.goForward(),
+      focus: () => webviewRef.current?.focus(),
+      newTab: async (nextUrl = "about:blank") => {
+        const id = crypto.randomUUID();
+        const normalized = nextUrl === "about:blank" ? nextUrl : normalizeUrl(nextUrl);
+        const nextTabs = [...tabs, { id, title: "New tab", url: normalized }];
+        setTabs(nextTabs);
+        setActiveTabId(id);
+        emitTabs(nextTabs, id);
+        if (normalized !== "about:blank") await webviewRef.current?.loadURL(normalized);
+        return { activeTabId: id, tabs: nextTabs };
+      },
+      switchTab: (tabId) => {
+        setActiveTabId(tabId);
+        emitTabs(tabs, tabId);
+        return { activeTabId: tabId, tabs };
+      },
+      closeTab: (tabId) => {
+        const nextTabs = tabs.filter((tab) => tab.id !== tabId);
+        const nextActive = activeTabId === tabId ? nextTabs[0]?.id || "" : activeTabId;
+        setTabs(nextTabs.length ? nextTabs : [{ id: crypto.randomUUID(), title: "New tab", url: "" }]);
+        setActiveTabId(nextActive);
+        emitTabs(nextTabs, nextActive);
+        return { activeTabId: nextActive, tabs: nextTabs };
+      },
+      scanMedia: scanDomMedia,
+      applyPlayback: (state) => webviewRef.current?.executeJavaScript(`window.__havynApplyPlayback?.(${JSON.stringify(state)})`, true).catch(() => false),
+      toggleAdBlock: () => ({ enabled: false, error: "Ad blocking is handled by the native browser mode." }),
+      getAdBlockState: () => ({ enabled: false })
+    });
+    return unregister;
+  }, [activeTabId, emitTabs, scanDomMedia, tabs, useDomWebview]);
+
+  useEffect(() => {
     if (currentUrl) setUrl(currentUrl);
   }, [currentUrl]);
 
   useEffect(() => {
     if (!browser?.onTabs) return undefined;
+    if (useDomWebview && tabs.length === 0) {
+      const id = crypto.randomUUID();
+      const initial = [{ id, title: "New tab", url: "" }];
+      setTabs(initial);
+      setActiveTabId(id);
+      domBrowserEvents.tabs({ tabs: initial, activeTabId: id });
+    }
     return browser.onTabs(({ tabs: nextTabs, activeTabId: nextActiveTabId }) => {
       setTabs(nextTabs || []);
       setActiveTabId(nextActiveTabId || "");
       const active = nextTabs?.find((tab) => tab.id === nextActiveTabId);
       if (active?.url) setUrl(active.url);
     });
-  }, [browser]);
+  }, [browser, tabs.length, useDomWebview]);
 
   useEffect(() => {
     if (!browser?.onLoadState) return undefined;
@@ -268,6 +386,16 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
         {!browser && <button className="icon-button" type="button" title="Load local test video" onClick={loadTestVideo}><Film size={18} /></button>}
       </form>
       <div className="browser-frame" ref={frameRef} onMouseEnter={() => browser?.focus?.()} onMouseDown={() => browser?.focus?.()}>
+        {useDomWebview && preloadUrl && (
+          <webview
+            ref={webviewRef}
+            className="dom-webview"
+            src="about:blank"
+            preload={preloadUrl}
+            allowpopups="false"
+            webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=no"
+          />
+        )}
         {!browser && previewUrl && (
           <>
             <iframe

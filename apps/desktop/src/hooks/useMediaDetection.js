@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { domBrowserBridge } from "../lib/domBrowserBridge";
 
 export function useMediaDetection({ socket, room, user, onMediaEvent }) {
   const [detectedMedia, setDetectedMedia] = useState([]);
   const [currentUrl, setCurrentUrl] = useState("");
-  const browser = useMemo(() => window.havyn?.browser, []);
+  const browser = useMemo(() => domBrowserBridge || window.havyn?.browser, []);
   const reportedMediaKey = useRef("");
 
   function reportDetectedMedia(media) {
