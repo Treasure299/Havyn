@@ -235,11 +235,11 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Width="44"
-                                Height="44"
-                                CornerRadius="22"
+                        <Border Width="38"
+                                Height="38"
+                                CornerRadius="19"
                                 Background="#FFFFFFFF"
-                                Padding="6">
+                                Padding="3">
                             <Image Source="Assets/havyn-mark.png" Stretch="Uniform" />
                         </Border>
                         <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
