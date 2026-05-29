@@ -1356,6 +1356,14 @@ label {
   background: #fff;
 }
 
+.dom-webview {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  border: 0;
+  background: #050507;
+}
+
 .web-preview-note {
   position: absolute;
   left: 12px;

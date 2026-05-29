@@ -5,9 +5,10 @@ function normalizeUrl(value) {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
-export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "" }) {
+export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "", layoutSignal = "" }) {
   const frameRef = useRef(null);
   const iframeRef = useRef(null);
+  const cinemaWebviewRef = useRef(null);
   const [url, setUrl] = useState("https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html");
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewBlocked, setPreviewBlocked] = useState(false);
@@ -16,9 +17,11 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   const [notice, setNotice] = useState("");
   const [adBlockEnabled, setAdBlockEnabled] = useState(false);
   const [adBlockBypassed, setAdBlockBypassed] = useState(false);
+  const [preloadUrl, setPreloadUrl] = useState("");
+  const cinemaMode = layoutSignal === "cinema";
 
   const updateBrowserBounds = useCallback(() => {
-    if (!browser || !frameRef.current) return;
+    if (!browser || cinemaMode || !frameRef.current) return;
     const rect = frameRef.current.getBoundingClientRect();
     browser.setBounds({
       x: Math.round(rect.left),
@@ -26,10 +29,10 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       width: Math.round(rect.width),
       height: Math.round(rect.height)
     });
-  }, [browser]);
+  }, [browser, cinemaMode]);
 
   useLayoutEffect(() => {
-    if (!browser || !frameRef.current) return undefined;
+    if (!browser || cinemaMode || !frameRef.current) return undefined;
     const createBounds = () => {
       const rect = frameRef.current.getBoundingClientRect();
       browser.create({
@@ -49,7 +52,66 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       window.removeEventListener("resize", updateBrowserBounds);
       browser.destroy();
     };
-  }, [browser, updateBrowserBounds]);
+  }, [browser, cinemaMode, updateBrowserBounds]);
+
+  useEffect(() => {
+    if (!browser || cinemaMode) return undefined;
+    const timers = [0, 80, 220, 520].map((delay) => window.setTimeout(updateBrowserBounds, delay));
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [browser, cinemaMode, updateBrowserBounds]);
+
+  useEffect(() => {
+    window.havyn?.browser?.getPreloadUrl?.().then(setPreloadUrl).catch(() => {});
+  }, []);
+
+  const scanCinemaMedia = useCallback(async () => {
+    const webview = cinemaWebviewRef.current;
+    if (!webview) return [];
+    const media = await webview.executeJavaScript("window.__havynScanMedia?.() || []", true).catch(() => []);
+    const normalized = (media || []).map((item) => ({
+      ...item,
+      url: webview.getURL?.() || item.url || url
+    }));
+    if (normalized.length) onWebMediaDetected?.(normalized, null);
+    return normalized;
+  }, [onWebMediaDetected, url]);
+
+  useEffect(() => {
+    if (!cinemaMode || !preloadUrl) return undefined;
+    const webview = cinemaWebviewRef.current;
+    if (!webview) return undefined;
+    const activeUrl = currentUrl || url;
+    if (activeUrl && activeUrl !== "about:blank") webview.loadURL(activeUrl).catch(() => {});
+    const handleLoad = () => {
+      window.setTimeout(scanCinemaMedia, 350);
+      window.setTimeout(scanCinemaMedia, 1400);
+    };
+    const handleNavigate = (event) => setUrl(event.url || webview.getURL?.() || url);
+    const handleConsole = async () => {
+      const event = await webview.executeJavaScript("window.__havynReadMediaEvent?.()", true).catch(() => null);
+      if (event) onWebMediaEvent?.(event);
+    };
+    webview.addEventListener("did-finish-load", handleLoad);
+    webview.addEventListener("dom-ready", handleLoad);
+    webview.addEventListener("did-navigate", handleNavigate);
+    webview.addEventListener("did-navigate-in-page", handleNavigate);
+    webview.addEventListener("console-message", handleConsole);
+    return () => {
+      webview.removeEventListener("did-finish-load", handleLoad);
+      webview.removeEventListener("dom-ready", handleLoad);
+      webview.removeEventListener("did-navigate", handleNavigate);
+      webview.removeEventListener("did-navigate-in-page", handleNavigate);
+      webview.removeEventListener("console-message", handleConsole);
+    };
+  }, [cinemaMode, currentUrl, onWebMediaEvent, preloadUrl, scanCinemaMedia, url]);
+
+  useEffect(() => {
+    if (!cinemaMode || !webPlaybackState || !cinemaWebviewRef.current) return;
+    cinemaWebviewRef.current.executeJavaScript(
+      `window.__havynApplyPlayback?.(${JSON.stringify(webPlaybackState)})`,
+      true
+    ).catch(() => false);
+  }, [cinemaMode, webPlaybackState]);
 
   useEffect(() => {
     if (currentUrl) setUrl(currentUrl);
@@ -268,6 +330,16 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
         {!browser && <button className="icon-button" type="button" title="Load local test video" onClick={loadTestVideo}><Film size={18} /></button>}
       </form>
       <div className="browser-frame" ref={frameRef} onMouseEnter={() => browser?.focus?.()} onMouseDown={() => browser?.focus?.()}>
+        {cinemaMode && preloadUrl && (
+          <webview
+            ref={cinemaWebviewRef}
+            className="dom-webview cinema-webview"
+            src="about:blank"
+            preload={preloadUrl}
+            allowpopups="false"
+            webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=no"
+          />
+        )}
         {!browser && previewUrl && (
           <>
             <iframe
