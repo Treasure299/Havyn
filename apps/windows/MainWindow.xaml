@@ -30,7 +30,6 @@
                         <Button Style="{StaticResource MiniButton}" Content="Cam" Margin="5,0,0,0" />
                         <Slider Width="92" Minimum="0" Maximum="100" Value="72" Margin="8,0,0,0" />
                     </StackPanel>
-                    <Ellipse Width="9" Height="9" Fill="#FF4DFB79" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,9,9,0" />
                 </Grid>
             </Border>
         </DataTemplate>
@@ -52,7 +51,6 @@
                         <Button Style="{StaticResource MiniButton}" Content="Cam" Margin="5,0,0,0" />
                         <Slider Width="92" Minimum="0" Maximum="100" Value="58" Margin="8,0,0,0" />
                     </StackPanel>
-                    <Ellipse Width="9" Height="9" Fill="#FF4DFB79" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,9,9,0" />
                 </Grid>
             </Border>
         </DataTemplate>
