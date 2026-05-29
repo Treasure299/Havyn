@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Resource Include="Assets\havyn-logo.png" />
+    <Resource Include="Assets\havyn-mark.png" />
     <Resource Include="Assets\havyn-icon.ico" />
   </ItemGroup>
 

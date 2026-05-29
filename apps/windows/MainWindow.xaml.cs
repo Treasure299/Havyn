@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private double resizeOriginHeight;
     private bool chatPinned;
     private bool mediaFullscreenStylesActive;
+    private bool adBlockerEnabled = true;
     private readonly DispatcherTimer chatIdleTimer;
 
     public MainWindow()
@@ -51,8 +52,6 @@ public partial class MainWindow : Window
 
     public void UpdatePlaybackSnapshot(string eventName, double currentTime, double duration, bool paused)
     {
-        CenterPlayButton.Content = paused ? "Play" : "Pause";
-        FullscreenPlayButton.Content = paused ? "Play" : "Pause";
         if (duration > 0)
         {
             foreach (var slider in FindVisualChildren<Slider>(Root).Where(slider => slider.Name == "ProgressSlider"))
@@ -105,6 +104,15 @@ public partial class MainWindow : Window
     private void Forward_Click(object sender, RoutedEventArgs e)
     {
         if (Browser.CanGoForward) Browser.Forward();
+    }
+
+    private void Reload_Click(object sender, RoutedEventArgs e) => Browser.Reload();
+
+    private void ToggleAdBlock_Click(object sender, RoutedEventArgs e)
+    {
+        adBlockerEnabled = !adBlockerEnabled;
+        AdBlockButton.Opacity = adBlockerEnabled ? 1 : 0.48;
+        AdBlockButton.ToolTip = adBlockerEnabled ? "Ad blocker on" : "Ad blocker off";
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

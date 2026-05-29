@@ -112,25 +112,18 @@
                         VerticalAlignment="Center" />
                 <Grid Grid.Row="1">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <Button Width="62" Content="Play" Click="PlayPause_Click" />
-                    <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="-10" Click="BackTen_Click" />
-                    <Button Grid.Column="2" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="+10" Click="ForwardTen_Click" />
                     <TextBlock x:Name="PlaybackTimeText"
-                               Grid.Column="3"
                                Text="40:04 / 1:17:36"
                                VerticalAlignment="Center"
-                               Margin="18,0"
+                               Margin="2,0,18,0"
                                Foreground="{StaticResource InkBrush}" />
-                    <StackPanel Grid.Column="4" Orientation="Horizontal">
-                        <Button Content="Sync source" MinWidth="128" />
-                        <Button Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Content="First Sync Play" Click="FirstSyncPlay_Click" />
-                        <Button Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="Full" Click="Fullscreen_Click" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button Content="Sync source" MinWidth="128" ToolTip="Sync the detected source to the room" />
+                        <Button Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Content="First Sync Play" Click="FirstSyncPlay_Click" ToolTip="Start playback for everyone" />
+                        <Button Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="⛶" Click="Fullscreen_Click" ToolTip="Enter fullscreen" />
                     </StackPanel>
                 </Grid>
             </Grid>
@@ -161,7 +154,13 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Image Source="Assets/havyn-logo.png" Width="44" Height="44" Stretch="Uniform" />
+                        <Border Width="44"
+                                Height="44"
+                                CornerRadius="22"
+                                Background="#FFFFFFFF"
+                                Padding="6">
+                            <Image Source="Assets/havyn-mark.png" Stretch="Uniform" />
+                        </Border>
                         <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
                             <TextBlock Text="Movie Night" FontSize="18" FontWeight="Bold" />
                             <TextBlock x:Name="MediaTitleText"
@@ -171,18 +170,12 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <Button Style="{StaticResource IconButton}" Content="-10" Click="BackTen_Click" />
-                        <Button x:Name="CenterPlayButton" Width="48" Height="42" Margin="8,0" Content="Play" Click="PlayPause_Click" />
-                        <Button Style="{StaticResource IconButton}" Content="+10" Click="ForwardTen_Click" />
-                    </StackPanel>
-
                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Button MinWidth="112" Content="Room link" />
-                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="2" />
-                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Set" />
-                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Min" Click="Minimize_Click" />
-                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Close" Click="Close_Click" />
+                        <Button MinWidth="52" Content="🔗" ToolTip="Copy room link" />
+                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="2" ToolTip="Participants" />
+                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="⚙" ToolTip="Room settings" />
+                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="—" Click="Minimize_Click" ToolTip="Minimize" />
+                        <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="×" Click="Close_Click" ToolTip="Close" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -204,13 +197,16 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <Button Style="{StaticResource IconButton}" Content="Back" Click="Back_Click" />
-                            <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Next" Click="Forward_Click" />
+                            <Button Style="{StaticResource IconButton}" Content="←" Click="Back_Click" ToolTip="Back" />
+                            <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="→" Click="Forward_Click" ToolTip="Forward" />
+                            <Button Grid.Column="2" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="↻" Click="Reload_Click" ToolTip="Reload" />
                             <TextBox x:Name="AddressBox"
-                                     Grid.Column="2"
+                                     Grid.Column="3"
                                      Height="42"
                                      Margin="8,0"
                                      VerticalContentAlignment="Center"
@@ -222,7 +218,14 @@
                                      Padding="14,0"
                                      KeyDown="AddressBox_KeyDown"
                                      Text="https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html" />
-                            <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="Go" Click="Load_Click" />
+                            <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="↵" Click="Load_Click" ToolTip="Open URL" />
+                            <Button x:Name="AdBlockButton"
+                                    Grid.Column="5"
+                                    Style="{StaticResource IconButton}"
+                                    Margin="8,0,0,0"
+                                    Content="🛡"
+                                    Click="ToggleAdBlock_Click"
+                                    ToolTip="Ad blocker on" />
                         </Grid>
                     </Border>
 
@@ -313,7 +316,7 @@
                     </Grid.ColumnDefinitions>
                     <Border Style="{StaticResource GlassPanelStyle}" Padding="8" MouseLeftButtonDown="Chrome_MouseLeftButtonDown">
                         <StackPanel Orientation="Horizontal">
-                            <Button Style="{StaticResource IconButton}" Content="Exit" Click="Fullscreen_Click" />
+                            <Button Style="{StaticResource IconButton}" Content="↙" Click="Fullscreen_Click" ToolTip="Exit fullscreen" />
                             <StackPanel Margin="12,0,18,0" VerticalAlignment="Center">
                                 <TextBlock Text="The WONDERfools" FontSize="12" FontWeight="Bold" />
                                 <TextBlock x:Name="FullscreenMediaTitleText" Text="S1:E6 The WONDERfools" FontSize="10" Foreground="{StaticResource MutedBrush}" />
@@ -321,20 +324,12 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="1" Style="{StaticResource GlassPanelStyle}" Padding="8" HorizontalAlignment="Center">
-                        <StackPanel Orientation="Horizontal">
-                            <Button Style="{StaticResource IconButton}" Content="-10" Click="BackTen_Click" />
-                            <Button x:Name="FullscreenPlayButton" Width="48" Height="42" Margin="8,0" Content="Play" Click="PlayPause_Click" />
-                            <Button Style="{StaticResource IconButton}" Content="+10" Click="ForwardTen_Click" />
-                        </StackPanel>
-                    </Border>
-
                     <Border Grid.Column="2" Style="{StaticResource GlassPanelStyle}" Padding="8">
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="Room link" MinWidth="108" />
-                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="2" />
-                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Set" />
-                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Full" Click="Fullscreen_Click" />
+                            <Button Content="🔗" MinWidth="52" ToolTip="Copy room link" />
+                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="2" ToolTip="Participants" />
+                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="⚙" ToolTip="Settings" />
+                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="↙" Click="Fullscreen_Click" ToolTip="Exit fullscreen" />
                         </StackPanel>
                     </Border>
                 </Grid>
