@@ -1918,6 +1918,7 @@ label {
   overflow: hidden;
   border: 1px solid var(--line);
   background: #060609;
+  box-shadow: 0 16px 38px rgba(0,0,0,0.28);
 }
 
 .video-rail[data-count="1"] {
@@ -2006,6 +2007,42 @@ label {
   background: rgba(0,0,0,0.55);
 }
 
+.bubble-quick-controls {
+  position: absolute;
+  left: 7px;
+  top: 7px;
+  z-index: 4;
+  display: inline-flex;
+  gap: 5px;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.video-bubble:hover .bubble-quick-controls,
+.watch-room.is-focus-mode .bubble-quick-controls {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.bubble-quick-controls button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.44);
+  color: #fff;
+  backdrop-filter: blur(12px);
+  padding: 0;
+}
+
+.bubble-quick-controls button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
 .video-bubble em {
   position: absolute;
   inset: 0;
@@ -2060,6 +2097,69 @@ label {
   accent-color: var(--blue-soft);
 }
 
+.video-float-layer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.floating-video-bubble {
+  position: absolute;
+  top: 0;
+  right: 0;
+  aspect-ratio: 16 / 9;
+  cursor: grab;
+  pointer-events: auto;
+  transition: filter 150ms ease;
+  filter: drop-shadow(0 20px 44px rgba(0,0,0,0.48));
+}
+
+.floating-video-bubble:active {
+  cursor: grabbing;
+}
+
+.floating-video-bubble .video-bubble {
+  min-height: 0;
+  border-radius: 10px;
+  border-color: rgba(255,255,255,0.18);
+  background: rgba(6,6,9,0.88);
+  backdrop-filter: blur(16px);
+}
+
+.bubble-resize-handle {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  z-index: 5;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  opacity: 0.68;
+}
+
+.bubble-resize-handle::before,
+.bubble-resize-handle::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  border-right: 1px solid rgba(255,255,255,0.72);
+  border-bottom: 1px solid rgba(255,255,255,0.72);
+}
+
+.bubble-resize-handle::before {
+  width: 14px;
+  height: 14px;
+}
+
+.bubble-resize-handle::after {
+  width: 8px;
+  height: 8px;
+}
+
 .toast {
   position: fixed;
   top: 86px;
@@ -2078,6 +2178,53 @@ label {
   background: #030304;
 }
 
+.cinema-top-controls {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 220;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-radius: 10px;
+  padding: 7px;
+  background:
+    linear-gradient(90deg, rgba(4,4,6,0.78), rgba(13,13,17,0.42)),
+    rgba(12,12,16,0.62);
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: auto;
+}
+
+.watch-room.is-focus-mode:hover .cinema-top-controls,
+.cinema-top-controls:hover,
+.cinema-top-controls:focus-within {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cinema-top-controls > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.cinema-top-controls strong,
+.cinema-top-controls span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cinema-top-controls span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .watch-room.is-focus-mode .room-header {
   height: 0;
   min-height: 0;
@@ -2089,7 +2236,7 @@ label {
 .watch-room.is-focus-mode .watch-layout {
   height: 100vh;
   padding: 8px;
-  grid-template-columns: minmax(640px, 1fr) 6px minmax(300px, 23vw) !important;
+  grid-template-columns: minmax(640px, 1fr) 6px minmax(280px, 22vw) !important;
   background:
     radial-gradient(circle at 26% 0%, rgba(40,132,231,0.08), transparent 32%),
     #030304;
@@ -2128,20 +2275,57 @@ label {
 }
 
 .watch-room.is-focus-mode .watch-side {
-  grid-template-rows: minmax(210px, 34vh) 4px minmax(0, 1fr) auto !important;
-  gap: 8px;
+  position: relative;
+  display: block;
   padding-left: 6px;
+  pointer-events: none;
 }
 
 .watch-room.is-focus-mode .call-panel {
-  background: rgba(14,14,18,0.5);
-  border-color: rgba(255,255,255,0.07);
-  padding: 10px;
+  position: absolute;
+  top: 64px;
+  right: 8px;
+  width: min(100%, 310px);
+  height: min(50vh, 430px);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  pointer-events: auto;
+}
+
+.watch-room.is-focus-mode .call-panel .side-heading {
+  display: none;
+}
+
+.watch-room.is-focus-mode .side-resize-handle {
+  display: none;
+}
+
+.watch-room.is-focus-mode .side-stack {
+  position: absolute;
+  right: 8px;
+  bottom: 18px;
+  width: min(100%, 330px);
+  height: min(34vh, 270px);
+  display: block;
+  pointer-events: none;
+}
+
+.watch-room.is-focus-mode .side-stack .participants-panel {
+  display: none;
 }
 
 .watch-room.is-focus-mode .chat-panel {
-  opacity: 0.32;
-  background: rgba(10,10,13,0.38);
+  height: 100%;
+  opacity: 0;
+  pointer-events: auto;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(77,169,255,0.14), transparent 38%),
+    rgba(10,10,13,0.44);
+  border-color: rgba(255,255,255,0.1);
+  box-shadow: 0 24px 70px rgba(0,0,0,0.44);
+  backdrop-filter: blur(20px);
 }
 
 .watch-room.is-focus-mode .chat-panel:hover,
@@ -2153,6 +2337,18 @@ label {
 .watch-room.is-focus-mode .participants-panel {
   background: rgba(14,14,18,0.42);
   border-color: rgba(255,255,255,0.06);
+}
+
+.watch-room.is-focus-mode .chat-panel h2 {
+  font-size: 15px;
+}
+
+.watch-room.is-focus-mode .message-list {
+  gap: 7px;
+}
+
+.watch-room.is-focus-mode .message {
+  background: rgba(255,255,255,0.055);
 }
 
 .action-toast {

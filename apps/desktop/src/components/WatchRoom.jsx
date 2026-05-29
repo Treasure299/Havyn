@@ -272,6 +272,23 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       {social?.socialNote && <div className="toast social-toast">{social.socialNote}</div>}
       {call.callNotice && <div className="toast">{call.callNotice}</div>}
       {roomState.actionNotice && <div className="action-toast">{roomState.actionNotice}</div>}
+      {focusMode && (
+        <div className="cinema-top-controls glass">
+          <button className="icon-text" type="button" onClick={toggleFocusMode}><Minimize2 size={16} /> Exit</button>
+          <div>
+            <strong>{room.playbackState?.activeMediaTitle || room.roomName}</strong>
+            <span>{room.playbackMode}</span>
+          </div>
+          <button
+            className="first-sync-button"
+            type="button"
+            disabled={!playback.canControl || !playback.playbackState?.activeMediaUrl}
+            onClick={playback.play}
+          >
+            First Sync Play
+          </button>
+        </div>
+      )}
 
       <section
         className="watch-layout"
@@ -350,7 +367,13 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
               </div>
               <CallControls call={call} onDevicesOpenChange={setDevicesOpen} />
             </div>
-            <VideoBubbleRail call={call} participants={room.participants} layout={callLayout} focusPrimary={focusPrimary} />
+            <VideoBubbleRail
+              call={call}
+              participants={room.participants}
+              layout={callLayout}
+              focusPrimary={focusPrimary}
+              floating={focusMode}
+            />
           </section>
           <div className="side-resize-handle" title="Resize call area" onMouseDown={startCallResize} onDoubleClick={() => setCallHeight(190)} />
           <div className="guide-chat-target side-stack">
