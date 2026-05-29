@@ -35,6 +35,7 @@ public partial class MainWindow : Window
         previousState = WindowState;
         previousStyle = WindowStyle;
         previousResizeMode = ResizeMode;
+        Browser.RequestHandler = new HavynAdBlockRequestHandler(() => adBlockerEnabled);
         Browser.JavascriptObjectRepository.Register("havynBridge", new BrowserBridge(this), new BindingOptions());
         chatIdleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
         chatIdleTimer.Tick += (_, _) =>

@@ -344,8 +344,13 @@
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" Style="{StaticResource GlassPanelStyle}" Padding="12">
-                        <StackPanel>
-                            <Grid>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0">
                                 <StackPanel>
                                     <TextBlock Text="Call" FontSize="18" FontWeight="Bold" />
                                     <TextBlock Text="Connected" Foreground="{StaticResource MutedBrush}" FontSize="12" />
@@ -355,11 +360,12 @@
                                     <Button Content="Focus" Width="64" Height="34" Margin="6,0,0,0" />
                                 </StackPanel>
                             </Grid>
-                            <UniformGrid Rows="2" Columns="1" Margin="0,14,0,0">
-                                <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileYouTemplate}" Margin="0,0,0,10" />
-                                <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileAuenTemplate}" />
+
+                            <UniformGrid Grid.Row="1" Rows="1" Columns="2" Margin="0,14,0,0">
+                                <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileYouTemplate}" Margin="0,0,6,0" />
+                                <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileAuenTemplate}" Margin="6,0,0,0" />
                             </UniformGrid>
-                        </StackPanel>
+                        </Grid>
                     </Border>
 
                     <GridSplitter Grid.Row="1"
@@ -511,15 +517,6 @@
                     <ContentControl Content="chat" ContentTemplate="{StaticResource ChatContentTemplate}" />
                 </Border>
 
-                <Border Grid.Row="2"
-                        Width="660"
-                        HorizontalAlignment="Left"
-                        VerticalAlignment="Bottom"
-                        Style="{StaticResource GlassPanelStyle}"
-                        Padding="14,10"
-                        Margin="0,0,0,0">
-                    <ContentControl Content="source" ContentTemplate="{StaticResource MediaSourceTemplate}" />
-                </Border>
             </Grid>
         </Grid>
     </Grid>
