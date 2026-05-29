@@ -12,7 +12,132 @@
         AllowsTransparency="False"
         Background="#050507"
         Icon="Assets/havyn-icon.ico">
-    <Grid x:Name="Root">
+    <Window.Resources>
+        <DataTemplate x:Key="ParticipantTileYouTemplate">
+            <Border Style="{StaticResource VideoTileStyle}">
+                <Grid>
+                    <Rectangle>
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF232530" Offset="0" />
+                                <GradientStop Color="#FF0D0E12" Offset="1" />
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <TextBlock Text="You" Style="{StaticResource BubbleLabelStyle}" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8">
+                        <Button Style="{StaticResource MiniButton}" Content="Mic" />
+                        <Button Style="{StaticResource MiniButton}" Content="Cam" Margin="5,0,0,0" />
+                        <Slider Width="92" Minimum="0" Maximum="100" Value="72" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <Ellipse Width="9" Height="9" Fill="#FF4DFB79" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,9,9,0" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ParticipantTileAuenTemplate">
+            <Border Style="{StaticResource VideoTileStyle}">
+                <Grid>
+                    <Rectangle>
+                        <Rectangle.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF191B23" Offset="0" />
+                                <GradientStop Color="#FF08090D" Offset="1" />
+                            </LinearGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <TextBlock Text="Auen" Style="{StaticResource BubbleLabelStyle}" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8">
+                        <Button Style="{StaticResource MiniButton}" Content="Mic" />
+                        <Button Style="{StaticResource MiniButton}" Content="Cam" Margin="5,0,0,0" />
+                        <Slider Width="92" Minimum="0" Maximum="100" Value="58" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <Ellipse Width="9" Height="9" Fill="#FF4DFB79" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,9,9,0" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ChatContentTemplate">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid>
+                    <TextBlock Text="Chat" FontSize="18" FontWeight="Bold" />
+                    <Button HorizontalAlignment="Right" Style="{StaticResource MiniButton}" Content="^" />
+                </Grid>
+                <StackPanel Grid.Row="1" Margin="0,12,0,12">
+                    <Border Style="{StaticResource MessageStyle}">
+                        <StackPanel>
+                            <TextBlock Text="Havyn" Foreground="{StaticResource BlueBrush}" FontSize="11" FontWeight="Bold" />
+                            <TextBlock Text="Treasure joined the room" FontSize="14" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource MessageStyle}" Margin="0,8,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Auen" Foreground="{StaticResource BlueBrush}" FontSize="11" FontWeight="Bold" />
+                            <TextBlock Text="Ready when you are" FontSize="14" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="46" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Height="42"
+                             VerticalContentAlignment="Center"
+                             Background="#AA191A21"
+                             BorderBrush="#24FFFFFF"
+                             Foreground="{StaticResource InkBrush}"
+                             Padding="12,0"
+                             Text="Message the room..." />
+                    <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Send" />
+                </Grid>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="PlaybackStripTemplate">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="16" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Slider x:Name="ProgressSlider"
+                        Minimum="0"
+                        Maximum="100"
+                        Value="38"
+                        VerticalAlignment="Center" />
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button Width="62" Content="Play" Click="PlayPause_Click" />
+                    <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="-10" Click="BackTen_Click" />
+                    <Button Grid.Column="2" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="+10" Click="ForwardTen_Click" />
+                    <TextBlock x:Name="PlaybackTimeText"
+                               Grid.Column="3"
+                               Text="40:04 / 1:17:36"
+                               VerticalAlignment="Center"
+                               Margin="18,0"
+                               Foreground="{StaticResource InkBrush}" />
+                    <StackPanel Grid.Column="4" Orientation="Horizontal">
+                        <Button Content="Sync source" MinWidth="128" />
+                        <Button Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Content="First Sync Play" Click="FirstSyncPlay_Click" />
+                        <Button Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="Full" Click="Fullscreen_Click" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid x:Name="Root" ClipToBounds="True">
         <Grid.Background>
             <RadialGradientBrush Center="0.78,0.08" RadiusX="0.9" RadiusY="0.8">
                 <GradientStop Color="#441B0F17" Offset="0" />
@@ -26,27 +151,24 @@
                                      FrameLoadEnd="Browser_FrameLoadEnd"
                                      LoadingStateChanged="Browser_LoadingStateChanged" />
 
-        <Border x:Name="CinemaShade"
-                IsHitTestVisible="False">
+        <Border x:Name="CinemaShade" IsHitTestVisible="False">
             <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                    <GradientStop Color="#00000000" Offset="0" />
-                    <GradientStop Color="#1A000000" Offset="0.58" />
-                    <GradientStop Color="#B0000000" Offset="1" />
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#90000000" Offset="0" />
+                    <GradientStop Color="#00000000" Offset="0.42" />
+                    <GradientStop Color="#B5000000" Offset="1" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
 
-        <Grid Margin="14">
+        <Grid x:Name="StandardOverlay" Margin="14">
             <Grid.RowDefinitions>
                 <RowDefinition Height="64" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="86" />
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0"
-                    Style="{StaticResource GlassPanelStyle}"
-                    MouseLeftButtonDown="Chrome_MouseLeftButtonDown">
+            <Border Grid.Row="0" Style="{StaticResource GlassPanelStyle}" MouseLeftButtonDown="Chrome_MouseLeftButtonDown">
                 <Grid Margin="12,8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -64,24 +186,13 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1"
-                                Orientation="Horizontal"
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <Button Style="{StaticResource IconButton}" Content="-10" Click="BackTen_Click" />
-                        <Button x:Name="CenterPlayButton"
-                                Width="48"
-                                Height="42"
-                                Margin="8,0"
-                                Content="Play"
-                                Click="PlayPause_Click" />
+                        <Button x:Name="CenterPlayButton" Width="48" Height="42" Margin="8,0" Content="Play" Click="PlayPause_Click" />
                         <Button Style="{StaticResource IconButton}" Content="+10" Click="ForwardTen_Click" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="2"
-                                Orientation="Horizontal"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center">
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                         <Button MinWidth="112" Content="Room link" />
                         <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="2" />
                         <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Set" />
@@ -97,11 +208,7 @@
                     <ColumnDefinition Width="390" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0"
-                        Style="{StaticResource GlassPanelStyle}"
-                        VerticalAlignment="Top"
-                        Margin="0,14,18,0"
-                        Padding="8">
+                <Border Grid.Column="0" Style="{StaticResource GlassPanelStyle}" VerticalAlignment="Top" Margin="0,14,18,0" Padding="8">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -128,9 +235,7 @@
                     </Grid>
                 </Border>
 
-                <StackPanel Grid.Column="1"
-                            VerticalAlignment="Top"
-                            Margin="0,96,0,0">
+                <StackPanel Grid.Column="1" VerticalAlignment="Top" Margin="0,96,0,0">
                     <Border Style="{StaticResource GlassPanelStyle}" Padding="12">
                         <StackPanel>
                             <Grid>
@@ -143,113 +248,150 @@
                                     <Button Content="Focus" Width="64" Height="34" Margin="6,0,0,0" />
                                 </StackPanel>
                             </Grid>
-
                             <UniformGrid Rows="2" Columns="1" Margin="0,14,0,0">
-                                <Border Style="{StaticResource VideoTileStyle}" Margin="0,0,0,10">
-                                    <Grid>
-                                        <Rectangle Fill="#1F2028" />
-                                        <TextBlock Text="You" Style="{StaticResource BubbleLabelStyle}" />
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8">
-                                            <Button Style="{StaticResource MiniButton}" Content="Mic" />
-                                            <Button Style="{StaticResource MiniButton}" Content="Cam" Margin="5,0,0,0" />
-                                            <Slider Width="92" Minimum="0" Maximum="100" Value="72" Margin="8,0,0,0" />
-                                        </StackPanel>
-                                    </Grid>
-                                </Border>
-                                <Border Style="{StaticResource VideoTileStyle}">
-                                    <Grid>
-                                        <Rectangle Fill="#15161D" />
-                                        <TextBlock Text="Auen" Style="{StaticResource BubbleLabelStyle}" />
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8">
-                                            <Button Style="{StaticResource MiniButton}" Content="Mic" />
-                                            <Button Style="{StaticResource MiniButton}" Content="Cam" Margin="5,0,0,0" />
-                                            <Slider Width="92" Minimum="0" Maximum="100" Value="58" Margin="8,0,0,0" />
-                                        </StackPanel>
-                                    </Grid>
-                                </Border>
+                                <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileYouTemplate}" Margin="0,0,0,10" />
+                                <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileAuenTemplate}" />
                             </UniformGrid>
                         </StackPanel>
                     </Border>
 
                     <Border Style="{StaticResource GlassPanelStyle}" Margin="0,18,0,0" Padding="14">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Text="Chat" FontSize="18" FontWeight="Bold" />
-                            <StackPanel Grid.Row="1" Margin="0,12,0,12">
-                                <Border Style="{StaticResource MessageStyle}">
-                                    <StackPanel>
-                                        <TextBlock Text="Havyn" Foreground="{StaticResource BlueBrush}" FontSize="11" FontWeight="Bold" />
-                                        <TextBlock Text="Treasure joined the room" FontSize="14" />
-                                    </StackPanel>
-                                </Border>
-                                <Border Style="{StaticResource MessageStyle}" Margin="0,8,0,0">
-                                    <StackPanel>
-                                        <TextBlock Text="Auen" Foreground="{StaticResource BlueBrush}" FontSize="11" FontWeight="Bold" />
-                                        <TextBlock Text="Ready when you are" FontSize="14" />
-                                    </StackPanel>
-                                </Border>
-                            </StackPanel>
-                            <Grid Grid.Row="2">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="46" />
-                                </Grid.ColumnDefinitions>
-                                <TextBox Height="42"
-                                         VerticalContentAlignment="Center"
-                                         Background="#AA191A21"
-                                         BorderBrush="#24FFFFFF"
-                                         Foreground="{StaticResource InkBrush}"
-                                         Padding="12,0"
-                                         Text="Message the room..." />
-                                <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Send" />
-                            </Grid>
-                        </Grid>
+                        <ContentControl Content="chat" ContentTemplate="{StaticResource ChatContentTemplate}" />
                     </Border>
                 </StackPanel>
             </Grid>
 
-            <Border Grid.Row="2"
-                    Style="{StaticResource GlassPanelStyle}"
-                    VerticalAlignment="Bottom"
-                    Padding="16,10">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="16" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <Slider x:Name="ProgressSlider"
-                            Minimum="0"
-                            Maximum="100"
-                            Value="38"
-                            VerticalAlignment="Center" />
-                    <Grid Grid.Row="1">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <Button Width="62" Content="Play" Click="PlayPause_Click" />
-                        <Button Grid.Column="1" Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="-10" Click="BackTen_Click" />
-                        <Button Grid.Column="2" Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="+10" Click="ForwardTen_Click" />
-                        <TextBlock Grid.Column="3"
-                                   Text="40:04 / 1:17:36"
-                                   VerticalAlignment="Center"
-                                   Margin="18,0"
-                                   Foreground="{StaticResource InkBrush}" />
-                        <StackPanel Grid.Column="4" Orientation="Horizontal">
-                            <Button Content="Sync source" MinWidth="128" />
-                            <Button Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Content="First Sync Play" Click="PlayPause_Click" />
-                            <Button Style="{StaticResource IconButton}" Margin="10,0,0,0" Content="Full" Click="Fullscreen_Click" />
-                        </StackPanel>
-                    </Grid>
-                </Grid>
+            <Border Grid.Row="2" Style="{StaticResource GlassPanelStyle}" VerticalAlignment="Bottom" Padding="16,10">
+                <ContentControl Content="playback" ContentTemplate="{StaticResource PlaybackStripTemplate}" />
             </Border>
+        </Grid>
+
+        <Grid x:Name="FullscreenOverlay" Visibility="Collapsed" Opacity="0">
+            <Border IsHitTestVisible="False">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#84000000" Offset="0" />
+                        <GradientStop Color="#08000000" Offset="0.28" />
+                        <GradientStop Color="#00000000" Offset="0.55" />
+                        <GradientStop Color="#8A000000" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+
+            <Grid x:Name="FullscreenHud" Margin="20">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource GlassPanelStyle}" Padding="8" MouseLeftButtonDown="Chrome_MouseLeftButtonDown">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Style="{StaticResource IconButton}" Content="Exit" Click="Fullscreen_Click" />
+                            <StackPanel Margin="12,0,18,0" VerticalAlignment="Center">
+                                <TextBlock Text="The WONDERfools" FontSize="12" FontWeight="Bold" />
+                                <TextBlock x:Name="FullscreenMediaTitleText" Text="S1:E6 The WONDERfools" FontSize="10" Foreground="{StaticResource MutedBrush}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Style="{StaticResource GlassPanelStyle}" Padding="8" HorizontalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Style="{StaticResource IconButton}" Content="-10" Click="BackTen_Click" />
+                            <Button x:Name="FullscreenPlayButton" Width="48" Height="42" Margin="8,0" Content="Play" Click="PlayPause_Click" />
+                            <Button Style="{StaticResource IconButton}" Content="+10" Click="ForwardTen_Click" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" Style="{StaticResource GlassPanelStyle}" Padding="8">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Room link" MinWidth="108" />
+                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="2" />
+                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Set" />
+                            <Button Style="{StaticResource IconButton}" Margin="8,0,0,0" Content="Full" Click="Fullscreen_Click" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Canvas Grid.RowSpan="3" x:Name="BubbleCanvas" ClipToBounds="False">
+                    <Border x:Name="BubbleYou"
+                            Width="276"
+                            Height="158"
+                            Style="{StaticResource FloatingBubbleStyle}"
+                            Canvas.Left="1110"
+                            Canvas.Top="76"
+                            MouseLeftButtonDown="Bubble_MouseLeftButtonDown"
+                            MouseMove="Bubble_MouseMove"
+                            MouseLeftButtonUp="Bubble_MouseLeftButtonUp">
+                        <Grid>
+                            <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileYouTemplate}" />
+                            <Rectangle x:Name="ResizeYou"
+                                       Width="18"
+                                       Height="18"
+                                       Fill="#55FFFFFF"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Bottom"
+                                       Cursor="SizeNWSE"
+                                       MouseLeftButtonDown="Resize_MouseLeftButtonDown"
+                                       MouseMove="Resize_MouseMove"
+                                       MouseLeftButtonUp="Resize_MouseLeftButtonUp" />
+                        </Grid>
+                    </Border>
+                    <Border x:Name="BubbleAuen"
+                            Width="276"
+                            Height="158"
+                            Style="{StaticResource FloatingBubbleStyle}"
+                            Canvas.Left="1110"
+                            Canvas.Top="250"
+                            MouseLeftButtonDown="Bubble_MouseLeftButtonDown"
+                            MouseMove="Bubble_MouseMove"
+                            MouseLeftButtonUp="Bubble_MouseLeftButtonUp">
+                        <Grid>
+                            <ContentControl Content="tile" ContentTemplate="{StaticResource ParticipantTileAuenTemplate}" />
+                            <Rectangle x:Name="ResizeAuen"
+                                       Width="18"
+                                       Height="18"
+                                       Fill="#55FFFFFF"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Bottom"
+                                       Cursor="SizeNWSE"
+                                       MouseLeftButtonDown="Resize_MouseLeftButtonDown"
+                                       MouseMove="Resize_MouseMove"
+                                       MouseLeftButtonUp="Resize_MouseLeftButtonUp" />
+                        </Grid>
+                    </Border>
+                </Canvas>
+
+                <Border x:Name="FullscreenChat"
+                        Grid.RowSpan="3"
+                        Width="374"
+                        Height="218"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom"
+                        Margin="0,0,12,76"
+                        Opacity="0"
+                        Style="{StaticResource ChatOverlayStyle}"
+                        MouseEnter="ChatOverlay_MouseEnter"
+                        MouseLeave="ChatOverlay_MouseLeave">
+                    <ContentControl Content="chat" ContentTemplate="{StaticResource ChatContentTemplate}" />
+                </Border>
+
+                <Border Grid.Row="2"
+                        Width="660"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Bottom"
+                        Style="{StaticResource GlassPanelStyle}"
+                        Padding="14,10"
+                        Margin="0,0,0,0">
+                    <ContentControl Content="playback" ContentTemplate="{StaticResource PlaybackStripTemplate}" />
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </Window>

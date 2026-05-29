@@ -129,5 +129,38 @@
             <Setter Property="BorderBrush" Value="#10FFFFFF" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
+
+        <Style x:Key="FloatingBubbleStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="13" />
+            <Setter Property="ClipToBounds" Value="True" />
+            <Setter Property="Background" Value="#78101116" />
+            <Setter Property="BorderBrush" Value="#36FFFFFF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect Color="#000000" BlurRadius="34" ShadowDepth="16" Opacity="0.5" />
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ChatOverlayStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="15" />
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#98171920" Offset="0" />
+                        <GradientStop Color="#74101115" Offset="1" />
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="BorderBrush" Value="#26FFFFFF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect Color="#000000" BlurRadius="40" ShadowDepth="18" Opacity="0.45" />
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Application.Resources>
 </Application>

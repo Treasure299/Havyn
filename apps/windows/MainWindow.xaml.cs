@@ -1,5 +1,10 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
+using System.Windows.Threading;
 using CefSharp;
 
 namespace Havyn.Windows;
@@ -10,6 +15,15 @@ public partial class MainWindow : Window
     private WindowState previousState;
     private WindowStyle previousStyle;
     private ResizeMode previousResizeMode;
+    private Border? activeBubble;
+    private Border? activeResizeBubble;
+    private Point dragStart;
+    private double dragOriginLeft;
+    private double dragOriginTop;
+    private double resizeOriginWidth;
+    private double resizeOriginHeight;
+    private bool chatPinned;
+    private readonly DispatcherTimer chatIdleTimer;
 
     public MainWindow()
     {
@@ -18,20 +32,33 @@ public partial class MainWindow : Window
         previousStyle = WindowStyle;
         previousResizeMode = ResizeMode;
         Browser.JavascriptObjectRepository.Register("havynBridge", new BrowserBridge(this), new BindingOptions());
+        chatIdleTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        chatIdleTimer.Tick += (_, _) =>
+        {
+            chatIdleTimer.Stop();
+            if (!chatPinned) Fade(FullscreenChat, 0);
+        };
+        SizeChanged += (_, _) => ClampFullscreenBubbles();
     }
 
     public void UpdateDetectedMedia(string title)
     {
-        MediaTitleText.Text = string.IsNullOrWhiteSpace(title) ? "Detected video" : title;
+        var label = string.IsNullOrWhiteSpace(title) ? "Detected video" : title;
+        MediaTitleText.Text = label;
+        FullscreenMediaTitleText.Text = label;
     }
 
     public void UpdatePlaybackSnapshot(string eventName, double currentTime, double duration, bool paused)
     {
         CenterPlayButton.Content = paused ? "Play" : "Pause";
+        FullscreenPlayButton.Content = paused ? "Play" : "Pause";
         if (duration > 0)
         {
-            ProgressSlider.Maximum = duration;
-            ProgressSlider.Value = Math.Clamp(currentTime, 0, duration);
+            foreach (var slider in FindVisualChildren<Slider>(Root).Where(slider => slider.Name == "ProgressSlider"))
+            {
+                slider.Maximum = duration;
+                slider.Value = Math.Clamp(currentTime, 0, duration);
+            }
         }
     }
 
@@ -84,6 +111,7 @@ public partial class MainWindow : Window
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     private void Fullscreen_Click(object sender, RoutedEventArgs e) => ToggleFullscreen();
+    private void FirstSyncPlay_Click(object sender, RoutedEventArgs e) => PlayPause_Click(sender, e);
 
     private void ToggleFullscreen()
     {
@@ -96,6 +124,7 @@ public partial class MainWindow : Window
             ResizeMode = ResizeMode.NoResize;
             WindowState = WindowState.Maximized;
             isFullscreen = true;
+            ShowFullscreenLayout();
             return;
         }
 
@@ -103,6 +132,140 @@ public partial class MainWindow : Window
         ResizeMode = previousResizeMode;
         WindowState = previousState;
         isFullscreen = false;
+        ShowStandardLayout();
+    }
+
+    private void ShowFullscreenLayout()
+    {
+        StandardOverlay.Visibility = Visibility.Collapsed;
+        FullscreenOverlay.Visibility = Visibility.Visible;
+        PositionFullscreenBubbles();
+        Fade(FullscreenOverlay, 1, 180);
+        Fade(FullscreenChat, 0, 120);
+    }
+
+    private void ShowStandardLayout()
+    {
+        StandardOverlay.Visibility = Visibility.Visible;
+        Fade(FullscreenOverlay, 0, 120, () => FullscreenOverlay.Visibility = Visibility.Collapsed);
+    }
+
+    private void PositionFullscreenBubbles()
+    {
+        var right = Math.Max(20, ActualWidth - 336);
+        Canvas.SetLeft(BubbleYou, right);
+        Canvas.SetTop(BubbleYou, 76);
+        Canvas.SetLeft(BubbleAuen, right);
+        Canvas.SetTop(BubbleAuen, 250);
+        ClampFullscreenBubbles();
+    }
+
+    private void ClampFullscreenBubbles()
+    {
+        if (!isFullscreen || BubbleCanvas.ActualWidth <= 0 || BubbleCanvas.ActualHeight <= 0) return;
+        ClampBubble(BubbleYou);
+        ClampBubble(BubbleAuen);
+    }
+
+    private void ClampBubble(Border bubble)
+    {
+        var left = Canvas.GetLeft(bubble);
+        var top = Canvas.GetTop(bubble);
+        if (double.IsNaN(left)) left = 0;
+        if (double.IsNaN(top)) top = 0;
+        Canvas.SetLeft(bubble, Math.Clamp(left, 12, Math.Max(12, BubbleCanvas.ActualWidth - bubble.Width - 12)));
+        Canvas.SetTop(bubble, Math.Clamp(top, 68, Math.Max(68, BubbleCanvas.ActualHeight - bubble.Height - 12)));
+    }
+
+    private void Bubble_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border bubble || e.OriginalSource is Rectangle) return;
+        activeBubble = bubble;
+        dragStart = e.GetPosition(BubbleCanvas);
+        dragOriginLeft = Canvas.GetLeft(bubble);
+        dragOriginTop = Canvas.GetTop(bubble);
+        if (double.IsNaN(dragOriginLeft)) dragOriginLeft = 0;
+        if (double.IsNaN(dragOriginTop)) dragOriginTop = 0;
+        bubble.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void Bubble_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (activeBubble is null || e.LeftButton != MouseButtonState.Pressed) return;
+        var current = e.GetPosition(BubbleCanvas);
+        Canvas.SetLeft(activeBubble, dragOriginLeft + current.X - dragStart.X);
+        Canvas.SetTop(activeBubble, dragOriginTop + current.Y - dragStart.Y);
+        ClampBubble(activeBubble);
+    }
+
+    private void Bubble_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        activeBubble?.ReleaseMouseCapture();
+        activeBubble = null;
+    }
+
+    private void Resize_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        activeResizeBubble = FindParent<Border>((DependencyObject)sender);
+        if (activeResizeBubble is null) return;
+        dragStart = e.GetPosition(BubbleCanvas);
+        resizeOriginWidth = activeResizeBubble.Width;
+        resizeOriginHeight = activeResizeBubble.Height;
+        ((UIElement)sender).CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void Resize_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (activeResizeBubble is null || e.LeftButton != MouseButtonState.Pressed) return;
+        var current = e.GetPosition(BubbleCanvas);
+        var nextWidth = Math.Clamp(resizeOriginWidth + current.X - dragStart.X, 210, 420);
+        activeResizeBubble.Width = nextWidth;
+        activeResizeBubble.Height = nextWidth * 9 / 16;
+        ClampBubble(activeResizeBubble);
+        e.Handled = true;
+    }
+
+    private void Resize_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        ((UIElement)sender).ReleaseMouseCapture();
+        activeResizeBubble = null;
+    }
+
+    private void ChatOverlay_MouseEnter(object sender, MouseEventArgs e)
+    {
+        chatPinned = true;
+        chatIdleTimer.Stop();
+        Fade(FullscreenChat, 1);
+    }
+
+    private void ChatOverlay_MouseLeave(object sender, MouseEventArgs e)
+    {
+        chatPinned = false;
+        chatIdleTimer.Stop();
+        chatIdleTimer.Start();
+    }
+
+    private void ShowChatForNewMessage()
+    {
+        if (!isFullscreen) return;
+        Fade(FullscreenChat, 1);
+        chatIdleTimer.Stop();
+        chatIdleTimer.Start();
+    }
+
+    private static void Fade(UIElement element, double to, int ms = 180, Action? completed = null)
+    {
+        var animation = new DoubleAnimation(to, TimeSpan.FromMilliseconds(ms))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        };
+        if (completed is not null)
+        {
+            animation.Completed += (_, _) => completed();
+        }
+        element.BeginAnimation(OpacityProperty, animation);
     }
 
     private void PlayPause_Click(object sender, RoutedEventArgs e)
@@ -214,5 +377,29 @@ public partial class MainWindow : Window
                 ? "Detected video"
                 : Browser.Title;
         });
+    }
+
+    private static T? FindParent<T>(DependencyObject child) where T : DependencyObject
+    {
+        var parent = VisualTreeHelper.GetParent(child);
+        while (parent is not null)
+        {
+            if (parent is T match) return match;
+            parent = VisualTreeHelper.GetParent(parent);
+        }
+        return null;
+    }
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) yield return match;
+            foreach (var descendant in FindVisualChildren<T>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 }
