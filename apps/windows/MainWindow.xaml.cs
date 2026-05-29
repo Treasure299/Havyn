@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private bool chatPinned;
     private bool mediaFullscreenStylesActive;
     private bool adBlockerEnabled = true;
+    private bool participantsOpen;
     private readonly DispatcherTimer chatIdleTimer;
 
     public MainWindow()
@@ -113,6 +114,20 @@ public partial class MainWindow : Window
         adBlockerEnabled = !adBlockerEnabled;
         AdBlockButton.Opacity = adBlockerEnabled ? 1 : 0.48;
         AdBlockButton.ToolTip = adBlockerEnabled ? "Ad blocker on" : "Ad blocker off";
+    }
+
+    private void ToggleParticipants_Click(object sender, RoutedEventArgs e)
+    {
+        participantsOpen = !participantsOpen;
+        foreach (var list in FindVisualChildren<ScrollViewer>(Root).Where(item => item.Name == "ParticipantsList"))
+        {
+            list.Visibility = participantsOpen ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        foreach (var chevron in FindVisualChildren<TextBlock>(Root).Where(item => item.Name == "ParticipantsChevron"))
+        {
+            chevron.Text = participantsOpen ? "^" : "v";
+        }
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

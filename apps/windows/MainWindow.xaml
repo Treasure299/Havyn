@@ -99,6 +99,70 @@
             </Grid>
         </DataTemplate>
 
+        <DataTemplate x:Key="ParticipantsContentTemplate">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Button x:Name="ParticipantsToggle"
+                        Padding="0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Click="ToggleParticipants_Click">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="People" FontSize="16" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1"
+                                   Text="2"
+                                   FontSize="16"
+                                   FontWeight="Bold"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,14,0" />
+                        <TextBlock x:Name="ParticipantsChevron"
+                                   Grid.Column="2"
+                                   Text="v"
+                                   FontSize="16"
+                                   Foreground="{StaticResource MutedBrush}"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </Button>
+
+                <ScrollViewer x:Name="ParticipantsList"
+                              Grid.Row="1"
+                              MaxHeight="260"
+                              Margin="0,12,0,0"
+                              VerticalScrollBarVisibility="Auto"
+                              Visibility="Collapsed">
+                    <StackPanel>
+                        <Border Style="{StaticResource MessageStyle}" Margin="0,0,0,8">
+                            <Grid>
+                                <StackPanel>
+                                    <TextBlock Text="You" FontSize="14" FontWeight="Bold" />
+                                    <TextBlock Text="Online - host" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+                                </StackPanel>
+                                <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Text="Host" Foreground="{StaticResource BlueBrush}" FontSize="12" />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource MessageStyle}">
+                            <Grid>
+                                <StackPanel>
+                                    <TextBlock Text="Auen" FontSize="14" FontWeight="Bold" />
+                                    <TextBlock Text="Online - ready" FontSize="12" Foreground="{StaticResource MutedBrush}" />
+                                </StackPanel>
+                                <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Text="Ready" Foreground="{StaticResource MutedBrush}" FontSize="12" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </DataTemplate>
+
         <DataTemplate x:Key="PlaybackStripTemplate">
             <Grid>
                 <Grid.RowDefinitions>
@@ -143,6 +207,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="64" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="8" />
                 <RowDefinition Height="86" />
             </Grid.RowDefinitions>
 
@@ -182,14 +247,15 @@
 
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="390" />
+                    <ColumnDefinition Width="*" MinWidth="620" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="390" MinWidth="300" MaxWidth="560" />
                 </Grid.ColumnDefinitions>
 
                 <Grid Grid.Column="0" Margin="0,14,18,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
+                        <RowDefinition Height="*" MinHeight="320" />
                     </Grid.RowDefinitions>
 
                     <Border Style="{StaticResource GlassPanelStyle}" Padding="8">
@@ -246,8 +312,22 @@
                     </Border>
                 </Grid>
 
-                <StackPanel Grid.Column="1" VerticalAlignment="Top" Margin="0,96,0,0">
-                    <Border Style="{StaticResource GlassPanelStyle}" Padding="12">
+                <GridSplitter Grid.Column="1"
+                              Width="8"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Stretch"
+                              Background="#08FFFFFF"
+                              ShowsPreview="True" />
+
+                <Grid Grid.Column="2" Margin="0,14,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="260" MinHeight="170" />
+                        <RowDefinition Height="8" />
+                        <RowDefinition Height="*" MinHeight="190" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource GlassPanelStyle}" Padding="12">
                         <StackPanel>
                             <Grid>
                                 <StackPanel>
@@ -266,13 +346,31 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Style="{StaticResource GlassPanelStyle}" Margin="0,18,0,0" Padding="14">
+                    <GridSplitter Grid.Row="1"
+                                  Height="8"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Stretch"
+                                  Background="#08FFFFFF"
+                                  ShowsPreview="True" />
+
+                    <Border Grid.Row="2" Style="{StaticResource GlassPanelStyle}" Padding="14">
                         <ContentControl Content="chat" ContentTemplate="{StaticResource ChatContentTemplate}" />
                     </Border>
-                </StackPanel>
+
+                    <Border Grid.Row="3" Style="{StaticResource GlassPanelStyle}" Margin="0,16,0,0" Padding="14">
+                        <ContentControl Content="participants" ContentTemplate="{StaticResource ParticipantsContentTemplate}" />
+                    </Border>
+                </Grid>
             </Grid>
 
-            <Border Grid.Row="2" Style="{StaticResource GlassPanelStyle}" VerticalAlignment="Bottom" Padding="16,10">
+            <GridSplitter Grid.Row="2"
+                          Height="8"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          Background="#08FFFFFF"
+                          ShowsPreview="True" />
+
+            <Border Grid.Row="3" Style="{StaticResource GlassPanelStyle}" VerticalAlignment="Bottom" Padding="16,10">
                 <ContentControl Content="playback" ContentTemplate="{StaticResource PlaybackStripTemplate}" />
             </Border>
         </Grid>
