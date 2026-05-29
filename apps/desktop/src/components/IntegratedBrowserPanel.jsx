@@ -5,11 +5,9 @@ function normalizeUrl(value) {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
-export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "", layoutSignal = "" }) {
+export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "" }) {
   const frameRef = useRef(null);
   const iframeRef = useRef(null);
-  const cinemaWebviewRef = useRef(null);
-  const cinemaReadyRef = useRef(false);
   const [url, setUrl] = useState("https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html");
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewBlocked, setPreviewBlocked] = useState(false);
@@ -18,17 +16,9 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   const [notice, setNotice] = useState("");
   const [adBlockEnabled, setAdBlockEnabled] = useState(false);
   const [adBlockBypassed, setAdBlockBypassed] = useState(false);
-  const [preloadUrl, setPreloadUrl] = useState("");
-  const [browserPartition, setBrowserPartition] = useState("");
-  const [cinemaReady, setCinemaReady] = useState(false);
-  const cinemaMode = layoutSignal === "cinema";
-
-  useEffect(() => {
-    cinemaReadyRef.current = cinemaReady;
-  }, [cinemaReady]);
 
   const updateBrowserBounds = useCallback(() => {
-    if (!browser || cinemaMode || !frameRef.current) return;
+    if (!browser || !frameRef.current) return;
     const rect = frameRef.current.getBoundingClientRect();
     browser.setBounds({
       x: Math.round(rect.left),
@@ -36,10 +26,10 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       width: Math.round(rect.width),
       height: Math.round(rect.height)
     });
-  }, [browser, cinemaMode]);
+  }, [browser]);
 
   useLayoutEffect(() => {
-    if (!browser || cinemaMode || !frameRef.current) return undefined;
+    if (!browser || !frameRef.current) return undefined;
     const createBounds = () => {
       const rect = frameRef.current.getBoundingClientRect();
       browser.create({
@@ -59,124 +49,13 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       window.removeEventListener("resize", updateBrowserBounds);
       browser.destroy();
     };
-  }, [browser, cinemaMode, updateBrowserBounds]);
+  }, [browser, updateBrowserBounds]);
 
   useEffect(() => {
-    if (!browser || cinemaMode) return undefined;
+    if (!browser) return undefined;
     const timers = [0, 80, 220, 520].map((delay) => window.setTimeout(updateBrowserBounds, delay));
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [browser, cinemaMode, updateBrowserBounds]);
-
-  useEffect(() => {
-    window.havyn?.browser?.getPreloadUrl?.().then(setPreloadUrl).catch(() => {});
-    window.havyn?.browser?.getPartition?.().then(setBrowserPartition).catch(() => {});
-  }, []);
-
-  const normalizeCinemaMedia = useCallback((media = []) => {
-    const webview = cinemaWebviewRef.current;
-    const pageUrl = webview?.getURL?.() || currentUrl || url;
-    return (media || []).map((item) => ({
-      ...item,
-      frameUrl: item.frameUrl || item.url,
-      url: pageUrl || item.pageUrl || item.url
-    }));
-  }, [currentUrl, url]);
-
-  const scanCinemaMedia = useCallback(async () => {
-    const webview = cinemaWebviewRef.current;
-    if (!webview) return [];
-    const media = await webview.executeJavaScript("window.__havynScanMedia?.() || []", true).catch(() => []);
-    const normalized = normalizeCinemaMedia(media);
-    if (normalized.length) onWebMediaDetected?.(normalized, null);
-    return normalized;
-  }, [normalizeCinemaMedia, onWebMediaDetected]);
-
-  useEffect(() => {
-    if (!cinemaMode || !browser || !preloadUrl) {
-      return undefined;
-    }
-
-    const fallbackTimer = window.setTimeout(() => {
-      if (cinemaReadyRef.current) return;
-      browser.setVisible?.(true);
-      setNotice("Fullscreen is using the stable browser fallback.");
-      window.setTimeout(() => setNotice(""), 2400);
-    }, 2600);
-
-    return () => {
-      window.clearTimeout(fallbackTimer);
-      browser.setVisible?.(true);
-      setCinemaReady(false);
-    };
-  }, [browser, cinemaMode, preloadUrl]);
-
-  useEffect(() => {
-    if (!cinemaMode || !preloadUrl || !cinemaWebviewRef.current) return undefined;
-    const webview = cinemaWebviewRef.current;
-    const targetUrl = currentUrl || url;
-    if (targetUrl && targetUrl !== "about:blank" && webview.getURL?.() !== targetUrl) {
-      webview.loadURL(targetUrl).catch(() => {});
-    }
-
-    const scanTimers = [];
-    const markReady = () => {
-      setCinemaReady(true);
-      browser?.setVisible?.(false);
-      scanTimers.push(
-        window.setTimeout(scanCinemaMedia, 300),
-        window.setTimeout(scanCinemaMedia, 1200),
-        window.setTimeout(scanCinemaMedia, 2800)
-      );
-    };
-    const handleNavigate = (event) => {
-      if (event?.url) setUrl(event.url);
-    };
-    const handleFail = (event) => {
-      if (!event?.isMainFrame || event.errorCode === -3) return;
-      browser?.setVisible?.(true);
-      setNotice(`Fullscreen browser fallback: ${event.errorDescription || "page load failed"}`);
-      window.setTimeout(() => setNotice(""), 3200);
-    };
-    const handleIpc = (event) => {
-      if (event.channel === "browser:media-detected-from-page") {
-        const normalized = normalizeCinemaMedia(event.args?.[0]?.media || []);
-        if (normalized.length) onWebMediaDetected?.(normalized, null);
-      }
-      if (event.channel === "browser:media-event-from-page") {
-        const payload = event.args?.[0];
-        if (!payload) return;
-        onWebMediaEvent?.({
-          eventName: payload.eventName,
-          media: normalizeCinemaMedia([payload.media])[0],
-          controlledByHavyn: payload.controlledByHavyn
-        });
-      }
-    };
-
-    webview.addEventListener("dom-ready", markReady);
-    webview.addEventListener("did-finish-load", markReady);
-    webview.addEventListener("did-navigate", handleNavigate);
-    webview.addEventListener("did-navigate-in-page", handleNavigate);
-    webview.addEventListener("did-fail-load", handleFail);
-    webview.addEventListener("ipc-message", handleIpc);
-    return () => {
-      webview.removeEventListener("dom-ready", markReady);
-      webview.removeEventListener("did-finish-load", markReady);
-      webview.removeEventListener("did-navigate", handleNavigate);
-      webview.removeEventListener("did-navigate-in-page", handleNavigate);
-      webview.removeEventListener("did-fail-load", handleFail);
-      webview.removeEventListener("ipc-message", handleIpc);
-      scanTimers.forEach((timer) => window.clearTimeout(timer));
-    };
-  }, [browser, cinemaMode, currentUrl, normalizeCinemaMedia, onWebMediaDetected, onWebMediaEvent, preloadUrl, scanCinemaMedia, url]);
-
-  useEffect(() => {
-    if (!cinemaMode || !webPlaybackState || !cinemaWebviewRef.current) return;
-    cinemaWebviewRef.current.executeJavaScript(
-      `window.__havynApplyPlayback?.(${JSON.stringify(webPlaybackState)})`,
-      true
-    ).catch(() => false);
-  }, [cinemaMode, webPlaybackState]);
+  }, [browser, updateBrowserBounds]);
 
   useEffect(() => {
     if (currentUrl) setUrl(currentUrl);
@@ -255,12 +134,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }
 
   async function scanMedia() {
-    if (cinemaMode) {
-      await scanCinemaMedia();
-      setNotice("Scanning page for video");
-      window.setTimeout(() => setNotice(""), 1600);
-      return;
-    }
     await browser?.scanMedia?.();
     setNotice("Scanning page for video");
     window.setTimeout(() => setNotice(""), 1600);
@@ -401,17 +274,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
         {!browser && <button className="icon-button" type="button" title="Load local test video" onClick={loadTestVideo}><Film size={18} /></button>}
       </form>
       <div className="browser-frame" ref={frameRef} onMouseEnter={() => browser?.focus?.()} onMouseDown={() => browser?.focus?.()}>
-        {cinemaMode && preloadUrl && (
-          <webview
-            ref={cinemaWebviewRef}
-            className={`dom-webview cinema-webview ${cinemaReady ? "is-ready" : ""}`}
-            src={currentUrl || url || "about:blank"}
-            preload={preloadUrl}
-            partition={browserPartition || "persist:havyn-embedded-browser-default"}
-            allowpopups="false"
-            webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=no"
-          />
-        )}
         {!browser && previewUrl && (
           <>
             <iframe

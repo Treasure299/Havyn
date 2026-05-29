@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, WebContentsView, dialog, ipcMain, session } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -146,9 +146,10 @@ function emitTabs() {
 
 function showActiveTab() {
   if (!mainWindow || !activeTabId) return;
+  const contentView = mainWindow.contentView;
   for (const tab of tabs.values()) {
     try {
-      mainWindow.removeBrowserView(tab.view);
+      contentView.removeChildView(tab.view);
     } catch {
       // Ignore stale view removal during tab switches.
     }
@@ -156,9 +157,8 @@ function showActiveTab() {
   if (!browserVisible) return;
   const tab = activeTab();
   if (!tab) return;
-  mainWindow.setBrowserView(tab.view);
+  contentView.addChildView(tab.view);
   if (currentBounds) tab.view.setBounds(currentBounds);
-  tab.view.setAutoResize({ width: false, height: false });
   tab.view.webContents.focus();
   emitTabs();
 }
@@ -166,7 +166,7 @@ function showActiveTab() {
 function createBrowserTab(initialUrl = "about:blank") {
   if (!mainWindow) return null;
   const id = crypto.randomUUID();
-  const view = new BrowserView({
+  const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, "browserPreload.js"),
       contextIsolation: true,
@@ -307,9 +307,10 @@ ipcMain.handle("browser:create", (_event, bounds) => {
 });
 
 ipcMain.handle("browser:destroy", () => {
+  const contentView = mainWindow?.contentView;
   for (const tab of tabs.values()) {
     try {
-      mainWindow?.removeBrowserView(tab.view);
+      contentView?.removeChildView(tab.view);
       tab.view.webContents.destroy();
     } catch {
       // Ignore destroyed views during shutdown.
@@ -331,9 +332,10 @@ ipcMain.handle("browser:set-visible", (_event, visible) => {
   if (browserVisible) {
     showActiveTab();
   } else {
+    const contentView = mainWindow?.contentView;
     for (const tab of tabs.values()) {
       try {
-        mainWindow?.removeBrowserView(tab.view);
+        contentView?.removeChildView(tab.view);
       } catch {
         // Ignore stale view removal while hiding the native browser layer.
       }
@@ -363,7 +365,7 @@ ipcMain.handle("browser:close-tab", (_event, tabId) => {
   const tab = tabs.get(tabId);
   if (!tab) return { activeTabId, tabs: serializeTabs() };
   try {
-    mainWindow?.removeBrowserView(tab.view);
+    mainWindow?.contentView.removeChildView(tab.view);
     tab.view.webContents.destroy();
   } catch {
     // Ignore close races.

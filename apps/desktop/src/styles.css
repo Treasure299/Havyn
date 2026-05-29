@@ -1364,18 +1364,6 @@ label {
   background: #050507;
 }
 
-.cinema-webview {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 160ms ease;
-}
-
-.cinema-webview.is-ready {
-  opacity: 1;
-}
-
 .web-preview-note {
   position: absolute;
   left: 12px;
@@ -2265,7 +2253,7 @@ label {
 }
 
 .watch-room.is-focus-mode .watch-main {
-  width: 100%;
+  width: calc(100% - min(394px, 28vw));
   height: 100%;
   grid-template-rows: minmax(0, 1fr) 0 auto !important;
   padding-right: 0;
