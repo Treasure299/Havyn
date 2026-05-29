@@ -2175,36 +2175,34 @@ label {
 
 .watch-room.is-focus-mode {
   min-height: 100vh;
-  background: #030304;
+  background:
+    radial-gradient(circle at 72% 18%, rgba(239,62,58,0.08), transparent 28%),
+    radial-gradient(circle at 24% 0%, rgba(77,169,255,0.1), transparent 32%),
+    #030304;
 }
 
 .cinema-top-controls {
   position: fixed;
-  top: 12px;
-  left: 12px;
-  right: 12px;
+  top: 14px;
+  left: 18px;
+  right: 18px;
   z-index: 220;
-  min-height: 48px;
+  min-height: 44px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
-  border-radius: 10px;
-  padding: 7px;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 6px 7px;
   background:
-    linear-gradient(90deg, rgba(4,4,6,0.78), rgba(13,13,17,0.42)),
-    rgba(12,12,16,0.62);
-  opacity: 0;
-  transform: translateY(-6px);
-  transition: opacity 180ms ease, transform 180ms ease;
-  pointer-events: auto;
-}
-
-.watch-room.is-focus-mode:hover .cinema-top-controls,
-.cinema-top-controls:hover,
-.cinema-top-controls:focus-within {
+    linear-gradient(90deg, rgba(4,4,6,0.76), rgba(18,18,24,0.38)),
+    rgba(12,12,16,0.54);
+  border-color: rgba(255,255,255,0.09);
+  box-shadow: 0 18px 60px rgba(0,0,0,0.34);
   opacity: 1;
   transform: translateY(0);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: auto;
 }
 
 .cinema-top-controls > div {
@@ -2235,16 +2233,22 @@ label {
 
 .watch-room.is-focus-mode .watch-layout {
   height: 100vh;
-  padding: 8px;
-  grid-template-columns: minmax(640px, 1fr) 6px minmax(280px, 22vw) !important;
+  padding: 10px;
+  grid-template-columns: minmax(660px, 1fr) 0 minmax(320px, 21vw) !important;
+  gap: 0;
   background:
-    radial-gradient(circle at 26% 0%, rgba(40,132,231,0.08), transparent 32%),
-    #030304;
+    linear-gradient(90deg, rgba(255,255,255,0.025), transparent 38%),
+    rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.075);
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.025), 0 26px 100px rgba(0,0,0,0.42);
 }
 
 .watch-room.is-focus-mode .watch-main {
-  grid-template-rows: minmax(0, 1fr) 4px auto !important;
-  padding-right: 6px;
+  grid-template-rows: minmax(0, 1fr) 0 auto !important;
+  padding-right: 0;
+  border-radius: 11px 0 0 11px;
+  overflow: hidden;
 }
 
 .watch-room.is-focus-mode .browser-tabs,
@@ -2255,38 +2259,68 @@ label {
 
 .watch-room.is-focus-mode .browser-shell {
   grid-template-rows: 1fr;
+  padding-top: 58px;
+  background:
+    linear-gradient(180deg, rgba(7,7,10,0.92), rgba(7,7,10,0.1) 70px, transparent 110px);
 }
 
 .watch-room.is-focus-mode .browser-frame {
   min-height: 0;
-  border-color: rgba(255,255,255,0.06);
-  box-shadow: 0 30px 110px rgba(0,0,0,0.52);
+  border-color: rgba(255,255,255,0.045);
+  border-radius: 0 0 0 11px;
+  box-shadow: inset -90px 0 80px rgba(0,0,0,0.22), 0 30px 110px rgba(0,0,0,0.52);
+}
+
+.watch-room.is-focus-mode .viewer-resize-handle,
+.watch-room.is-focus-mode .watch-resize-handle {
+  display: none;
 }
 
 .watch-room.is-focus-mode .viewer-toolbar {
-  min-height: 42px;
+  position: fixed;
+  left: 24px;
+  bottom: 22px;
+  width: min(560px, calc(100vw - 430px));
+  z-index: 222;
+  min-height: 46px;
   grid-template-columns: minmax(0, 1fr) auto;
-  opacity: 0.72;
-  transition: opacity 160ms ease;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, rgba(5,5,8,0.78), rgba(15,15,20,0.48)),
+    rgba(12,12,16,0.58);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 20px 70px rgba(0,0,0,0.38);
+  opacity: 0.22;
+  transition: opacity 180ms ease, transform 180ms ease;
 }
 
-.watch-room.is-focus-mode .viewer-toolbar:hover {
+.watch-room.is-focus-mode:hover .viewer-toolbar,
+.watch-room.is-focus-mode .viewer-toolbar:hover,
+.watch-room.is-focus-mode .viewer-toolbar:focus-within {
   opacity: 1;
 }
 
 .watch-room.is-focus-mode .watch-side {
   position: relative;
   display: block;
-  padding-left: 6px;
+  padding-left: 0;
   pointer-events: none;
+  border-radius: 0 11px 11px 0;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,0.18), rgba(6,6,9,0.72) 18%, rgba(6,6,9,0.55)),
+    radial-gradient(circle at 80% 8%, rgba(77,169,255,0.08), transparent 34%);
+  box-shadow: inset 1px 0 0 rgba(255,255,255,0.045);
 }
 
 .watch-room.is-focus-mode .call-panel {
   position: absolute;
-  top: 64px;
-  right: 8px;
-  width: min(100%, 310px);
-  height: min(50vh, 430px);
+  top: 76px;
+  right: 12px;
+  left: 12px;
+  width: auto;
+  height: min(42vh, 390px);
   padding: 0;
   background: transparent;
   border: 0;
@@ -2304,10 +2338,11 @@ label {
 
 .watch-room.is-focus-mode .side-stack {
   position: absolute;
-  right: 8px;
-  bottom: 18px;
-  width: min(100%, 330px);
-  height: min(34vh, 270px);
+  right: 12px;
+  left: 12px;
+  bottom: 16px;
+  width: auto;
+  height: min(33vh, 265px);
   display: block;
   pointer-events: none;
 }
@@ -2322,10 +2357,12 @@ label {
   pointer-events: auto;
   background:
     radial-gradient(circle at 100% 0%, rgba(77,169,255,0.14), transparent 38%),
+    linear-gradient(180deg, rgba(19,19,25,0.66), rgba(9,9,12,0.46)),
     rgba(10,10,13,0.44);
-  border-color: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.12);
+  border-radius: 13px;
   box-shadow: 0 24px 70px rgba(0,0,0,0.44);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(24px);
 }
 
 .watch-room.is-focus-mode .chat-panel:hover,
@@ -2341,6 +2378,7 @@ label {
 
 .watch-room.is-focus-mode .chat-panel h2 {
   font-size: 15px;
+  opacity: 0.92;
 }
 
 .watch-room.is-focus-mode .message-list {
