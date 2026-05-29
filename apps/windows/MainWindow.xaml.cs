@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private double resizeOriginWidth;
     private double resizeOriginHeight;
     private bool chatPinned;
+    private bool mediaFullscreenStylesActive;
     private readonly DispatcherTimer chatIdleTimer;
 
     public MainWindow()
@@ -325,28 +326,34 @@ public partial class MainWindow : Window
 
     private void ExecuteMediaScript(string script)
     {
-        if (Browser.IsBrowserInitialized)
-        {
-            Browser.GetMainFrame().EvaluateScriptAsync(script);
-        }
+        ExecuteScriptOnAllFrames(script);
     }
 
     private void ApplyMediaFullscreenStyles(bool enabled)
     {
         if (!Browser.IsBrowserInitialized) return;
+        mediaFullscreenStylesActive = enabled;
 
         var script = enabled
             ? """
               (() => {
-                const video = document.querySelector('video');
-                if (!video) return 'no-video';
                 if (!window.__havynFullscreenRestore) {
                   window.__havynFullscreenRestore = {
-                    videoStyle: video.getAttribute('style') || '',
                     bodyOverflow: document.body.style.overflow || '',
-                    htmlOverflow: document.documentElement.style.overflow || ''
+                    htmlOverflow: document.documentElement.style.overflow || '',
+                    markedFrames: []
                   };
                 }
+                const markMediaFrames = () => {
+                  document.querySelectorAll('iframe').forEach((frame) => {
+                    try {
+                      if (frame.contentDocument?.querySelector('video')) {
+                        frame.classList.add('__havynFullscreenFrame');
+                        window.__havynFullscreenRestore.markedFrames.push(frame);
+                      }
+                    } catch {}
+                  });
+                };
                 let style = document.getElementById('__havynFullscreenMediaStyle');
                 if (!style) {
                   style = document.createElement('style');
@@ -354,6 +361,24 @@ public partial class MainWindow : Window
                   document.head.appendChild(style);
                 }
                 style.textContent = `
+                  html, body {
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    margin: 0 !important;
+                    overflow: hidden !important;
+                    background: #000 !important;
+                  }
+                  .__havynFullscreenFrame {
+                    position: fixed !important;
+                    inset: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: none !important;
+                    max-height: none !important;
+                    border: 0 !important;
+                    z-index: 2147482999 !important;
+                    background: #000 !important;
+                  }
                   video {
                     position: fixed !important;
                     inset: 0 !important;
@@ -366,6 +391,7 @@ public partial class MainWindow : Window
                     z-index: 2147483000 !important;
                   }
                 `;
+                markMediaFrames();
                 document.documentElement.style.overflow = 'hidden';
                 document.body.style.overflow = 'hidden';
                 return 'fullscreen-video';
@@ -376,10 +402,10 @@ public partial class MainWindow : Window
                 const style = document.getElementById('__havynFullscreenMediaStyle');
                 if (style) style.remove();
                 const restore = window.__havynFullscreenRestore;
-                const video = document.querySelector('video');
-                if (restore && video) {
-                  if (restore.videoStyle) video.setAttribute('style', restore.videoStyle);
-                  else video.removeAttribute('style');
+                if (restore) {
+                  document.querySelectorAll('.__havynFullscreenFrame').forEach((frame) => {
+                    frame.classList.remove('__havynFullscreenFrame');
+                  });
                   document.body.style.overflow = restore.bodyOverflow || '';
                   document.documentElement.style.overflow = restore.htmlOverflow || '';
                 }
@@ -388,7 +414,25 @@ public partial class MainWindow : Window
               })();
               """;
 
-        Browser.GetMainFrame().EvaluateScriptAsync(script);
+        ExecuteScriptOnAllFrames(script);
+    }
+
+    private void ExecuteScriptOnAllFrames(string script)
+    {
+        if (!Browser.IsBrowserInitialized) return;
+
+        try
+        {
+            var browser = Browser.GetBrowser();
+            foreach (var frameId in browser.GetFrameIdentifiers())
+            {
+                browser.GetFrameByIdentifier(frameId)?.EvaluateScriptAsync(script);
+            }
+        }
+        catch
+        {
+            Browser.GetMainFrame().EvaluateScriptAsync(script);
+        }
     }
 
     private void Browser_LoadingStateChanged(object? sender, LoadingStateChangedEventArgs e)
@@ -404,8 +448,6 @@ public partial class MainWindow : Window
 
     private void Browser_FrameLoadEnd(object? sender, FrameLoadEndEventArgs e)
     {
-        if (!e.Frame.IsMain) return;
-
         e.Frame.ExecuteJavaScriptAsync("""
             (() => {
               if (window.__havynDetectorInstalled) return;
@@ -448,6 +490,13 @@ public partial class MainWindow : Window
                 .observe(document.documentElement, { childList: true, subtree: true });
             })();
             """);
+
+        if (mediaFullscreenStylesActive)
+        {
+            Dispatcher.InvokeAsync(() => ApplyMediaFullscreenStyles(true));
+        }
+
+        if (!e.Frame.IsMain) return;
 
         Dispatcher.InvokeAsync(() =>
         {
