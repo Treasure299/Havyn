@@ -1,4 +1,4 @@
-import { Mic, MicOff, Phone, PhoneOff, Settings2, Video, VideoOff, X } from "lucide-react";
+import { Mic, Phone, PhoneOff, Settings2, Video, X } from "lucide-react";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -71,12 +71,6 @@ export default function CallControls({ call, onDevicesOpenChange }) {
               title="Call devices"
             >
               <Settings2 size={17} />
-            </button>
-            <button className="icon-button" onClick={call.toggleMute} title={call.muted ? "Unmute mic" : "Mute mic"}>
-              {call.muted ? <MicOff size={17} /> : <Mic size={17} />}
-            </button>
-            <button className="icon-button" onClick={call.toggleCamera} title={call.cameraOff ? "Turn camera on" : "Turn camera off"}>
-              {call.cameraOff ? <VideoOff size={17} /> : <Video size={17} />}
             </button>
             <button className="icon-button danger-icon" onClick={call.leaveCall} title="Leave call"><PhoneOff size={17} /></button>
           </>

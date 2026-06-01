@@ -47,14 +47,15 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       return;
     }
 
-    playbackStateRef.current = state;
-    setPlaybackState(state);
-    onPlaybackState?.(state);
+    const projectedState = projectedPlaybackState(state);
+    playbackStateRef.current = projectedState;
+    setPlaybackState(projectedState);
+    onPlaybackState?.(projectedState);
     if (state.controllerUserId === user.id && !state.correctedUserId) return;
     applyPlayback?.({
-      action: state.isPlaying ? "play" : "pause",
-      currentTime: state.currentTime,
-      playbackRate: state.playbackRate,
+      action: projectedState.isPlaying ? "play" : "pause",
+      currentTime: projectedState.currentTime,
+      playbackRate: projectedState.playbackRate,
       reason: action
     });
   }, [applyPlayback, onPlaybackState, user.id]);

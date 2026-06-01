@@ -260,6 +260,29 @@ export function useRoom(user) {
 
   function setPlaybackMode(playbackMode) {
     if (!room || !user) return;
+    if (!["host-only", "host-and-cohosts", "everyone"].includes(playbackMode)) return;
+    const participant = room.participants?.find((item) => item.userId === user.id);
+    const canChangeMode = room.playbackMode === "everyone" ||
+      participant?.role === "host" ||
+      (room.playbackMode === "host-and-cohosts" && participant?.role === "cohost");
+    if (!canChangeMode) {
+      setPermissionNotice("Only room controllers can change playback mode.");
+      window.setTimeout(() => setPermissionNotice(""), 2200);
+      return;
+    }
+    setRoom((currentRoom) => {
+      if (!currentRoom) return currentRoom;
+      const nextRoom = { ...currentRoom, playbackMode };
+      roomRef.current = nextRoom;
+      return nextRoom;
+    });
+    if (supabase) {
+      supabase
+        .from("rooms")
+        .update({ playback_mode: playbackMode, updated_at: new Date().toISOString() })
+        .eq("id", room.roomId)
+        .then(() => {});
+    }
     socket.emit("room-playback-mode", { roomId: room.roomId, userId: user.id, playbackMode });
   }
 

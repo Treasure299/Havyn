@@ -1,4 +1,5 @@
 import * as Ably from "ably";
+import { supabase } from "./supabaseClient";
 
 const PLAYBACK_MODES = {
   HOST_ONLY: "host-only",
@@ -37,6 +38,19 @@ function ablyKey() {
 
 function roomChannelName(roomId) {
   return `havyn:room:${roomId}`;
+}
+
+function isValidPlaybackMode(playbackMode) {
+  return Object.values(PLAYBACK_MODES).includes(playbackMode);
+}
+
+async function persistPlaybackMode(roomId, playbackMode) {
+  if (!supabase || !roomId || !isValidPlaybackMode(playbackMode)) return;
+  await supabase
+    .from("rooms")
+    .update({ playback_mode: playbackMode, updated_at: new Date().toISOString() })
+    .eq("id", roomId)
+    .catch(() => {});
 }
 
 export class AblyRealtimeSocket {
@@ -168,6 +182,7 @@ export class AblyRealtimeSocket {
       "user-left-call",
       "presence-patch",
       "room-meta",
+      "room-state",
       ...DIRECT_EVENTS
     ];
     events.forEach((event) => {
@@ -192,6 +207,10 @@ export class AblyRealtimeSocket {
         if (event === "room-meta") {
           this.room = { ...this.room, ...payload };
           this.emitRoomState();
+          return;
+        }
+        if (event === "room-state") {
+          this.applyRoomState(payload);
           return;
         }
         this.localEmit(event, payload);
@@ -265,6 +284,30 @@ export class AblyRealtimeSocket {
     this.localEmit("room-state", { ...this.room, participants: this.room.participants });
   }
 
+  applyRoomState(payload = {}) {
+    if (!this.room || payload.roomId !== this.room.roomId) return;
+    this.room = {
+      ...this.room,
+      roomName: payload.roomName || this.room.roomName,
+      hostUserId: payload.hostUserId || this.room.hostUserId,
+      visibility: payload.visibility || this.room.visibility,
+      playbackMode: isValidPlaybackMode(payload.playbackMode) ? payload.playbackMode : this.room.playbackMode,
+      playbackState: payload.playbackState ? { ...this.room.playbackState, ...payload.playbackState } : this.room.playbackState
+    };
+    this.emitRoomState();
+  }
+
+  roomStatePayload() {
+    return {
+      roomId: this.room?.roomId,
+      roomName: this.room?.roomName,
+      hostUserId: this.room?.hostUserId,
+      visibility: this.room?.visibility,
+      playbackMode: this.room?.playbackMode,
+      playbackState: this.room?.playbackState
+    };
+  }
+
   updatePlaybackState(state) {
     if (!this.room || !state) return;
     this.room.playbackState = {
@@ -318,9 +361,12 @@ export class AblyRealtimeSocket {
   }
 
   setPlaybackMode({ userId, playbackMode }) {
+    if (!isValidPlaybackMode(playbackMode)) return;
     if (!this.canControl(userId)) return this.localEmit("permission-denied", { reason: "Only room controllers can change playback mode." });
     this.room.playbackMode = playbackMode;
+    persistPlaybackMode(this.room.roomId, playbackMode);
     this.broadcast("room-meta", { playbackMode });
+    this.broadcast("room-state", this.roomStatePayload());
     this.broadcast("room-action", roomAction(`${displayName(this, userId)} set controls to ${playbackMode}`));
     this.emitRoomState();
   }
@@ -353,11 +399,13 @@ export class AblyRealtimeSocket {
     if (!this.canControl(userId)) return this.localEmit("permission-denied", { reason: "Playback is controlled by the host." });
     this.room.playbackState = {
       ...this.room.playbackState,
-      isPlaying: false,
-      currentTime: 0,
+      isPlaying: media.paused === false,
+      currentTime: Number(media.currentTime || 0),
       updatedAt: Date.now(),
-      playbackRate: 1,
+      playbackRate: Number(media.playbackRate || 1),
       activeMediaUrl: media.url,
+      activeMediaPageUrl: media.pageUrl || media.url,
+      activeMediaFrameUrl: media.frameUrl || media.url,
       activeMediaTitle: media.title || "Detected media",
       controllerUserId: userId
     };

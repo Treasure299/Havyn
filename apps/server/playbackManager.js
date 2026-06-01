@@ -22,11 +22,13 @@ export function selectMedia(roomId, userId, media) {
 
   room.playbackState = {
     ...room.playbackState,
-    isPlaying: false,
-    currentTime: 0,
+    isPlaying: media.paused === false,
+    currentTime: Number(media.currentTime || 0),
     updatedAt: Date.now(),
-    playbackRate: 1,
+    playbackRate: Number(media.playbackRate || 1),
     activeMediaUrl: media.url,
+    activeMediaPageUrl: media.pageUrl || media.url,
+    activeMediaFrameUrl: media.frameUrl || media.url,
     activeMediaTitle: media.title || "Detected media",
     controllerUserId: userId
   };

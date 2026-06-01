@@ -11,6 +11,32 @@ let scanTimer = null;
 let lastTimeUpdateAt = 0;
 let lastResumeDismissAt = 0;
 
+try {
+  const blockedWindowOpen = () => null;
+  Object.defineProperty(window, "open", {
+    configurable: true,
+    writable: true,
+    value: blockedWindowOpen
+  });
+  document.addEventListener("click", (event) => {
+    const link = event.target?.closest?.("a[target='_blank'], a[onclick], area[target='_blank']");
+    if (!link) return;
+    const href = link.getAttribute("href") || "";
+    if (/^(javascript:|#|$)/i.test(href)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+  document.addEventListener("auxclick", (event) => {
+    if (event.button !== 1) return;
+    const link = event.target?.closest?.("a[href], area[href]");
+    if (!link) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+} catch {
+  // Some pages lock down globals; request-level popup blocking still applies.
+}
+
 function sendPageSignal(channel, payload) {
   ipcRenderer.send(channel, payload);
   try {
@@ -77,7 +103,7 @@ function describeVideo(video, index) {
     src: video.currentSrc || video.src || "",
     frameUrl: window.location.href,
     pageUrl,
-    url: pageUrl
+    url: window.location.href
   };
 }
 

@@ -1,13 +1,171 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Compass, ExternalLink, Film, FolderPlus, Plus, Puzzle, Radar, RefreshCw, RotateCw, Shield, X } from "lucide-react";
+import { domBrowserEvents, registerDomBrowser } from "../lib/domBrowserBridge";
 
 function normalizeUrl(value) {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
-export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "" }) {
+function normalizeDetectedItems(items = [], webview) {
+  const pageUrl = webview?.getURL?.() || "";
+  return (items || []).map((item) => ({
+    ...item,
+    pageUrl: item.pageUrl || pageUrl || item.url,
+    frameUrl: item.frameUrl || item.url,
+    url: item.url || item.frameUrl || pageUrl
+  }));
+}
+
+const WEBVIEW_DETECTOR_SCRIPT = String.raw`
+(() => {
+  if (window.__havynDomDetectorInstalled) {
+    window.__havynScanMedia?.();
+    return true;
+  }
+  window.__havynDomDetectorInstalled = true;
+  let lastMediaEvent = null;
+  let applyingRemoteUntil = 0;
+  let pendingPlayback = null;
+  let playbackRetryTimer = null;
+  let scanTimer = null;
+  let lastTimeUpdateAt = 0;
+
+  const readableDocuments = () => {
+    const docs = [document];
+    for (const frame of Array.from(window.frames || [])) {
+      try {
+        if (frame.document) docs.push(frame.document);
+      } catch {}
+    }
+    return docs;
+  };
+
+  const allRoots = (root = document) => {
+    const roots = [root];
+    for (const node of root.querySelectorAll?.("*") || []) {
+      if (node.shadowRoot) roots.push(node.shadowRoot);
+    }
+    return roots;
+  };
+
+  const findVideos = () => {
+    const found = [];
+    for (const doc of readableDocuments()) {
+      for (const root of allRoots(doc)) {
+        found.push(...Array.from(root.querySelectorAll?.("video") || []));
+      }
+    }
+    return [...new Set(found)];
+  };
+
+  const describeVideo = (video, index) => {
+    video.dataset.havynMediaId = video.dataset.havynMediaId || "video-" + index;
+    return {
+      id: video.dataset.havynMediaId,
+      index,
+      title: document.querySelector("meta[property='og:title']")?.content || document.title || video.getAttribute("title") || "Detected video",
+      currentTime: video.currentTime || 0,
+      duration: Number.isFinite(video.duration) ? video.duration : 0,
+      paused: video.paused,
+      playbackRate: video.playbackRate || 1,
+      ended: video.ended,
+      readyState: video.readyState,
+      width: video.videoWidth || video.clientWidth || 0,
+      height: video.videoHeight || video.clientHeight || 0,
+      src: video.currentSrc || video.src || "",
+      frameUrl: window.location.href,
+      pageUrl: window.location.href,
+      url: window.location.href
+    };
+  };
+
+  const emitEvent = (eventName, video) => {
+    if (eventName === "timeupdate" && Date.now() - lastTimeUpdateAt < 1000) return;
+    if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
+    const index = findVideos().indexOf(video);
+    lastMediaEvent = {
+      eventName,
+      media: describeVideo(video, index),
+      controlledByHavyn: Date.now() < applyingRemoteUntil
+    };
+    console.debug("__HAVYN_MEDIA_EVENT__");
+  };
+
+  const attach = (video) => {
+    if (!video || video.dataset.havynDomAttached) return;
+    video.dataset.havynDomAttached = "true";
+    ["play", "pause", "seeking", "seeked", "timeupdate", "loadedmetadata", "canplay", "playing", "ended", "ratechange"].forEach((eventName) => {
+      video.addEventListener(eventName, () => emitEvent(eventName, video), true);
+    });
+  };
+
+  const scan = () => {
+    const videos = findVideos();
+    videos.forEach(attach);
+    return videos.map(describeVideo);
+  };
+
+  const scheduleScan = () => {
+    if (scanTimer) return;
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      scan();
+      console.debug("__HAVYN_MEDIA_SCAN__");
+    }, 250);
+  };
+
+  window.__havynScanMedia = scan;
+  window.__havynReadMediaEvent = () => {
+    const event = lastMediaEvent;
+    lastMediaEvent = null;
+    return event;
+  };
+  const schedulePlaybackRetry = () => {
+    if (playbackRetryTimer || !pendingPlayback) return;
+    playbackRetryTimer = setTimeout(() => {
+      playbackRetryTimer = null;
+      if (pendingPlayback) window.__havynApplyPlayback(pendingPlayback);
+    }, 700);
+  };
+
+  window.__havynApplyPlayback = ({ action, currentTime, playbackRate }) => {
+    const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
+    if (!video) {
+      pendingPlayback = { action, currentTime, playbackRate };
+      schedulePlaybackRetry();
+      return false;
+    }
+    applyingRemoteUntil = Date.now() + 1200;
+    if (action !== "play") pendingPlayback = null;
+    if (typeof playbackRate === "number") video.playbackRate = playbackRate;
+    if (typeof currentTime === "number" && Math.abs((video.currentTime || 0) - currentTime) > 0.35) {
+      video.currentTime = Math.max(0, currentTime);
+    }
+    if (action === "play" && video.paused) {
+      pendingPlayback = { action, currentTime, playbackRate };
+      video.play()
+        .then(() => {
+          pendingPlayback = null;
+        })
+        .catch(() => schedulePlaybackRetry());
+    }
+    if (action === "pause" && !video.paused) video.pause();
+    return true;
+  };
+
+  new MutationObserver(scheduleScan).observe(document.documentElement || document, { childList: true, subtree: true });
+  scan();
+  setTimeout(scheduleScan, 500);
+  setTimeout(scheduleScan, 1800);
+  setInterval(scheduleScan, 4000);
+  return true;
+})();
+`;
+
+export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "", layoutSignal = "" }) {
   const frameRef = useRef(null);
   const iframeRef = useRef(null);
+  const webviewRef = useRef(null);
   const [url, setUrl] = useState("https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html");
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewBlocked, setPreviewBlocked] = useState(false);
@@ -16,9 +174,12 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   const [notice, setNotice] = useState("");
   const [adBlockEnabled, setAdBlockEnabled] = useState(false);
   const [adBlockBypassed, setAdBlockBypassed] = useState(false);
+  const [preloadUrl, setPreloadUrl] = useState("");
+  const [webviewPartition, setWebviewPartition] = useState("");
+  const useDomWebview = Boolean(browser?.isDomWebview);
 
   const updateBrowserBounds = useCallback(() => {
-    if (!browser || !frameRef.current) return;
+    if (!browser || browser.isDomWebview || !frameRef.current) return;
     const rect = frameRef.current.getBoundingClientRect();
     browser.setBounds({
       x: Math.round(rect.left),
@@ -29,7 +190,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }, [browser]);
 
   useLayoutEffect(() => {
-    if (!browser || !frameRef.current) return undefined;
+    if (!browser || browser.isDomWebview || !frameRef.current) return undefined;
     const createBounds = () => {
       const rect = frameRef.current.getBoundingClientRect();
       browser.create({
@@ -52,10 +213,201 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }, [browser, updateBrowserBounds]);
 
   useEffect(() => {
-    if (!browser) return undefined;
+    if (!browser || browser.isDomWebview) return undefined;
     const timers = [0, 80, 220, 520].map((delay) => window.setTimeout(updateBrowserBounds, delay));
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [browser, updateBrowserBounds]);
+  }, [browser, layoutSignal, updateBrowserBounds]);
+
+  useEffect(() => {
+    window.havyn?.browser?.getPreloadUrl?.().then(setPreloadUrl).catch(() => {});
+    window.havyn?.browser?.getPartition?.().then(setWebviewPartition).catch(() => {});
+  }, []);
+
+  const emitTabs = useCallback((nextTabs = tabs, nextActiveTabId = activeTabId) => {
+    domBrowserEvents.tabs({ tabs: nextTabs, activeTabId: nextActiveTabId });
+  }, [activeTabId, tabs]);
+
+  const scanDomMedia = useCallback(async () => {
+    const webview = webviewRef.current;
+    if (!webview) return [];
+    const webContentsId = webview.getWebContentsId?.();
+    const frameMedia = webContentsId
+      ? await window.havyn?.browser?.scanWebviewMedia?.(webContentsId).catch(() => [])
+      : [];
+    const normalizedFrameMedia = normalizeDetectedItems(frameMedia, webview);
+    if (normalizedFrameMedia.length) {
+      domBrowserEvents.mediaDetected(normalizedFrameMedia);
+      onWebMediaDetected?.(normalizedFrameMedia, null);
+      return normalizedFrameMedia;
+    }
+    await webview.executeJavaScript(WEBVIEW_DETECTOR_SCRIPT, true).catch(() => false);
+    const media = await webview.executeJavaScript("window.__havynScanMedia?.() || []", true).catch(() => []);
+    const normalized = normalizeDetectedItems(media, webview);
+    if (normalized.length) {
+      domBrowserEvents.mediaDetected(normalized);
+      onWebMediaDetected?.(normalized, null);
+    }
+    return normalized;
+  }, [onWebMediaDetected]);
+
+  useEffect(() => {
+    if (!useDomWebview) return undefined;
+    const webview = webviewRef.current;
+    if (!webview) return undefined;
+    const registerWebview = () => {
+      const webContentsId = webview.getWebContentsId?.();
+      if (webContentsId) window.havyn?.browser?.registerWebview?.(webContentsId).catch(() => {});
+    };
+    const installDetector = () => {
+      registerWebview();
+      webview.executeJavaScript(WEBVIEW_DETECTOR_SCRIPT, true).catch(() => false);
+      window.setTimeout(scanDomMedia, 250);
+      window.setTimeout(scanDomMedia, 1200);
+    };
+    const handleLoad = () => {
+      const activeUrl = webview.getURL?.() || "";
+      const activeTitle = webview.getTitle?.() || activeUrl || "New tab";
+      setUrl(activeUrl || url);
+      setTabs((currentTabs) => {
+        const nextTabs = currentTabs.map((tab) => (
+          tab.id === activeTabId ? { ...tab, title: activeTitle, url: activeUrl } : tab
+        ));
+        domBrowserEvents.tabs({ tabs: nextTabs, activeTabId });
+        return nextTabs;
+      });
+      domBrowserEvents.navigation({ url: activeUrl });
+      installDetector();
+      window.setTimeout(scanDomMedia, 1800);
+    };
+    const handleNavigate = (event) => {
+      setUrl(event.url);
+      domBrowserEvents.navigation({ url: event.url });
+    };
+    const handleConsole = async () => {
+      const event = await webview.executeJavaScript("window.__havynReadMediaEvent?.()", true).catch(() => null);
+      if (event) {
+        domBrowserEvents.mediaEvent(event);
+        onWebMediaEvent?.(event);
+      }
+    };
+    const handleIpcMessage = (event) => {
+      const [payload] = event.args || [];
+      if (event.channel === "browser:media-detected-from-page") {
+        const media = normalizeDetectedItems(payload?.media || [], webview);
+        domBrowserEvents.mediaDetected(media);
+        onWebMediaDetected?.(media, null);
+      }
+      if (event.channel === "browser:media-event-from-page") {
+        const nextPayload = payload?.media
+          ? { ...payload, media: normalizeDetectedItems([payload.media], webview)[0] }
+          : payload;
+        domBrowserEvents.mediaEvent(nextPayload);
+        onWebMediaEvent?.(nextPayload);
+      }
+    };
+    const blockPopup = (event) => {
+      event.preventDefault?.();
+      setNotice("Popup blocked");
+      window.setTimeout(() => setNotice(""), 1600);
+    };
+    webview.addEventListener("did-finish-load", handleLoad);
+    webview.addEventListener("dom-ready", installDetector);
+    webview.addEventListener("did-navigate", handleNavigate);
+    webview.addEventListener("did-navigate-in-page", handleNavigate);
+    webview.addEventListener("console-message", handleConsole);
+    webview.addEventListener("ipc-message", handleIpcMessage);
+    webview.addEventListener("new-window", blockPopup);
+    webview.addEventListener("did-create-window", blockPopup);
+    return () => {
+      webview.removeEventListener("did-finish-load", handleLoad);
+      webview.removeEventListener("dom-ready", installDetector);
+      webview.removeEventListener("did-navigate", handleNavigate);
+      webview.removeEventListener("did-navigate-in-page", handleNavigate);
+      webview.removeEventListener("console-message", handleConsole);
+      webview.removeEventListener("ipc-message", handleIpcMessage);
+      webview.removeEventListener("new-window", blockPopup);
+      webview.removeEventListener("did-create-window", blockPopup);
+    };
+  }, [activeTabId, onWebMediaDetected, onWebMediaEvent, preloadUrl, scanDomMedia, url, useDomWebview]);
+
+  useEffect(() => {
+    if (!useDomWebview) return undefined;
+    const removeDetected = window.havyn?.browser?.onMediaDetected?.((media) => {
+      domBrowserEvents.mediaDetected(media || []);
+      onWebMediaDetected?.(media || [], null);
+    });
+    const removeEvent = window.havyn?.browser?.onMediaEvent?.((payload) => {
+      domBrowserEvents.mediaEvent(payload);
+      onWebMediaEvent?.(payload);
+    });
+    return () => {
+      removeDetected?.();
+      removeEvent?.();
+    };
+  }, [onWebMediaDetected, onWebMediaEvent, useDomWebview]);
+
+  useEffect(() => {
+    if (!useDomWebview) return undefined;
+    const unregister = registerDomBrowser({
+      loadUrl: async (nextUrl) => {
+        const normalized = normalizeUrl(nextUrl);
+        setUrl(normalized);
+        domBrowserEvents.loadState({ type: "loading", url: normalized });
+        await webviewRef.current?.loadURL(normalized);
+        return normalized;
+      },
+      reload: () => webviewRef.current?.reload(),
+      back: () => webviewRef.current?.canGoBack?.() && webviewRef.current.goBack(),
+      forward: () => webviewRef.current?.canGoForward?.() && webviewRef.current.goForward(),
+      focus: () => webviewRef.current?.focus(),
+      newTab: async (nextUrl = "about:blank") => {
+        const id = crypto.randomUUID();
+        const normalized = nextUrl === "about:blank" ? nextUrl : normalizeUrl(nextUrl);
+        const nextTabs = [...tabs, { id, title: "New tab", url: normalized }];
+        setTabs(nextTabs);
+        setActiveTabId(id);
+        emitTabs(nextTabs, id);
+        if (normalized !== "about:blank") await webviewRef.current?.loadURL(normalized);
+        return { activeTabId: id, tabs: nextTabs };
+      },
+      switchTab: (tabId) => {
+        setActiveTabId(tabId);
+        emitTabs(tabs, tabId);
+        const tab = tabs.find((item) => item.id === tabId);
+        if (tab?.url && tab.url !== "about:blank") webviewRef.current?.loadURL(tab.url);
+        return { activeTabId: tabId, tabs };
+      },
+      closeTab: (tabId) => {
+        let nextTabs = tabs.filter((tab) => tab.id !== tabId);
+        if (!nextTabs.length) nextTabs = [{ id: crypto.randomUUID(), title: "New tab", url: "" }];
+        const nextActive = activeTabId === tabId ? nextTabs[0]?.id || "" : activeTabId;
+        setTabs(nextTabs);
+        setActiveTabId(nextActive);
+        emitTabs(nextTabs, nextActive);
+        const tab = nextTabs.find((item) => item.id === nextActive);
+        if (tab?.url && tab.url !== "about:blank") webviewRef.current?.loadURL(tab.url);
+        else webviewRef.current?.loadURL("about:blank");
+        return { activeTabId: nextActive, tabs: nextTabs };
+      },
+      scanMedia: scanDomMedia,
+      applyPlayback: async (state) => {
+        const webContentsId = webviewRef.current?.getWebContentsId?.();
+        const appliedInFrame = webContentsId
+          ? await window.havyn?.browser?.applyWebviewPlayback?.(webContentsId, state).catch(() => false)
+          : false;
+        if (appliedInFrame) return true;
+        return webviewRef.current?.executeJavaScript(`window.__havynApplyPlayback?.(${JSON.stringify(state)})`, true).catch(() => false);
+      },
+      toggleAdBlock: async () => {
+        const result = await window.havyn?.browser?.toggleAdBlock?.();
+        if (result) domBrowserEvents.adBlockState(result);
+        webviewRef.current?.reload();
+        return result || { enabled: false };
+      },
+      getAdBlockState: () => window.havyn?.browser?.getAdBlockState?.() || { enabled: false }
+    });
+    return unregister;
+  }, [activeTabId, emitTabs, scanDomMedia, tabs, useDomWebview]);
 
   useEffect(() => {
     if (currentUrl) setUrl(currentUrl);
@@ -63,13 +415,20 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
 
   useEffect(() => {
     if (!browser?.onTabs) return undefined;
+    if (useDomWebview && tabs.length === 0) {
+      const id = crypto.randomUUID();
+      const initial = [{ id, title: "New tab", url: "" }];
+      setTabs(initial);
+      setActiveTabId(id);
+      domBrowserEvents.tabs({ tabs: initial, activeTabId: id });
+    }
     return browser.onTabs(({ tabs: nextTabs, activeTabId: nextActiveTabId }) => {
       setTabs(nextTabs || []);
       setActiveTabId(nextActiveTabId || "");
       const active = nextTabs?.find((tab) => tab.id === nextActiveTabId);
       if (active?.url) setUrl(active.url);
     });
-  }, [browser]);
+  }, [browser, tabs.length, useDomWebview]);
 
   useEffect(() => {
     if (!browser?.onLoadState) return undefined;
@@ -274,6 +633,16 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
         {!browser && <button className="icon-button" type="button" title="Load local test video" onClick={loadTestVideo}><Film size={18} /></button>}
       </form>
       <div className="browser-frame" ref={frameRef} onMouseEnter={() => browser?.focus?.()} onMouseDown={() => browser?.focus?.()}>
+        {useDomWebview && preloadUrl && (
+          <webview
+            ref={webviewRef}
+            className="dom-webview"
+            src="about:blank"
+            preload={preloadUrl}
+            partition={webviewPartition}
+            webpreferences="contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no"
+          />
+        )}
         {!browser && previewUrl && (
           <>
             <iframe

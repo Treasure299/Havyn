@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, webContents } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,147 @@ const tabs = new Map();
 const loadedExtensions = new Map();
 let adBlockDesired = true;
 let browserVisible = true;
+const registeredWebviews = new Set();
+
+const FRAME_DETECTOR_SCRIPT = String.raw`
+(() => {
+  if (window.__havynFrameDetectorInstalled) {
+    window.__havynScanMedia?.();
+    return true;
+  }
+  window.__havynFrameDetectorInstalled = true;
+  let lastMediaEvent = null;
+  let applyingRemoteUntil = 0;
+  let pendingPlayback = null;
+  let playbackRetryTimer = null;
+  let scanTimer = null;
+  let lastTimeUpdateAt = 0;
+
+  const allRoots = (root = document) => {
+    const roots = [root];
+    for (const node of root.querySelectorAll?.("*") || []) {
+      if (node.shadowRoot) roots.push(node.shadowRoot);
+    }
+    return roots;
+  };
+
+  const findVideos = () => {
+    const found = [];
+    for (const root of allRoots(document)) {
+      found.push(...Array.from(root.querySelectorAll?.("video") || []));
+    }
+    return [...new Set(found)];
+  };
+
+  const describeVideo = (video, index) => {
+    video.dataset.havynMediaId = video.dataset.havynMediaId || "video-" + index;
+    let pageUrl = window.location.href;
+    try {
+      pageUrl = window.top?.location?.href || pageUrl;
+    } catch {
+      pageUrl = document.referrer || pageUrl;
+    }
+    return {
+      id: video.dataset.havynMediaId,
+      index,
+      title: document.querySelector("meta[property='og:title']")?.content || document.title || video.getAttribute("title") || "Detected video",
+      currentTime: video.currentTime || 0,
+      duration: Number.isFinite(video.duration) ? video.duration : 0,
+      paused: video.paused,
+      playbackRate: video.playbackRate || 1,
+      ended: video.ended,
+      readyState: video.readyState,
+      width: video.videoWidth || video.clientWidth || 0,
+      height: video.videoHeight || video.clientHeight || 0,
+      src: video.currentSrc || video.src || "",
+      frameUrl: window.location.href,
+      pageUrl,
+      url: window.location.href
+    };
+  };
+
+  const emitEvent = (eventName, video) => {
+    if (eventName === "timeupdate" && Date.now() - lastTimeUpdateAt < 1000) return;
+    if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
+    const index = findVideos().indexOf(video);
+    lastMediaEvent = {
+      eventName,
+      media: describeVideo(video, index),
+      controlledByHavyn: Date.now() < applyingRemoteUntil
+    };
+    console.debug("__HAVYN_FRAME_MEDIA_EVENT__");
+  };
+
+  const attach = (video) => {
+    if (!video || video.dataset.havynFrameAttached) return;
+    video.dataset.havynFrameAttached = "true";
+    ["play", "pause", "seeking", "seeked", "timeupdate", "loadedmetadata", "canplay", "playing", "ended", "ratechange"].forEach((eventName) => {
+      video.addEventListener(eventName, () => emitEvent(eventName, video), true);
+    });
+  };
+
+  const scan = () => {
+    const videos = findVideos();
+    videos.forEach(attach);
+    return videos.map(describeVideo);
+  };
+
+  const scheduleScan = () => {
+    if (scanTimer) return;
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      scan();
+      console.debug("__HAVYN_FRAME_MEDIA_SCAN__");
+    }, 250);
+  };
+
+  window.__havynScanMedia = scan;
+  window.__havynReadMediaEvent = () => {
+    const event = lastMediaEvent;
+    lastMediaEvent = null;
+    return event;
+  };
+  const schedulePlaybackRetry = () => {
+    if (playbackRetryTimer || !pendingPlayback) return;
+    playbackRetryTimer = setTimeout(() => {
+      playbackRetryTimer = null;
+      if (pendingPlayback) window.__havynApplyPlayback(pendingPlayback);
+    }, 700);
+  };
+
+  window.__havynApplyPlayback = ({ action, currentTime, playbackRate }) => {
+    const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
+    if (!video) {
+      pendingPlayback = { action, currentTime, playbackRate };
+      schedulePlaybackRetry();
+      return false;
+    }
+    applyingRemoteUntil = Date.now() + 1200;
+    if (action !== "play") pendingPlayback = null;
+    if (typeof playbackRate === "number") video.playbackRate = playbackRate;
+    if (typeof currentTime === "number" && Math.abs((video.currentTime || 0) - currentTime) > 0.35) {
+      video.currentTime = Math.max(0, currentTime);
+    }
+    if (action === "play" && video.paused) {
+      pendingPlayback = { action, currentTime, playbackRate };
+      video.play()
+        .then(() => {
+          pendingPlayback = null;
+        })
+        .catch(() => schedulePlaybackRetry());
+    }
+    if (action === "pause" && !video.paused) video.pause();
+    return true;
+  };
+
+  new MutationObserver(scheduleScan).observe(document.documentElement || document, { childList: true, subtree: true });
+  scan();
+  setTimeout(scheduleScan, 500);
+  setTimeout(scheduleScan, 1800);
+  setInterval(scheduleScan, 4000);
+  return true;
+})();
+`;
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.commandLine.appendSwitch("disable-blink-features", "AutomationControlled");
@@ -66,20 +207,55 @@ function emitAdBlockState(url) {
 
 function shouldBlockRequest(url = "", resourceType = "") {
   if (!adBlockDesired || isAdBlockBypassUrl(url)) return false;
-  if (resourceType === "mainFrame") return false;
-  return [
+  const adPatterns = [
     /(^|\.)doubleclick\.net\//i,
     /(^|\.)googlesyndication\.com\//i,
     /(^|\.)google-analytics\.com\//i,
+    /(^|\.)googletagmanager\.com\//i,
+    /(^|\.)googletagservices\.com\//i,
     /(^|\.)adnxs\.com\//i,
     /(^|\.)popads\.net\//i,
     /(^|\.)popcash\.net\//i,
     /(^|\.)propellerads\.com\//i,
     /(^|\.)onclickads\.net\//i,
     /(^|\.)exoclick\.com\//i,
+    /(^|\.)adsterra\.com\//i,
+    /(^|\.)adsterratools\.com\//i,
+    /(^|\.)juicyads\.com\//i,
+    /(^|\.)trafficjunky\.net\//i,
+    /(^|\.)popunder/i,
+    /(^|\.)clickadu\.com\//i,
+    /(^|\.)hilltopads\.net\//i,
+    /(^|\.)yllix\.com\//i,
+    /(^|\.)mgid\.com\//i,
+    /(^|\.)taboola\.com\//i,
+    /(^|\.)outbrain\.com\//i,
+    /(^|\.)revcontent\.com\//i,
+    /(^|\.)adskeeper\.co(m)?\//i,
+    /(^|\.)criteo\.com\//i,
     /\/ads?[/.?=&_-]/i,
+    /\/pop(?:up|under)[/.?=&_-]/i,
+    /\/vast[/.?=&_-]/i,
+    /\/prebid[/.?=&_-]/i,
     /[?&](ad_|ads=|utm_)/i
-  ].some((pattern) => pattern.test(url));
+  ];
+
+  if (resourceType === "mainFrame") {
+    return [
+      /(^|\.)popads\.net\//i,
+      /(^|\.)popcash\.net\//i,
+      /(^|\.)propellerads\.com\//i,
+      /(^|\.)onclickads\.net\//i,
+      /(^|\.)exoclick\.com\//i,
+      /(^|\.)adsterra\.com\//i,
+      /(^|\.)adsterratools\.com\//i,
+      /(^|\.)clickadu\.com\//i,
+      /(^|\.)hilltopads\.net\//i,
+      /\/pop(?:up|under)[/.?=&_-]/i
+    ].some((pattern) => pattern.test(url));
+  }
+
+  return adPatterns.some((pattern) => pattern.test(url));
 }
 
 function installRequestGuard() {
@@ -294,8 +470,66 @@ function normalizeDetectedMedia(tab, media = []) {
   return (media || []).map((item) => ({
     ...item,
     frameUrl: item.frameUrl || item.url,
-    url: tab?.url || item.pageUrl || item.url
+    pageUrl: item.pageUrl || tab?.url || item.url,
+    url: item.url || item.frameUrl || tab?.url
   }));
+}
+
+function normalizeWebviewMedia(wc, media = []) {
+  return (media || []).map((item) => ({
+    ...item,
+    frameUrl: item.frameUrl || item.url,
+    pageUrl: item.pageUrl || wc?.getURL?.() || item.url,
+    url: item.url || item.frameUrl || wc?.getURL?.()
+  }));
+}
+
+function webviewFrames(wc) {
+  const frames = [];
+  const visit = (frame) => {
+    if (!frame || frame.detached) return;
+    frames.push(frame);
+    for (const child of frame.frames || []) visit(child);
+  };
+  visit(wc?.mainFrame);
+  return frames;
+}
+
+async function installDetectorInWebviewFrames(wc) {
+  if (!wc || wc.isDestroyed()) return [];
+  const frames = webviewFrames(wc);
+  await Promise.all(frames.map((frame) => frame.executeJavaScript(FRAME_DETECTOR_SCRIPT, true).catch(() => false)));
+  return frames;
+}
+
+async function scanWebviewMedia(webContentsId) {
+  const wc = webContents.fromId(Number(webContentsId));
+  if (!wc || wc.isDestroyed()) return [];
+  const frames = await installDetectorInWebviewFrames(wc);
+  const mediaByFrame = await Promise.all(frames.map((frame) => (
+    frame.executeJavaScript("window.__havynScanMedia?.() || []", true).catch(() => [])
+  )));
+  return normalizeWebviewMedia(wc, mediaByFrame.flat().filter(Boolean));
+}
+
+async function readWebviewMediaEvent(wc) {
+  if (!wc || wc.isDestroyed()) return null;
+  const frames = webviewFrames(wc);
+  for (const frame of frames) {
+    const payload = await frame.executeJavaScript("window.__havynReadMediaEvent?.()", true).catch(() => null);
+    if (payload) return normalizeWebviewMedia(wc, [payload.media]).map((media) => ({ ...payload, media }))[0];
+  }
+  return null;
+}
+
+async function applyWebviewPlayback(webContentsId, state) {
+  const wc = webContents.fromId(Number(webContentsId));
+  if (!wc || wc.isDestroyed()) return false;
+  const frames = await installDetectorInWebviewFrames(wc);
+  const results = await Promise.all(frames.map((frame) => (
+    frame.executeJavaScript(`window.__havynApplyPlayback?.(${JSON.stringify(state)}) || false`, true).catch(() => false)
+  )));
+  return results.some(Boolean);
 }
 
 ipcMain.handle("browser:create", (_event, bounds) => {
@@ -471,6 +705,31 @@ ipcMain.handle("browser:get-adblock-state", () => adBlockStateForUrl());
 
 ipcMain.handle("app:get-browser-preload-url", () => `file://${path.join(__dirname, "browserPreload.js").replace(/\\/g, "/")}`);
 ipcMain.handle("app:get-browser-partition", () => browserPartition());
+
+ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
+  const wc = webContents.fromId(Number(webContentsId));
+  if (!wc || registeredWebviews.has(wc.id)) return Boolean(wc);
+  registeredWebviews.add(wc.id);
+  wc.on("console-message", async (_event, _level, message) => {
+    if (!String(message || "").includes("__HAVYN_FRAME_MEDIA_")) return;
+    const payload = await readWebviewMediaEvent(wc);
+    if (payload) mainWindow?.webContents.send("browser:media-event", payload);
+    if (String(message || "").includes("__HAVYN_FRAME_MEDIA_SCAN__")) {
+      const media = await scanWebviewMedia(wc.id);
+      if (media.length) mainWindow?.webContents.send("browser:media-detected", media);
+    }
+  });
+  wc.on("destroyed", () => registeredWebviews.delete(wc.id));
+  return true;
+});
+
+ipcMain.handle("browser:scan-webview-media", async (_event, webContentsId) => {
+  const media = await scanWebviewMedia(webContentsId);
+  if (media.length) mainWindow?.webContents.send("browser:media-detected", media);
+  return media;
+});
+
+ipcMain.handle("browser:apply-webview-playback", (_event, webContentsId, state) => applyWebviewPlayback(webContentsId, state));
 
 ipcMain.handle("browser:apply-playback", async (_event, state) => {
   const tab = activeTab();

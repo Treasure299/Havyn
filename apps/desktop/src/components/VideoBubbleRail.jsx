@@ -1,7 +1,7 @@
-import { Mic, MicOff, Video, VideoOff, Volume2, VolumeX } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, Volume2, VolumeX, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-function VideoBubble({ label, stream, muted, cameraOff, remote, call, className = "" }) {
+function VideoBubble({ label, stream, muted, cameraOff, remote, call, className = "", onCollapse }) {
   const ref = useRef(null);
   const [volume, setVolume] = useState(0.72);
   const isAudioMuted = muted || !stream?.getAudioTracks?.().some((track) => track.enabled && track.readyState === "live");
@@ -43,6 +43,17 @@ function VideoBubble({ label, stream, muted, cameraOff, remote, call, className 
           </>
         )}
       </div>
+      {onCollapse && (
+        <button
+          className="bubble-collapse-button"
+          type="button"
+          title="Collapse tile"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onCollapse}
+        >
+          <X size={14} />
+        </button>
+      )}
       {remote && (
         <div className="volume-hover" onPointerDown={(event) => event.stopPropagation()}>
           <div>
@@ -65,12 +76,75 @@ function VideoBubble({ label, stream, muted, cameraOff, remote, call, className 
   );
 }
 
-function FloatingBubble({ children, index }) {
-  const [frame, setFrame] = useState({ x: 0, y: index * 152, width: 250 });
+function CollapsedStreamKeeper({ stream, muted, remote }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.srcObject = stream;
+  }, [stream]);
+
+  return (
+    <video
+      className="collapsed-stream-keeper"
+      ref={ref}
+      autoPlay
+      playsInline
+      muted={!remote || muted}
+    />
+  );
+}
+
+function FloatingBubble({ tile, index, isPlaying, rightInset = 0 }) {
+  const [frame, setFrame] = useState({ x: window.innerWidth - 326, y: 96 + index * 172, width: 276 });
+  const [collapsed, setCollapsed] = useState(false);
   const dragRef = useRef(null);
+  const movedRef = useRef(false);
+  const previousRightInsetRef = useRef(rightInset);
+  const restoreFrameRef = useRef(null);
+
+  function clampFrame(nextFrame, nextCollapsed = collapsed) {
+    const width = nextCollapsed ? Math.min(nextFrame.width, 210) : nextFrame.width;
+    const height = nextCollapsed ? 38 : width * 9 / 16;
+    const maxX = Math.max(18, window.innerWidth - rightInset - width - 18);
+    const maxY = Math.max(18, window.innerHeight - height - 18);
+    return {
+      ...nextFrame,
+      x: Math.min(maxX, Math.max(18, nextFrame.x)),
+      y: Math.min(maxY, Math.max(18, nextFrame.y))
+    };
+  }
+
+  useEffect(() => {
+    const previousRightInset = previousRightInsetRef.current;
+    previousRightInsetRef.current = rightInset;
+
+    if (rightInset > previousRightInset) {
+      setFrame((current) => {
+        restoreFrameRef.current = current;
+        return clampFrame(current);
+      });
+      return;
+    }
+
+    if (rightInset < previousRightInset && restoreFrameRef.current) {
+      const restoreFrame = restoreFrameRef.current;
+      restoreFrameRef.current = null;
+      setFrame(clampFrame(restoreFrame));
+    }
+  }, [rightInset]);
+
+  useEffect(() => {
+    const clamp = () => setFrame((current) => clampFrame(current));
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, [rightInset, collapsed]);
 
   function startDrag(event) {
-    if (event.target.closest?.(".bubble-quick-controls, .volume-hover, input, button")) return;
+    if (!event.isPrimary || event.button !== 0) return;
+    if (!collapsed && event.target.closest?.(".bubble-quick-controls, .volume-hover, input, button")) return;
+    if (collapsed && event.target.closest?.("input")) return;
     event.preventDefault();
     dragRef.current = {
       type: "move",
@@ -78,11 +152,15 @@ function FloatingBubble({ children, index }) {
       startY: event.clientY,
       frame
     };
+    movedRef.current = false;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", stop);
   }
 
   function startResize(event) {
+    if (!event.isPrimary || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     dragRef.current = {
@@ -92,42 +170,101 @@ function FloatingBubble({ children, index }) {
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", stop);
   }
 
   function move(event) {
     const drag = dragRef.current;
     if (!drag) return;
+    if (event.buttons === 0) {
+      stop();
+      return;
+    }
     if (drag.type === "move") {
-      setFrame({
+      movedRef.current = movedRef.current || Math.abs(event.clientX - drag.startX) > 3 || Math.abs(event.clientY - drag.startY) > 3;
+      setFrame(clampFrame({
         ...drag.frame,
-        x: Math.min(70, Math.max(-220, drag.frame.x + event.clientX - drag.startX)),
-        y: Math.min(window.innerHeight - 180, Math.max(0, drag.frame.y + event.clientY - drag.startY))
-      });
+        x: drag.frame.x + event.clientX - drag.startX,
+        y: drag.frame.y + event.clientY - drag.startY
+      }));
     } else {
-      const width = Math.min(360, Math.max(180, drag.frame.width + event.clientX - drag.startX));
-      setFrame({ ...drag.frame, width });
+      const availableWidth = Math.max(180, window.innerWidth - rightInset - drag.frame.x - 18);
+      const width = Math.min(360, availableWidth, Math.max(180, drag.frame.width + event.clientX - drag.startX));
+      setFrame(clampFrame({ ...drag.frame, width }, false));
     }
   }
 
   function stop() {
+    const shouldRestore = collapsed && !movedRef.current;
+    if (movedRef.current && rightInset > 0) restoreFrameRef.current = null;
     dragRef.current = null;
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", stop);
+    window.removeEventListener("pointercancel", stop);
+    window.removeEventListener("blur", stop);
+    if (shouldRestore) setCollapsed(false);
   }
 
   return (
     <div
-      className="floating-video-bubble"
-      style={{ width: frame.width, transform: `translate(${frame.x}px, ${frame.y}px)` }}
+      className={`floating-video-bubble ${collapsed ? "is-collapsed" : ""} ${isPlaying ? "media-is-playing" : "media-is-paused"}`}
+      style={{ width: collapsed ? Math.min(frame.width, 210) : frame.width, transform: `translate(${frame.x}px, ${frame.y}px)` }}
       onPointerDown={startDrag}
     >
-      {children}
-      <i className="bubble-resize-handle" onPointerDown={startResize} />
+      {collapsed ? (
+        <>
+          <CollapsedStreamKeeper stream={tile.stream} muted={tile.muted} remote={tile.remote} />
+          <div
+            className="collapsed-video-bar"
+            role="button"
+            tabIndex={0}
+            title={`Restore ${tile.label}`}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setCollapsed(false);
+              }
+            }}
+          >
+            <button
+              type="button"
+              title={tile.muted ? "Unmute mic" : "Mute mic"}
+              disabled={tile.remote}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                tile.call?.toggleMute?.();
+              }}
+            >
+              {tile.muted ? <MicOff size={12} /> : <Mic size={12} />}
+            </button>
+            <button
+              type="button"
+              title={tile.cameraOff ? "Turn camera on" : "Turn camera off"}
+              disabled={tile.remote}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                tile.call?.toggleCamera?.();
+              }}
+            >
+              {tile.cameraOff ? <VideoOff size={12} /> : <Video size={12} />}
+            </button>
+            <span>{tile.label}</span>
+          </div>
+        </>
+      ) : (
+        <>
+          <VideoBubble {...tile} onCollapse={() => setCollapsed(true)} />
+          <i className="bubble-resize-handle" onPointerDown={startResize} />
+        </>
+      )}
     </div>
   );
 }
 
-export default function VideoBubbleRail({ call, participants, layout = "grid", focusPrimary = "remote", floating = false }) {
+export default function VideoBubbleRail({ call, participants, layout = "grid", focusPrimary = "remote", floating = false, isPlaying = false, chatOpen = false }) {
   if (!call.joined) {
     return (
       <div className="video-rail video-rail-empty">
@@ -140,22 +277,22 @@ export default function VideoBubbleRail({ call, participants, layout = "grid", f
     call.localStream && {
       id: "local",
       kind: "local",
-      node: <VideoBubble label="You" stream={call.localStream} muted={call.muted} cameraOff={call.cameraOff} call={call} />
+      label: "You",
+      stream: call.localStream,
+      muted: call.muted,
+      cameraOff: call.cameraOff,
+      call
     },
     ...call.streams.map((item) => {
       const participant = participants.find((person) => person.userId === item.userId);
       return {
         id: item.userId,
         kind: "remote",
-        node: (
-          <VideoBubble
-            label={participant?.displayName || "Guest"}
-            stream={item.stream}
-            muted={participant?.muted}
-            cameraOff={participant?.cameraOff}
-            remote
-          />
-        )
+        label: participant?.displayName || "Guest",
+        stream: item.stream,
+        muted: participant?.muted,
+        cameraOff: participant?.cameraOff,
+        remote: true
       };
     })
   ].filter(Boolean);
@@ -165,10 +302,11 @@ export default function VideoBubbleRail({ call, participants, layout = "grid", f
     : tiles;
 
   if (floating) {
+    const rightInset = chatOpen ? Math.min(378, window.innerWidth * 0.31) : 0;
     return (
       <div className="video-float-layer" data-count={tiles.length}>
         {orderedTiles.map((tile, index) => (
-          <FloatingBubble key={tile.id} index={index}>{tile.node}</FloatingBubble>
+          <FloatingBubble key={tile.id} index={index} tile={tile} isPlaying={isPlaying} rightInset={rightInset} />
         ))}
       </div>
     );
@@ -178,7 +316,7 @@ export default function VideoBubbleRail({ call, participants, layout = "grid", f
     <div className={`video-rail video-layout-${actualLayout}`} data-count={tiles.length}>
       {orderedTiles.map((tile, index) => (
         <div key={tile.id} className={actualLayout === "focus" ? (index === 0 ? "focus-primary" : "focus-secondary") : ""}>
-          {tile.node}
+          <VideoBubble {...tile} />
         </div>
       ))}
     </div>

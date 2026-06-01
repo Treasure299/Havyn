@@ -1,0 +1,63 @@
+name: Build Havyn macOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: Package macOS DMG
+    runs-on: macos-14
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      VITE_ABLY_API_KEY: ${{ secrets.VITE_ABLY_API_KEY }}
+      VITE_SIGNALING_PROVIDER: ${{ vars.VITE_SIGNALING_PROVIDER || 'ably' }}
+      VITE_SOCKET_SERVER_URL: ${{ vars.VITE_SOCKET_SERVER_URL }}
+      VITE_AUTH_REDIRECT_URL: ${{ vars.VITE_AUTH_REDIRECT_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create macOS app icon
+        run: |
+          set -euo pipefail
+          ICON_SRC="apps/desktop/public/brand/havyn-icon.png"
+          ICONSET="apps/desktop/public/brand/havyn-icon.iconset"
+          ICON_OUT="apps/desktop/public/brand/havyn-icon.icns"
+
+          rm -rf "$ICONSET"
+          mkdir -p "$ICONSET"
+
+          sips -z 16 16 "$ICON_SRC" --out "$ICONSET/icon_16x16.png"
+          sips -z 32 32 "$ICON_SRC" --out "$ICONSET/icon_16x16@2x.png"
+          sips -z 32 32 "$ICON_SRC" --out "$ICONSET/icon_32x32.png"
+          sips -z 64 64 "$ICON_SRC" --out "$ICONSET/icon_32x32@2x.png"
+          sips -z 128 128 "$ICON_SRC" --out "$ICONSET/icon_128x128.png"
+          sips -z 256 256 "$ICON_SRC" --out "$ICONSET/icon_128x128@2x.png"
+          sips -z 256 256 "$ICON_SRC" --out "$ICONSET/icon_256x256.png"
+          sips -z 512 512 "$ICON_SRC" --out "$ICONSET/icon_256x256@2x.png"
+          sips -z 512 512 "$ICON_SRC" --out "$ICONSET/icon_512x512.png"
+          sips -z 1024 1024 "$ICON_SRC" --out "$ICONSET/icon_512x512@2x.png"
+
+          iconutil -c icns "$ICONSET" -o "$ICON_OUT"
+
+      - name: Build macOS DMG
+        run: npm --workspace apps/desktop run dist:mac
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Havyn-macOS-DMG
+          path: apps/desktop/release/*.dmg
+          if-no-files-found: error

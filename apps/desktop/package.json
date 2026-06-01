@@ -1,6 +1,6 @@
 {
   "name": "@havyn/desktop",
-  "version": "0.1.9",
+  "version": "0.1.36",
   "description": "Havyn desktop MVP for private watch parties.",
   "author": "Havyn",
   "private": true,
@@ -11,7 +11,8 @@
     "vite": "vite --host 127.0.0.1",
     "electron": "electron .",
     "build": "vite build",
-    "dist": "npm run build && electron-builder --win nsis"
+    "dist": "npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64"
   },
   "build": {
     "appId": "app.havyn.desktop",
@@ -20,6 +21,7 @@
     "directories": {
       "output": "release"
     },
+    "afterPack": "electron/afterPack.cjs",
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -33,13 +35,33 @@
       "forceCodeSigning": false,
       "verifyUpdateCodeSignature": false
     },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/brand/havyn-icon.icns",
+      "category": "public.app-category.entertainment",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSCameraUsageDescription": "Havyn needs camera access when you join a room video call.",
+        "NSMicrophoneUsageDescription": "Havyn needs microphone access when you join a room voice or video call."
+      }
+    },
+    "dmg": {
+      "artifactName": "Havyn-${version}-macOS-${arch}.${ext}",
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Havyn"
+      "shortcutName": "Havyn",
+      "installerIcon": "public/brand/havyn-icon.ico",
+      "uninstallerIcon": "public/brand/havyn-icon.ico"
     }
   },
   "dependencies": {

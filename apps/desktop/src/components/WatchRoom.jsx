@@ -14,11 +14,48 @@ import ParticipantsPanel from "./ParticipantsPanel";
 import PlaybackControls from "./PlaybackControls";
 import VideoBubbleRail from "./VideoBubbleRail";
 
+const calculateProjectedTime = (state) => {
+  if (!state) return 0;
+  const base = Number(state.currentTime || 0);
+  if (!state.isPlaying) return base;
+  return base + ((Date.now() - Number(state.updatedAt || Date.now())) / 1000) * Number(state.playbackRate || 1);
+};
+
+const sameBrowserPage = (left = "", right = "") => {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    leftUrl.hash = "";
+    rightUrl.hash = "";
+    return leftUrl.toString() === rightUrl.toString();
+  } catch {
+    return Boolean(left && right && left === right);
+  }
+};
+
+const isCurrentPlayableSource = (currentUrl = "", selected = {}) => (
+  sameBrowserPage(currentUrl, selected.url) ||
+  sameBrowserPage(currentUrl, selected.frameUrl)
+);
+
+const playableSourceUrl = (selected = {}) => selected.frameUrl || selected.url || selected.pageUrl || "";
+
+const playbackCommandFromState = (state, reason = "state-sync") => {
+  if (!state) return null;
+  return {
+    action: state.isPlaying ? "play" : "pause",
+    currentTime: calculateProjectedTime(state),
+    playbackRate: state.playbackRate || 1,
+    reason
+  };
+};
+
 export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const { room, socket } = roomState;
   const call = useWebRTC({ socket, room, user });
   const playbackRef = useRef(null);
   const webVideoRef = useRef(null);
+  const watchLayoutRef = useRef(null);
   const autoLoadedMediaUrlRef = useRef("");
   const autoSyncKeyRef = useRef("");
   const autoSyncTimersRef = useRef([]);
@@ -31,6 +68,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const [copyNote, setCopyNote] = useState("");
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [cinemaControlsOpen, setCinemaControlsOpen] = useState(false);
+  const [cinemaChatCollapsed, setCinemaChatCollapsed] = useState(true);
+  const audioNoticeRef = useRef(null);
   const [guideOpen, setGuideOpen] = useState(() => (
     localStorage.getItem("havyn:guide:watch:armed") === "true" ||
     localStorage.getItem("havyn:guide:watch:v1") !== "done"
@@ -43,56 +83,104 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       const enabled = !next;
       if (enabled) document.documentElement.requestFullscreen?.().catch(() => {});
       else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      setCinemaControlsOpen(false);
+      setCinemaChatCollapsed(true);
       return enabled;
     });
   }
 
+  function playMessageBeep() {
+    if (!focusMode) return;
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      const context = audioNoticeRef.current || new AudioContext();
+      audioNoticeRef.current = context;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(740, context.currentTime);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.045, context.currentTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.16);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.18);
+    } catch {
+      // Notification sound is nice-to-have; never let it interrupt the room.
+    }
+  }
+
   function startSideResize(event) {
+    if (event.button !== 0) return;
     event.preventDefault();
-    const move = (moveEvent) => {
-      const nextWidth = Math.round(window.innerWidth - moveEvent.clientX - 14);
-      setSideWidth(Math.min(560, Math.max(260, nextWidth)));
-    };
+    const layoutRect = watchLayoutRef.current?.getBoundingClientRect();
+    const layoutRight = layoutRect?.right || window.innerWidth;
     const stop = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", stop);
+      window.removeEventListener("blur", stop);
+    };
+    const move = (moveEvent) => {
+      if (moveEvent.buttons === 0) {
+        stop();
+        return;
+      }
+      const nextWidth = Math.round(layoutRight - moveEvent.clientX - 8);
+      setSideWidth(Math.min(560, Math.max(260, nextWidth)));
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
+    window.addEventListener("blur", stop);
   }
 
   function startViewerResize(event) {
+    if (event.button !== 0) return;
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = event.currentTarget.parentElement
       ?.querySelector(".browser-shell")
       ?.getBoundingClientRect().height || 560;
+    const stop = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", stop);
+      window.removeEventListener("blur", stop);
+    };
     const move = (moveEvent) => {
+      if (moveEvent.buttons === 0) {
+        stop();
+        return;
+      }
       const nextHeight = Math.round(startHeight + (moveEvent.clientY - startY));
       setViewerHeight(Math.min(window.innerHeight - 180, Math.max(320, nextHeight)));
     };
-    const stop = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", stop);
-    };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
+    window.addEventListener("blur", stop);
   }
 
   function startCallResize(event) {
+    if (event.button !== 0) return;
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = event.currentTarget.previousElementSibling?.getBoundingClientRect().height || callHeight;
-    const move = (moveEvent) => {
-      const nextHeight = Math.round(startHeight + (moveEvent.clientY - startY));
-      setCallHeight(Math.min(420, Math.max(132, nextHeight)));
-    };
     const stop = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", stop);
+      window.removeEventListener("blur", stop);
+    };
+    const move = (moveEvent) => {
+      if (moveEvent.buttons === 0) {
+        stop();
+        return;
+      }
+      const nextHeight = Math.round(startHeight + (moveEvent.clientY - startY));
+      setCallHeight(Math.min(420, Math.max(132, nextHeight)));
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
+    window.addEventListener("blur", stop);
   }
 
   const handleMediaEvent = useCallback((event) => {
@@ -111,8 +199,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
         socket.emit("playback-rate-change", { ...payload, playbackRate: event.media.playbackRate });
       }
     } else if (["play", "pause", "seeked", "ratechange"].includes(event.eventName)) {
-      if (event.video) mediaRef.current?.applyWebPlayback(event.video, playbackApi?.playbackState);
-      else mediaRef.current?.applyPlayback(playbackApi?.playbackState);
+      const command = playbackCommandFromState(playbackApi?.playbackState, "permission-restore");
+      if (event.video) mediaRef.current?.applyWebPlayback(event.video, command);
+      else mediaRef.current?.applyPlayback(command);
     }
 
     if (event.eventName === "ended") {
@@ -154,10 +243,40 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, []);
 
   useEffect(() => {
-    const handleSelected = ({ media: selected }) => {
-      if (selected?.url) {
+    if (!focusMode) return undefined;
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setFocusMode(false);
+      setCinemaControlsOpen(false);
+      setCinemaChatCollapsed(true);
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [focusMode]);
+
+  useEffect(() => {
+    const handleSelected = ({ media: selected, playbackState: selectedState }) => {
+      const playableUrl = playableSourceUrl(selected);
+      if (playableUrl) {
         suppressMediaEventsUntilRef.current = Date.now() + 12_000;
-        media.loadUrl(selected.url);
+        if (isCurrentPlayableSource(media.currentUrl, selected)) {
+          media.scanMedia?.().then(() => {
+            if (selectedState) {
+              media.applyPlayback?.(playbackCommandFromState(selectedState, "media-selected"));
+            }
+          });
+          return;
+        }
+        media.loadUrl(playableUrl).then(() => {
+          window.setTimeout(() => media.scanMedia?.(), 700);
+          window.setTimeout(() => {
+            if (selectedState) {
+              media.applyPlayback?.(playbackCommandFromState(selectedState, "media-selected"));
+            }
+          }, 1400);
+        });
       }
     };
     socket.on("media-selected", handleSelected);
@@ -165,9 +284,14 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, [media, socket]);
 
   useEffect(() => {
-    const activeUrl = playback.playbackState?.activeMediaUrl || room.playbackState?.activeMediaUrl;
+    const activeUrl = playback.playbackState?.activeMediaFrameUrl || playback.playbackState?.activeMediaUrl || room.playbackState?.activeMediaFrameUrl || room.playbackState?.activeMediaUrl;
     if (!activeUrl || activeUrl === autoLoadedMediaUrlRef.current) return;
-    if (media.currentUrl === activeUrl) {
+    const activeState = playback.playbackState || room.playbackState || {};
+    if (isCurrentPlayableSource(media.currentUrl, {
+      url: activeUrl,
+      pageUrl: activeState.activeMediaPageUrl,
+      frameUrl: activeState.activeMediaFrameUrl
+    })) {
       autoLoadedMediaUrlRef.current = activeUrl;
       return;
     }
@@ -178,7 +302,14 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
         socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
       }, 900);
     });
-  }, [media, media.currentUrl, playback.playbackState?.activeMediaUrl, room.playbackState?.activeMediaUrl]);
+  }, [
+    media,
+    media.currentUrl,
+    playback.playbackState?.activeMediaFrameUrl,
+    playback.playbackState?.activeMediaUrl,
+    room.playbackState?.activeMediaFrameUrl,
+    room.playbackState?.activeMediaUrl
+  ]);
 
   useEffect(() => {
     const state = playback.playbackState || room.playbackState;
@@ -199,6 +330,20 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   useEffect(() => () => {
     autoSyncTimersRef.current.forEach((timer) => window.clearTimeout(timer));
   }, []);
+
+  const selectRoomMedia = useCallback((selected) => {
+    const playableUrl = playableSourceUrl(selected);
+    if (!playableUrl) return;
+    suppressMediaEventsUntilRef.current = Date.now() + 12_000;
+    const switchLocalSource = media.loadUrl(playableUrl).then(() => {
+      window.setTimeout(() => media.scanMedia?.(), 700);
+      window.setTimeout(() => media.scanMedia?.(), 1600);
+    });
+
+    Promise.resolve(switchLocalSource).finally(() => {
+      playback.selectMedia({ ...selected, url: playableUrl });
+    });
+  }, [media, playback]);
 
   const inviteLink = `havyn://room/${room.roomId}`;
   const copyRoomCode = async () => {
@@ -243,7 +388,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   ];
 
   return (
-    <main className={`watch-room ${focusMode ? "is-focus-mode" : ""}`}>
+    <main className={`watch-room ${focusMode ? "is-focus-mode" : ""} ${focusMode && !cinemaChatCollapsed ? "is-cinema-chat-open" : ""}`}>
       <header className="room-header">
         <Logo compact />
         <div className="room-title">
@@ -273,30 +418,41 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       {call.callNotice && <div className="toast">{call.callNotice}</div>}
       {roomState.actionNotice && <div className="action-toast">{roomState.actionNotice}</div>}
       {focusMode && (
-        <div className="cinema-top-controls glass">
-          <button className="icon-text" type="button" onClick={toggleFocusMode}><Minimize2 size={16} /> Exit</button>
-          <div>
-            <strong>{room.playbackState?.activeMediaTitle || room.roomName}</strong>
-            <span>{room.playbackMode}</span>
-          </div>
+        <>
           <button
-            className="first-sync-button"
+            className={`cinema-controls-toggle ${cinemaControlsOpen ? "is-open" : ""}`}
             type="button"
-            disabled={!playback.canControl || !playback.playbackState?.activeMediaUrl}
-            onClick={playback.play}
+            onClick={() => setCinemaControlsOpen((value) => !value)}
+            title={cinemaControlsOpen ? "Hide fullscreen controls" : "Show fullscreen controls"}
           >
-            First Sync Play
+            <Maximize2 size={15} />
           </button>
-        </div>
+          <div className={`cinema-top-controls glass ${cinemaControlsOpen ? "is-open" : ""}`}>
+            <button className="icon-text" type="button" onClick={toggleFocusMode}><Minimize2 size={16} /> Exit Fullscreen</button>
+            <div>
+              <strong>{room.playbackState?.activeMediaTitle || "Detected video"}</strong>
+              <span>{room.playbackMode}</span>
+            </div>
+            <button
+              className="first-sync-button"
+              type="button"
+              disabled={!playback.canControl || !playback.playbackState?.activeMediaUrl}
+              onClick={playback.play}
+            >
+              First Sync Play
+            </button>
+          </div>
+        </>
       )}
 
       <section
+        ref={watchLayoutRef}
         className="watch-layout"
-        style={{ gridTemplateColumns: `minmax(520px, 1fr) 8px ${sideWidth}px` }}
+        style={{ gridTemplateColumns: `minmax(520px, 1fr) 5px ${sideWidth}px` }}
       >
         <div
           className="watch-main"
-          style={viewerHeight ? { gridTemplateRows: `${viewerHeight}px auto auto` } : undefined}
+          style={viewerHeight ? { gridTemplateRows: `${viewerHeight}px 3px auto` } : undefined}
         >
           <IntegratedBrowserPanel
             className="guide-browser-target"
@@ -310,6 +466,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
             }}
             onWebMediaEvent={handleMediaEvent}
             webPlaybackState={playback.playbackState}
+            layoutSignal={focusMode ? "cinema" : "normal"}
           />
           <div className="viewer-resize-handle" title="Resize viewing area" onMouseDown={startViewerResize} onDoubleClick={() => setViewerHeight(null)} />
           <div className="viewer-toolbar">
@@ -317,7 +474,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
               <MediaDetectionPanel
                 detectedMedia={media.detectedMedia}
                 canControl={playback.canControl}
-                onSelect={playback.selectMedia}
+                onSelect={selectRoomMedia}
                 onScan={media.scanMedia}
               />
             </div>
@@ -342,7 +499,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
         />
         <aside
           className={`watch-side ${sideWidth < 310 ? "is-compact" : ""}`}
-          style={{ gridTemplateRows: `${callHeight}px 8px minmax(0, 1fr) auto` }}
+          style={{ gridTemplateRows: `${callHeight}px 5px minmax(0, 1fr) auto` }}
         >
           <section className="call-panel glass guide-call-target">
             <div className="side-heading">
@@ -373,11 +530,22 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
               layout={callLayout}
               focusPrimary={focusPrimary}
               floating={focusMode}
+              isPlaying={Boolean(playback.playbackState?.isPlaying || room.playbackState?.isPlaying)}
+              chatOpen={focusMode && !cinemaChatCollapsed}
             />
           </section>
           <div className="side-resize-handle" title="Resize call area" onMouseDown={startCallResize} onDoubleClick={() => setCallHeight(190)} />
           <div className="guide-chat-target side-stack">
-            <ChatPanel messages={roomState.messages} onSend={roomState.sendMessage} className="focus-chat-overlay" />
+            <ChatPanel
+              messages={roomState.messages}
+              onSend={roomState.sendMessage}
+              className="focus-chat-overlay"
+              collapsible={focusMode}
+              collapsed={focusMode && cinemaChatCollapsed}
+              onToggle={() => setCinemaChatCollapsed((value) => !value)}
+              onFreshMessage={playMessageBeep}
+              currentUserId={user.id}
+            />
             <ParticipantsPanel
               participants={room.participants}
               currentUserId={user.id}
