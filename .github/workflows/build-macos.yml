@@ -2,6 +2,14 @@ name: Build Havyn macOS
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-macos.yml"
+      - "apps/desktop/**"
+      - "package.json"
+      - "package-lock.json"
 
 jobs:
   build-macos:
