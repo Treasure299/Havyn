@@ -263,7 +263,8 @@ input:focus, select:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 42px;
+  gap: 20px;
+  padding: 0 clamp(20px, 3.4vw, 42px);
   position: relative;
   z-index: 80;
   overflow: visible;
@@ -281,6 +282,7 @@ input:focus, select:focus {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   z-index: 90;
 }
 
@@ -399,24 +401,29 @@ label {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(430px, 1fr) minmax(340px, 0.78fr);
-  grid-auto-rows: minmax(180px, auto);
-  gap: 14px;
-  padding: 34px 48px;
+  grid-template-columns: minmax(320px, 1fr) minmax(300px, min(42vw, 470px));
+  grid-auto-rows: minmax(156px, auto);
+  gap: 12px;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 30px clamp(18px, 3vw, 48px);
+  overflow-x: hidden;
 }
 
 .dashboard-copy {
   grid-row: span 2;
   align-self: center;
-  padding-right: 18px;
+  min-width: 0;
+  padding-right: clamp(0px, 1.2vw, 18px);
 }
 
 .dashboard-panel, .recent-panel {
   border-radius: 8px;
-  padding: 20px;
+  min-width: 0;
+  padding: clamp(16px, 1.8vw, 20px);
   display: grid;
   align-content: start;
-  gap: 16px;
+  gap: 14px;
 }
 
 .dashboard-panel {
@@ -1046,8 +1053,9 @@ label {
 
 .join-form {
   display: grid;
-  grid-template-columns: 1fr 40px 88px;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 40px minmax(72px, 88px);
+  gap: 8px;
+  min-width: 0;
 }
 
 .join-form-wrap {
@@ -1139,9 +1147,17 @@ label {
 
 .room-title {
   flex: 1;
+  min-width: 0;
   display: grid;
   gap: 2px;
   margin-left: 16px;
+}
+
+.room-title strong,
+.room-title span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .room-title span {
@@ -1150,7 +1166,7 @@ label {
 }
 
 .mode-select {
-  width: 190px;
+  width: clamp(142px, 15vw, 190px);
   height: 40px;
   padding: 0 10px;
 }
@@ -1161,6 +1177,8 @@ label {
   gap: 0;
   padding: 8px;
   overflow: hidden;
+  min-width: 0;
+  width: 100%;
 }
 
 .watch-main {
@@ -1198,10 +1216,12 @@ label {
 }
 
 .watch-side {
+  min-width: 0;
   min-height: 0;
   display: grid;
   gap: 5px;
   padding-left: 3px;
+  overflow: hidden;
 }
 
 .watch-resize-handle::after {
@@ -1300,6 +1320,7 @@ label {
   padding: 4px;
   box-shadow: none;
   background: rgba(255,255,255,0.035);
+  min-width: 0;
 }
 
 .browser-bar.has-test-button {
@@ -1307,7 +1328,7 @@ label {
 }
 
 .browser-bar.electron-browser-bar {
-  grid-template-columns: auto auto auto 1fr repeat(6, auto);
+  grid-template-columns: auto auto auto minmax(0, 1fr) repeat(6, auto);
 }
 
 .browser-bar input {
@@ -1329,7 +1350,7 @@ label {
   width: 100%;
   height: 100%;
   min-width: 0;
-  min-height: 420px;
+  min-height: clamp(300px, 48vh, 420px);
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,0.11);
   background: #050507;
@@ -1541,6 +1562,13 @@ label {
   min-height: 30px;
   padding: 0 10px;
   font-size: 13px;
+}
+
+.user-chip {
+  max-width: min(240px, 26vw);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .media-detection .secondary-button svg {
@@ -2448,12 +2476,13 @@ label {
 }
 
 .watch-room.is-focus-mode .watch-layout {
-  --cinema-chat-width: min(350px, 28vw);
+  --cinema-chat-width: clamp(280px, 24vw, 350px);
   --cinema-chat-gap: 6px;
   height: 100vh;
   display: block;
   position: relative;
   padding: 10px;
+  overflow: hidden;
   background:
     linear-gradient(90deg, rgba(255,255,255,0.025), transparent 38%),
     rgba(255,255,255,0.025);
@@ -2465,6 +2494,7 @@ label {
 .watch-room.is-focus-mode .watch-main {
   width: 100%;
   height: 100%;
+  min-width: 0;
   grid-template-rows: minmax(0, 1fr) 0 auto !important;
   padding-right: 0;
   border-radius: 11px;
@@ -2473,7 +2503,7 @@ label {
 }
 
 .watch-room.is-focus-mode.is-cinema-chat-open .watch-main {
-  width: calc(100% - var(--cinema-chat-width) - var(--cinema-chat-gap));
+  width: max(0px, calc(100% - var(--cinema-chat-width) - var(--cinema-chat-gap)));
 }
 
 .watch-room.is-focus-mode .browser-tabs,
@@ -2565,6 +2595,7 @@ label {
   top: 10px;
   bottom: 10px;
   width: var(--cinema-chat-width);
+  max-width: calc(100vw - 28px);
   height: auto;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
@@ -2707,6 +2738,98 @@ label {
 
 .watch-room.is-focus-mode .message {
   background: rgba(255,255,255,0.055);
+}
+
+@media (max-width: 1180px) {
+  .public-header, .app-header, .room-header {
+    gap: 12px;
+    padding-inline: clamp(14px, 2vw, 24px);
+  }
+
+  .header-actions {
+    gap: 7px;
+  }
+
+  .room-title {
+    margin-left: 8px;
+  }
+
+  .room-header .icon-text {
+    max-width: 142px;
+    overflow: hidden;
+  }
+
+  .room-header .ghost-button {
+    min-width: 74px;
+    padding-inline: 12px;
+  }
+
+  .watch-layout {
+    padding: 6px;
+  }
+
+  .browser-bar.electron-browser-bar {
+    grid-template-columns: auto auto minmax(0, 1fr) repeat(6, auto);
+  }
+
+  .browser-bar.electron-browser-bar > .icon-button:first-child {
+    display: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .room-header {
+    height: 66px;
+  }
+
+  .watch-layout {
+    height: calc(100vh - 66px);
+  }
+
+  .mode-select {
+    width: 128px;
+  }
+
+  .room-title span {
+    font-size: 12px;
+  }
+
+  .room-header .icon-text {
+    max-width: 112px;
+  }
+
+  .browser-bar.electron-browser-bar {
+    grid-template-columns: auto auto minmax(0, 1fr) repeat(4, auto);
+  }
+
+  .browser-bar.electron-browser-bar .icon-button:nth-last-child(5),
+  .browser-bar.electron-browser-bar .icon-button:nth-last-child(4) {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .watch-room.is-focus-mode .watch-layout {
+    --cinema-chat-width: min(300px, 38vw);
+    padding: 7px;
+  }
+
+  .watch-room.is-focus-mode .chat-panel {
+    right: 7px;
+    top: 7px;
+    bottom: 7px;
+    padding: 16px;
+  }
+
+  .watch-room.is-focus-mode .side-stack {
+    right: 7px;
+    top: 7px;
+    bottom: 7px;
+  }
+
+  .watch-room.is-focus-mode .chat-edge-toggle.is-open {
+    right: calc(var(--cinema-chat-width) + 7px);
+  }
 }
 
 .action-toast {

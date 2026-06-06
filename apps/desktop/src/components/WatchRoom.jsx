@@ -448,7 +448,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       <section
         ref={watchLayoutRef}
         className="watch-layout"
-        style={{ gridTemplateColumns: `minmax(520px, 1fr) 5px ${sideWidth}px` }}
+        style={{ gridTemplateColumns: `minmax(0, 1fr) 5px minmax(260px, ${sideWidth}px)` }}
       >
         <div
           className="watch-main"
