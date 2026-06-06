@@ -75,7 +75,7 @@ export class SupabaseRealtimeSocket {
     if (!supabase) return;
     if (event === "room-create") return this.joinRoom({ ...payload, room: null, role: "host", creating: true });
     if (event === "room-join") return this.joinRoom({ ...payload, role: payload.user?.role });
-    if (event === "room-resume") return this.joinRoom({ roomId: payload.room?.roomId, room: payload.room, user: payload.user, role: payload.user?.role });
+    if (event === "room-resume") return this.joinRoom({ roomId: payload.room?.roomId, room: payload.room, user: payload.user, role: payload.user?.role, resuming: true });
     if (event === "room-leave") return this.leaveRoom(payload);
     if (event === "havyn-heartbeat") return this.refreshPresence();
     if (event === "chat-message") return this.sendChat(payload);
@@ -89,10 +89,10 @@ export class SupabaseRealtimeSocket {
     if (event === "call-join") return this.joinCall(payload);
     if (event === "call-leave") return this.leaveCall(payload);
     if (event === "call-status") return this.callStatus(payload);
-    if (["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate"].includes(event)) return this.relay(event, payload);
+    if (["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate", "webrtc-ice-candidates"].includes(event)) return this.relay(event, payload);
   }
 
-  async joinRoom({ roomId, room, roomName, visibility, user, role, creating }) {
+  async joinRoom({ roomId, room, roomName, visibility, user, role, creating, resuming }) {
     if (!roomId || !user?.userId) return;
     await this.closeChannel();
     this.user = user;
@@ -121,7 +121,7 @@ export class SupabaseRealtimeSocket {
       });
       if (creating) {
         this.localEmit("chat-message", systemMessage(`${user.displayName} created the room`));
-      } else {
+      } else if (!resuming) {
         this.broadcast("chat-message", systemMessage(`${user.displayName} joined the room`));
       }
       this.syncPlayback({ roomId });
@@ -153,11 +153,12 @@ export class SupabaseRealtimeSocket {
       "room-state",
       "webrtc-offer",
       "webrtc-answer",
-      "webrtc-ice-candidate"
+      "webrtc-ice-candidate",
+      "webrtc-ice-candidates"
     ];
     broadcastEvents.forEach((event) => {
       this.channel.on("broadcast", { event }, ({ payload }) => {
-        if (["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate"].includes(event) && payload.toUserId !== this.user?.userId) return;
+        if (["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate", "webrtc-ice-candidates"].includes(event) && payload.toUserId !== this.user?.userId) return;
         if (["playback-state-sync", "playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"].includes(event)) {
           this.updatePlaybackState(payload);
         }

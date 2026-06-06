@@ -8,7 +8,44 @@ const PLAYBACK_MODES = {
 };
 
 const PLAYBACK_EVENTS = ["playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"];
-const DIRECT_EVENTS = ["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate"];
+const DIRECT_EVENTS = ["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate", "webrtc-ice-candidates"];
+
+const CHANNEL_GROUPS = {
+  control: "control",
+  chat: "chat",
+  playback: "playback",
+  call: "call",
+  presence: "presence"
+};
+
+const EVENT_GROUPS = {
+  "chat-message": CHANNEL_GROUPS.chat,
+  "room-action": CHANNEL_GROUPS.chat,
+  "permission-denied": CHANNEL_GROUPS.control,
+  "room-meta": CHANNEL_GROUPS.control,
+  "room-state": CHANNEL_GROUPS.control,
+  "presence-patch": CHANNEL_GROUPS.presence,
+  "media-detected": CHANNEL_GROUPS.playback,
+  "media-selected": CHANNEL_GROUPS.playback,
+  "participant-media-ready": CHANNEL_GROUPS.playback,
+  "playback-sync-request": CHANNEL_GROUPS.playback,
+  "playback-state-sync": CHANNEL_GROUPS.playback,
+  "playback-play": CHANNEL_GROUPS.playback,
+  "playback-pause": CHANNEL_GROUPS.playback,
+  "playback-seek": CHANNEL_GROUPS.playback,
+  "playback-rate-change": CHANNEL_GROUPS.playback,
+  "playback-drift-correction": CHANNEL_GROUPS.playback,
+  "media-ended": CHANNEL_GROUPS.playback,
+  "call-users": CHANNEL_GROUPS.call,
+  "call-user-joined": CHANNEL_GROUPS.call,
+  "call-full": CHANNEL_GROUPS.call,
+  "call-status": CHANNEL_GROUPS.call,
+  "user-left-call": CHANNEL_GROUPS.call,
+  "webrtc-offer": CHANNEL_GROUPS.call,
+  "webrtc-answer": CHANNEL_GROUPS.call,
+  "webrtc-ice-candidate": CHANNEL_GROUPS.call,
+  "webrtc-ice-candidates": CHANNEL_GROUPS.call
+};
 
 function projectedPlaybackState(state, at = Date.now()) {
   if (!state) return state;
@@ -40,6 +77,10 @@ function roomChannelName(roomId) {
   return `havyn:room:${roomId}`;
 }
 
+function groupedRoomChannelName(roomId, group) {
+  return `${roomChannelName(roomId)}:${group}`;
+}
+
 function isValidPlaybackMode(playbackMode) {
   return Object.values(PLAYBACK_MODES).includes(playbackMode);
 }
@@ -60,9 +101,15 @@ export class AblyRealtimeSocket {
     this.user = null;
     this.client = null;
     this.channel = null;
+    this.channels = new Map();
+    this.channelSubscriptions = [];
+    this.presenceSubscription = null;
     this.presenceItems = [];
+    this.lastPresenceSignature = "";
+    this.lastPresenceUpdateAt = 0;
     this.joinedCall = false;
     this.clientUserId = null;
+    this.publishCounters = new Map();
     this.io = {
       on: (event, handler) => this.on(event, handler),
       off: (event, handler) => this.off(event, handler)
@@ -111,7 +158,7 @@ export class AblyRealtimeSocket {
   async emit(event, payload = {}) {
     if (event === "room-create") return this.joinRoom({ ...payload, room: null, role: "host", creating: true });
     if (event === "room-join") return this.joinRoom({ ...payload, role: payload.user?.role });
-    if (event === "room-resume") return this.joinRoom({ roomId: payload.room?.roomId, room: payload.room, user: payload.user, role: payload.user?.role });
+    if (event === "room-resume") return this.joinRoom({ roomId: payload.room?.roomId, room: payload.room, user: payload.user, role: payload.user?.role, resuming: true });
     if (event === "room-leave") return this.leaveRoom(payload);
     if (event === "havyn-heartbeat") return this.refreshPresence();
     if (event === "chat-message") return this.sendChat(payload);
@@ -128,7 +175,7 @@ export class AblyRealtimeSocket {
     if (DIRECT_EVENTS.includes(event)) return this.relay(event, payload);
   }
 
-  async joinRoom({ roomId, room, roomName, visibility, user, role, creating }) {
+  async joinRoom({ roomId, room, roomName, visibility, user, role, creating, resuming }) {
     if (!roomId || !user?.userId) return;
     const client = this.ensureClient(user);
     if (!client) return;
@@ -148,15 +195,19 @@ export class AblyRealtimeSocket {
     if (!this.room.playbackState.controllerUserId) this.room.playbackState.controllerUserId = this.room.hostUserId;
 
     this.channel = client.channels.get(roomChannelName(roomId));
+    this.channels = new Map(Object.values(CHANNEL_GROUPS).map((group) => [
+      group,
+      client.channels.get(groupedRoomChannelName(roomId, group))
+    ]));
     this.bindRoomChannel();
-    await this.channel.attach();
+    await Promise.all(Array.from(this.channels.values()).map((channel) => channel.attach()));
     await this.refreshPresence({
       role: role || (this.room.hostUserId === user.userId ? "host" : "viewer"),
       displayName: user.displayName
     });
     if (creating) {
       this.localEmit("chat-message", systemMessage(`${user.displayName} created the room`));
-    } else {
+    } else if (!resuming) {
       await this.broadcast("chat-message", systemMessage(`${user.displayName} joined the room`));
     }
     await this.syncPresence();
@@ -165,28 +216,11 @@ export class AblyRealtimeSocket {
   }
 
   bindRoomChannel() {
-    const events = [
-      "chat-message",
-      "room-action",
-      "permission-denied",
-      "playback-sync-request",
-      "playback-state-sync",
-      ...PLAYBACK_EVENTS,
-      "media-selected",
-      "media-detected",
-      "participant-media-ready",
-      "call-users",
-      "call-user-joined",
-      "call-full",
-      "call-status",
-      "user-left-call",
-      "presence-patch",
-      "room-meta",
-      "room-state",
-      ...DIRECT_EVENTS
-    ];
+    const events = Object.keys(EVENT_GROUPS);
     events.forEach((event) => {
-      this.channel.subscribe(event, (message) => {
+      const channel = this.channelForEvent(event);
+      if (!channel) return;
+      const handler = (message) => {
         const payload = message.data;
         if (DIRECT_EVENTS.includes(event) && payload.toUserId !== this.user?.userId) return;
         if (event === "playback-sync-request") {
@@ -214,27 +248,43 @@ export class AblyRealtimeSocket {
           return;
         }
         this.localEmit(event, payload);
-      });
+      };
+      channel.subscribe(event, handler);
+      this.channelSubscriptions.push({ channel, event, handler });
     });
-    this.channel.presence.subscribe(() => this.syncPresence());
+    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
+    this.presenceSubscription = () => this.syncPresence();
+    presenceChannel?.presence.subscribe(this.presenceSubscription);
   }
 
   async closeChannel() {
-    if (!this.channel) return;
-    await this.channel.presence.leave().catch(() => {});
-    await this.channel.detach().catch(() => {});
+    if (!this.channel && this.channels.size === 0) return;
+    this.channelSubscriptions.forEach(({ channel, event, handler }) => {
+      channel.unsubscribe(event, handler);
+    });
+    this.channelSubscriptions = [];
+    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
+    if (presenceChannel && this.presenceSubscription) {
+      presenceChannel.presence.unsubscribe(this.presenceSubscription);
+    }
+    this.presenceSubscription = null;
+    await presenceChannel?.presence.leave().catch(() => {});
+    await Promise.all(Array.from(this.channels.values()).map((channel) => channel.detach().catch(() => {})));
     this.channel = null;
+    this.channels.clear();
     this.presenceItems = [];
   }
 
   async syncPresence() {
-    if (!this.channel) return;
-    this.presenceItems = await this.channel.presence.get().catch(() => []);
+    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
+    if (!presenceChannel) return;
+    this.presenceItems = await presenceChannel.presence.get().catch(() => []);
     this.emitRoomState();
   }
 
   async refreshPresence(patch = {}) {
-    if (!this.channel || !this.user || !this.room) return;
+    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
+    if (!presenceChannel || !this.user || !this.room) return;
     const existing = this.currentParticipant(this.user.userId) || {};
     const data = {
       userId: this.user.userId,
@@ -249,7 +299,22 @@ export class AblyRealtimeSocket {
       joinedAt: existing.joinedAt || new Date().toISOString(),
       lastSeenAt: new Date().toISOString()
     };
-    await this.channel.presence.update(data).catch(() => this.channel.presence.enter(data));
+    const signature = JSON.stringify({
+      userId: data.userId,
+      displayName: data.displayName,
+      role: data.role,
+      mediaReady: data.mediaReady,
+      callStatus: data.callStatus,
+      muted: data.muted,
+      cameraOff: data.cameraOff
+    });
+    const now = Date.now();
+    if (signature === this.lastPresenceSignature && now - this.lastPresenceUpdateAt < 8_000) {
+      return;
+    }
+    this.lastPresenceSignature = signature;
+    this.lastPresenceUpdateAt = now;
+    await presenceChannel.presence.update(data).catch(() => presenceChannel.presence.enter(data));
     this.presenceItems = this.presenceItems.filter((item) => item.clientId !== this.user.userId);
     this.presenceItems.push({ clientId: this.user.userId, data });
     this.emitRoomState();
@@ -318,15 +383,41 @@ export class AblyRealtimeSocket {
   }
 
   async broadcast(event, payload) {
-    if (!this.channel) return;
+    const channel = this.channelForEvent(event);
+    if (!channel) return;
     const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : { value: payload };
-    await this.channel.publish(event, {
+    this.recordPublish(event);
+    await channel.publish(event, {
       ...body,
       roomId: body.roomId || this.room?.roomId,
       senderUserId: body.senderUserId || this.user?.userId
     }).catch((error) => {
       console.warn(`[Havyn] Ably signal failed for ${event}`, error);
     });
+  }
+
+  channelForEvent(event) {
+    return this.channelForGroup(EVENT_GROUPS[event] || CHANNEL_GROUPS.control);
+  }
+
+  channelForGroup(group) {
+    return this.channels.get(group) || this.channel;
+  }
+
+  recordPublish(event) {
+    const second = Math.floor(Date.now() / 1000);
+    const key = `${second}:${event}`;
+    const count = (this.publishCounters.get(key) || 0) + 1;
+    this.publishCounters.set(key, count);
+    if (count === 20) {
+      console.warn(`[Havyn] High realtime publish rate for ${event}. This can trigger Ably limits.`);
+    }
+    if (this.publishCounters.size > 250) {
+      const cutoff = second - 10;
+      this.publishCounters.forEach((_value, itemKey) => {
+        if (Number(itemKey.split(":")[0]) < cutoff) this.publishCounters.delete(itemKey);
+      });
+    }
   }
 
   async leaveRoom({ roomId, userId }) {

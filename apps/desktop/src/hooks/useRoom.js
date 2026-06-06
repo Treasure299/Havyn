@@ -11,6 +11,7 @@ export function useRoom(user) {
   const [actionNotice, setActionNotice] = useState("");
   const roomRef = useRef(null);
   const leavingRoomIdRef = useRef(null);
+  const seenMessageIdsRef = useRef(new Set());
 
   useEffect(() => {
     roomRef.current = room;
@@ -100,6 +101,12 @@ export function useRoom(user) {
       setRoom(nextRoom);
     };
     const handleMessage = (message) => {
+      const messageKey = message?.id || `${message?.displayName || ""}:${message?.message || ""}:${message?.createdAt || ""}`;
+      if (seenMessageIdsRef.current.has(messageKey)) return;
+      seenMessageIdsRef.current.add(messageKey);
+      if (seenMessageIdsRef.current.size > 250) {
+        seenMessageIdsRef.current = new Set(Array.from(seenMessageIdsRef.current).slice(-160));
+      }
       setMessages((items) => [...items.slice(-120), message]);
       if (/joined the room|created the room/i.test(message.message || "")) playTone("join");
       else if (message.userId !== userId) playTone("message");
@@ -185,6 +192,7 @@ export function useRoom(user) {
       visibility,
       user: { userId: user.id, displayName: user.displayName }
     });
+    seenMessageIdsRef.current.clear();
 
     if (supabase) {
       await supabase.from("profiles").upsert(
@@ -228,6 +236,7 @@ export function useRoom(user) {
       room: roomSnapshot,
       user: { userId: user.id, displayName: user.displayName }
     });
+    seenMessageIdsRef.current.clear();
     if (supabase) {
       await supabase.from("profiles").upsert(
         { id: user.id, display_name: user.displayName },
@@ -247,6 +256,7 @@ export function useRoom(user) {
     socket.emit("room-leave", { roomId: room.roomId, userId: user.id });
     setRoom(null);
     setMessages([]);
+    seenMessageIdsRef.current.clear();
   }
 
   function sendMessage(message) {

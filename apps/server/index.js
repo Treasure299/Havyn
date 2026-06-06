@@ -271,6 +271,10 @@ io.on("connection", (socket) => {
     relayToUser(roomId, toUserId, "webrtc-ice-candidate", { fromUserId, candidate });
   });
 
+  socket.on("webrtc-ice-candidates", ({ roomId, toUserId, fromUserId, candidates }) => {
+    relayToUser(roomId, toUserId, "webrtc-ice-candidates", { fromUserId, candidates });
+  });
+
   socket.on("disconnect", () => {
     const callRemoval = removeSocketFromCalls(socket.id);
     if (callRemoval) {

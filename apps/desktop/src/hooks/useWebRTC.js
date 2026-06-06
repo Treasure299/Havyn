@@ -65,6 +65,8 @@ export function useWebRTC({ socket, room, user }) {
   const joinedRef = useRef(joined);
   const reconnectTimersRef = useRef(new Map());
   const negotiateTimersRef = useRef(new Map());
+  const iceCandidateQueuesRef = useRef(new Map());
+  const iceCandidateTimersRef = useRef(new Map());
   const createPeerRef = useRef(null);
 
   useEffect(() => {
@@ -101,6 +103,10 @@ export function useWebRTC({ socket, room, user }) {
     const negotiateTimer = negotiateTimersRef.current.get(peerUserId);
     if (negotiateTimer) window.clearTimeout(negotiateTimer);
     negotiateTimersRef.current.delete(peerUserId);
+    const iceTimer = iceCandidateTimersRef.current.get(peerUserId);
+    if (iceTimer) window.clearTimeout(iceTimer);
+    iceCandidateTimersRef.current.delete(peerUserId);
+    iceCandidateQueuesRef.current.delete(peerUserId);
     const peer = peersRef.current.get(peerUserId);
     if (peer) {
       peer.onconnectionstatechange = null;
@@ -110,6 +116,34 @@ export function useWebRTC({ socket, room, user }) {
     peersRef.current.delete(peerUserId);
     setStreams((items) => items.filter((item) => item.userId !== peerUserId));
   }, []);
+
+  const flushIceCandidates = useCallback((peerUserId) => {
+    const candidates = iceCandidateQueuesRef.current.get(peerUserId) || [];
+    iceCandidateQueuesRef.current.delete(peerUserId);
+    const timer = iceCandidateTimersRef.current.get(peerUserId);
+    if (timer) window.clearTimeout(timer);
+    iceCandidateTimersRef.current.delete(peerUserId);
+    if (!candidates.length || !room?.roomId) return;
+    socket.emit("webrtc-ice-candidates", {
+      roomId: room.roomId,
+      fromUserId: user.id,
+      toUserId: peerUserId,
+      candidates
+    });
+  }, [room?.roomId, socket, user.id]);
+
+  const queueIceCandidate = useCallback((peerUserId, candidate) => {
+    const queued = iceCandidateQueuesRef.current.get(peerUserId) || [];
+    queued.push(candidate);
+    iceCandidateQueuesRef.current.set(peerUserId, queued);
+    if (queued.length >= 8) {
+      flushIceCandidates(peerUserId);
+      return;
+    }
+    if (iceCandidateTimersRef.current.has(peerUserId)) return;
+    const timer = window.setTimeout(() => flushIceCandidates(peerUserId), 120);
+    iceCandidateTimersRef.current.set(peerUserId, timer);
+  }, [flushIceCandidates]);
 
   const sendOffer = useCallback(async (peerUserId) => {
     const peer = peersRef.current.get(peerUserId);
@@ -187,12 +221,7 @@ export function useWebRTC({ socket, room, user }) {
 
     peer.onicecandidate = (event) => {
       if (event.candidate) {
-        socket.emit("webrtc-ice-candidate", {
-          roomId: room.roomId,
-          fromUserId: user.id,
-          toUserId: peerUserId,
-          candidate: event.candidate
-        });
+        queueIceCandidate(peerUserId, event.candidate);
       }
     };
 
@@ -211,7 +240,7 @@ export function useWebRTC({ socket, room, user }) {
 
     peersRef.current.set(peerUserId, peer);
     return peer;
-  }, [publishRemoteStream, room?.roomId, schedulePeerRepair, socket, user.id]);
+  }, [publishRemoteStream, queueIceCandidate, schedulePeerRepair]);
 
   createPeerRef.current = createPeer;
 
@@ -285,6 +314,9 @@ export function useWebRTC({ socket, room, user }) {
     reconnectTimersRef.current.clear();
     negotiateTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     negotiateTimersRef.current.clear();
+    iceCandidateTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    iceCandidateTimersRef.current.clear();
+    iceCandidateQueuesRef.current.clear();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
     peersRef.current.forEach((peer) => {
@@ -401,6 +433,14 @@ export function useWebRTC({ socket, room, user }) {
       if (peer && candidate) await peer.addIceCandidate(new RTCIceCandidate(candidate));
     };
 
+    const handleIceBatch = async ({ fromUserId, candidates }) => {
+      const peer = peersRef.current.get(fromUserId);
+      if (!peer || !Array.isArray(candidates)) return;
+      for (const candidate of candidates) {
+        if (candidate) await peer.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+      }
+    };
+
     const handleUserLeft = ({ userId }) => closePeer(userId);
     const handleCallFull = ({ message }) => {
       setCallError(message);
@@ -422,6 +462,7 @@ export function useWebRTC({ socket, room, user }) {
     socket.on("webrtc-offer", handleOffer);
     socket.on("webrtc-answer", handleAnswer);
     socket.on("webrtc-ice-candidate", handleIce);
+    socket.on("webrtc-ice-candidates", handleIceBatch);
     socket.on("user-left-call", handleUserLeft);
     socket.on("call-full", handleCallFull);
     socket.io.on("reconnect", handleReconnect);
@@ -432,6 +473,7 @@ export function useWebRTC({ socket, room, user }) {
       socket.off("webrtc-offer", handleOffer);
       socket.off("webrtc-answer", handleAnswer);
       socket.off("webrtc-ice-candidate", handleIce);
+      socket.off("webrtc-ice-candidates", handleIceBatch);
       socket.off("user-left-call", handleUserLeft);
       socket.off("call-full", handleCallFull);
       socket.io.off("reconnect", handleReconnect);
@@ -441,6 +483,7 @@ export function useWebRTC({ socket, room, user }) {
   useEffect(() => () => {
     reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     negotiateTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    iceCandidateTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     peersRef.current.forEach((peer) => {
       peer.onconnectionstatechange = null;
