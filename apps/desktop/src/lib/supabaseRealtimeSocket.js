@@ -16,28 +16,6 @@ function projectedPlaybackState(state, at = Date.now()) {
   };
 }
 
-function rebaseIncomingPlaybackState(state) {
-  if (!state || typeof state !== "object") return state;
-  return {
-    ...state,
-    updatedAt: Date.now()
-  };
-}
-
-function rebaseIncomingPlaybackPayload(event, payload) {
-  if (!payload || typeof payload !== "object") return payload;
-  if (event === "media-selected" && payload.playbackState) {
-    return {
-      ...payload,
-      playbackState: rebaseIncomingPlaybackState(payload.playbackState)
-    };
-  }
-  if (["playback-state-sync", "playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"].includes(event)) {
-    return rebaseIncomingPlaybackState(payload);
-  }
-  return payload;
-}
-
 function defaultPlaybackState(hostUserId) {
   return {
     isPlaying: false,
@@ -179,8 +157,7 @@ export class SupabaseRealtimeSocket {
       "webrtc-ice-candidates"
     ];
     broadcastEvents.forEach((event) => {
-      this.channel.on("broadcast", { event }, ({ payload: incomingPayload }) => {
-        const payload = rebaseIncomingPlaybackPayload(event, incomingPayload);
+      this.channel.on("broadcast", { event }, ({ payload }) => {
         if (["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate", "webrtc-ice-candidates"].includes(event) && payload.toUserId !== this.user?.userId) return;
         if (["playback-state-sync", "playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"].includes(event)) {
           this.updatePlaybackState(payload);
@@ -336,10 +313,8 @@ export class SupabaseRealtimeSocket {
 
   canControl(userId) {
     const participant = this.currentParticipant(userId);
-    if (!this.room) return false;
+    if (!this.room || !participant) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.EVERYONE) return true;
-    if (this.room.hostUserId === userId) return true;
-    if (!participant) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.HOST_AND_COHOSTS) return ["host", "cohost"].includes(participant.role);
     return participant.role === "host";
   }
