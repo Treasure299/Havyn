@@ -5,7 +5,8 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   const [playbackState, setPlaybackState] = useState(null);
   const localCurrentTimeRef = useRef(localCurrentTime);
   const playbackStateRef = useRef(null);
-  const role = room?.participants?.find((participant) => participant.userId === user.id)?.role || "viewer";
+  const role = room?.participants?.find((participant) => participant.userId === user.id)?.role ||
+    (room?.hostUserId === user.id ? "host" : "viewer");
 
   useEffect(() => {
     localCurrentTimeRef.current = localCurrentTime;
@@ -14,9 +15,10 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   const canControl = useMemo(() => {
     if (!room) return false;
     if (room.playbackMode === "everyone") return true;
+    if (room.hostUserId === user.id) return true;
     if (room.playbackMode === "host-and-cohosts") return ["host", "cohost"].includes(role);
     return role === "host";
-  }, [room, role]);
+  }, [room, role, user.id]);
 
   useEffect(() => {
     playbackStateRef.current = playbackState || room?.playbackState || null;
@@ -37,8 +39,10 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     const incomingUpdatedAt = Number(state.updatedAt || 0);
     const currentUpdatedAt = Number(playbackStateRef.current?.updatedAt || 0);
     const isCorrectionForMe = state.correctedUserId === user.id;
+    const isExplicitPlaybackAction = ["play", "pause", "seek", "rate-change", "ended"].includes(action);
 
     if (
+      !isExplicitPlaybackAction &&
       incomingUpdatedAt &&
       currentUpdatedAt &&
       incomingUpdatedAt + 250 < currentUpdatedAt &&

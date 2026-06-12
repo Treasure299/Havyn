@@ -57,6 +57,33 @@ function projectedPlaybackState(state, at = Date.now()) {
   };
 }
 
+function rebaseIncomingPlaybackState(state, receivedAt = Date.now()) {
+  if (!state || typeof state !== "object") return state;
+  const playbackRate = Number(state.playbackRate || 1);
+  const transitSeconds = state.isPlaying
+    ? Math.max(0, (Date.now() - Number(receivedAt || Date.now())) / 1000) * playbackRate
+    : 0;
+  return {
+    ...state,
+    currentTime: Number(state.currentTime || 0) + transitSeconds,
+    updatedAt: Date.now()
+  };
+}
+
+function rebaseIncomingPlaybackPayload(event, payload, receivedAt) {
+  if (!payload || typeof payload !== "object") return payload;
+  if (event === "media-selected" && payload.playbackState) {
+    return {
+      ...payload,
+      playbackState: rebaseIncomingPlaybackState(payload.playbackState, receivedAt)
+    };
+  }
+  if (["playback-state-sync", ...PLAYBACK_EVENTS].includes(event)) {
+    return rebaseIncomingPlaybackState(payload, receivedAt);
+  }
+  return payload;
+}
+
 function defaultPlaybackState(hostUserId) {
   return {
     isPlaying: false,
@@ -225,7 +252,7 @@ export class AblyRealtimeSocket {
       const channels = this.subscribeChannelsForEvent(event);
       channels.forEach((channel) => {
         const handler = (message) => {
-          const payload = message.data;
+          const payload = rebaseIncomingPlaybackPayload(event, message.data, message.timestamp);
           const fromLegacyChannel = channel.name === this.channel?.name;
           if (this.isDuplicateSignal(payload)) return;
           if (fromLegacyChannel && message.clientId !== this.user?.userId) {
@@ -534,8 +561,10 @@ export class AblyRealtimeSocket {
 
   canControl(userId) {
     const participant = this.currentParticipant(userId);
-    if (!this.room || !participant) return false;
+    if (!this.room) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.EVERYONE) return true;
+    if (this.room.hostUserId === userId) return true;
+    if (!participant) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.HOST_AND_COHOSTS) return ["host", "cohost"].includes(participant.role);
     return participant.role === "host";
   }
