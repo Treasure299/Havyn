@@ -12,6 +12,7 @@ import MediaDetectionPanel from "./MediaDetectionPanel";
 import NotificationBell from "./NotificationBell";
 import ParticipantsPanel from "./ParticipantsPanel";
 import PlaybackControls from "./PlaybackControls";
+import VersionNotice from "./VersionNotice";
 import VideoBubbleRail from "./VideoBubbleRail";
 
 const calculateProjectedTime = (state) => {
@@ -408,6 +409,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           </select>
           <button className="icon-text" onClick={copyRoomCode} title="Copy room code"><Copy size={17} /> {room.roomId}</button>
           {copyNote && <span className="header-note">{copyNote}</span>}
+          <VersionNotice compact />
           <button className="icon-button" onClick={roomState.leaveRoom} title="Leave room"><LogOut size={18} /></button>
           <button className="ghost-button" onClick={onSignOut}>Sign out</button>
         </div>

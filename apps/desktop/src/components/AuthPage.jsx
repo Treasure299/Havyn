@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, LogIn } from "lucide-react";
 import BackgroundVideo from "./BackgroundVideo";
 import Logo from "./Logo";
+import VersionNotice from "./VersionNotice";
 
 export default function AuthPage({ auth, onBack }) {
   const [mode, setMode] = useState("signin");
@@ -38,6 +39,7 @@ export default function AuthPage({ auth, onBack }) {
       <button className="icon-text" onClick={onBack}><ArrowLeft size={18} /> Back</button>
       <form className="auth-card glass" onSubmit={submit}>
         <Logo />
+        <VersionNotice />
         <h2>{mode === "signup" ? "Create your Havyn account" : "Welcome back"}</h2>
         {mode === "signup" && (
           <>

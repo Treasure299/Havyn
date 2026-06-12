@@ -7,6 +7,7 @@ import InteractiveGuide from "./InteractiveGuide";
 import JoinRoomForm from "./JoinRoomForm";
 import Logo from "./Logo";
 import NotificationBell from "./NotificationBell";
+import VersionNotice from "./VersionNotice";
 
 function relativeTime(value) {
   if (!value) return "No recent activity";
@@ -130,6 +131,7 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
               {user.displayName}{user.username ? ` @${user.username}` : ""}
             </button>
           </div>
+          <VersionNotice compact />
           <button className="icon-button" onClick={onSignOut} title="Sign out"><LogOut size={18} /></button>
         </div>
       </header>
