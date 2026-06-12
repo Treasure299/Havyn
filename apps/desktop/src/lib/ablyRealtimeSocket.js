@@ -105,6 +105,10 @@ export class AblyRealtimeSocket {
     this.channelSubscriptions = [];
     this.presenceSubscription = null;
     this.presenceItems = [];
+    this.splitPresenceItems = [];
+    this.legacyPresenceItems = [];
+    this.seenSignalIds = new Set();
+    this.legacyBridgeUntil = 0;
     this.lastPresenceSignature = "";
     this.lastPresenceUpdateAt = 0;
     this.joinedCall = false;
@@ -200,7 +204,7 @@ export class AblyRealtimeSocket {
       client.channels.get(groupedRoomChannelName(roomId, group))
     ]));
     this.bindRoomChannel();
-    await Promise.all(Array.from(this.channels.values()).map((channel) => channel.attach()));
+    await Promise.all(this.allRoomChannels().map((channel) => channel.attach()));
     await this.refreshPresence({
       role: role || (this.room.hostUserId === user.userId ? "host" : "viewer"),
       displayName: user.displayName
@@ -218,43 +222,49 @@ export class AblyRealtimeSocket {
   bindRoomChannel() {
     const events = Object.keys(EVENT_GROUPS);
     events.forEach((event) => {
-      const channel = this.channelForEvent(event);
-      if (!channel) return;
-      const handler = (message) => {
-        const payload = message.data;
-        if (DIRECT_EVENTS.includes(event) && payload.toUserId !== this.user?.userId) return;
-        if (event === "playback-sync-request") {
-          this.answerPlaybackSync(payload);
-          return;
-        }
-        if (event === "playback-state-sync" && payload.targetUserId && payload.targetUserId !== this.user?.userId) return;
-        if (["playback-state-sync", ...PLAYBACK_EVENTS].includes(event)) {
-          this.updatePlaybackState(payload);
-        }
-        if (event === "media-selected" && payload?.playbackState) {
-          this.updatePlaybackState(payload.playbackState);
-        }
-        if (event === "presence-patch") {
-          if (payload.targetUserId === this.user?.userId) this.refreshPresence(payload.patch);
-          return;
-        }
-        if (event === "room-meta") {
-          this.room = { ...this.room, ...payload };
-          this.emitRoomState();
-          return;
-        }
-        if (event === "room-state") {
-          this.applyRoomState(payload);
-          return;
-        }
-        this.localEmit(event, payload);
-      };
-      channel.subscribe(event, handler);
-      this.channelSubscriptions.push({ channel, event, handler });
+      const channels = this.subscribeChannelsForEvent(event);
+      channels.forEach((channel) => {
+        const handler = (message) => {
+          const payload = message.data;
+          const fromLegacyChannel = channel.name === this.channel?.name;
+          if (this.isDuplicateSignal(payload)) return;
+          if (fromLegacyChannel && message.clientId !== this.user?.userId) {
+            this.enableLegacyBridge();
+          }
+          if (DIRECT_EVENTS.includes(event) && payload.toUserId !== this.user?.userId) return;
+          if (event === "playback-sync-request") {
+            this.answerPlaybackSync(payload);
+            return;
+          }
+          if (event === "playback-state-sync" && payload.targetUserId && payload.targetUserId !== this.user?.userId) return;
+          if (["playback-state-sync", ...PLAYBACK_EVENTS].includes(event)) {
+            this.updatePlaybackState(payload);
+          }
+          if (event === "media-selected" && payload?.playbackState) {
+            this.updatePlaybackState(payload.playbackState);
+          }
+          if (event === "presence-patch") {
+            if (payload.targetUserId === this.user?.userId) this.refreshPresence(payload.patch);
+            return;
+          }
+          if (event === "room-meta") {
+            this.room = { ...this.room, ...payload };
+            this.emitRoomState();
+            return;
+          }
+          if (event === "room-state") {
+            this.applyRoomState(payload);
+            return;
+          }
+          this.localEmit(event, payload);
+        };
+        channel.subscribe(event, handler);
+        this.channelSubscriptions.push({ channel, event, handler });
+      });
     });
-    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
+    const presenceChannels = this.presenceChannels();
     this.presenceSubscription = () => this.syncPresence();
-    presenceChannel?.presence.subscribe(this.presenceSubscription);
+    presenceChannels.forEach((channel) => channel.presence.subscribe(this.presenceSubscription));
   }
 
   async closeChannel() {
@@ -263,28 +273,43 @@ export class AblyRealtimeSocket {
       channel.unsubscribe(event, handler);
     });
     this.channelSubscriptions = [];
-    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
-    if (presenceChannel && this.presenceSubscription) {
-      presenceChannel.presence.unsubscribe(this.presenceSubscription);
+    const presenceChannels = this.presenceChannels();
+    if (this.presenceSubscription) {
+      presenceChannels.forEach((channel) => channel.presence.unsubscribe(this.presenceSubscription));
     }
     this.presenceSubscription = null;
-    await presenceChannel?.presence.leave().catch(() => {});
-    await Promise.all(Array.from(this.channels.values()).map((channel) => channel.detach().catch(() => {})));
+    await Promise.all(this.primaryPresenceChannels().map((channel) => channel.presence.leave().catch(() => {})));
+    await Promise.all(this.allRoomChannels().map((channel) => channel.detach().catch(() => {})));
     this.channel = null;
     this.channels.clear();
     this.presenceItems = [];
+    this.splitPresenceItems = [];
+    this.legacyPresenceItems = [];
+    this.seenSignalIds.clear();
+    this.legacyBridgeUntil = 0;
   }
 
   async syncPresence() {
-    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
-    if (!presenceChannel) return;
-    this.presenceItems = await presenceChannel.presence.get().catch(() => []);
+    const splitPresenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
+    const legacyPresenceChannel = this.channel;
+    const [splitItems, legacyItems] = await Promise.all([
+      splitPresenceChannel?.presence.get().catch(() => []) || [],
+      legacyPresenceChannel && legacyPresenceChannel.name !== splitPresenceChannel?.name
+        ? legacyPresenceChannel.presence.get().catch(() => [])
+        : []
+    ]);
+    this.splitPresenceItems = splitItems;
+    this.legacyPresenceItems = legacyItems;
+    this.presenceItems = [...splitItems, ...legacyItems];
+    if (legacyItems.some((item) => item.clientId !== this.user?.userId)) {
+      this.enableLegacyBridge();
+    }
     this.emitRoomState();
   }
 
   async refreshPresence(patch = {}) {
-    const presenceChannel = this.channelForGroup(CHANNEL_GROUPS.presence);
-    if (!presenceChannel || !this.user || !this.room) return;
+    const presenceChannels = this.primaryPresenceChannels();
+    if (!presenceChannels.length || !this.user || !this.room) return;
     const existing = this.currentParticipant(this.user.userId) || {};
     const data = {
       userId: this.user.userId,
@@ -314,7 +339,9 @@ export class AblyRealtimeSocket {
     }
     this.lastPresenceSignature = signature;
     this.lastPresenceUpdateAt = now;
-    await presenceChannel.presence.update(data).catch(() => presenceChannel.presence.enter(data));
+    await Promise.all(presenceChannels.map((channel) => (
+      channel.presence.update(data).catch(() => channel.presence.enter(data))
+    )));
     this.presenceItems = this.presenceItems.filter((item) => item.clientId !== this.user.userId);
     this.presenceItems.push({ clientId: this.user.userId, data });
     this.emitRoomState();
@@ -383,26 +410,88 @@ export class AblyRealtimeSocket {
   }
 
   async broadcast(event, payload) {
-    const channel = this.channelForEvent(event);
-    if (!channel) return;
+    const channels = this.publishChannelsForEvent(event);
+    if (!channels.length) return;
     const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : { value: payload };
-    this.recordPublish(event);
-    await channel.publish(event, {
+    const signalId = body.signalId || crypto.randomUUID();
+    const outbound = {
       ...body,
+      signalId,
       roomId: body.roomId || this.room?.roomId,
       senderUserId: body.senderUserId || this.user?.userId
-    }).catch((error) => {
-      console.warn(`[Havyn] Ably signal failed for ${event}`, error);
-    });
+    };
+    this.recordPublish(event);
+    await Promise.all(channels.map((channel) => (
+      channel.publish(event, outbound).catch((error) => {
+        console.warn(`[Havyn] Ably signal failed for ${event}`, error);
+      })
+    )));
   }
 
   channelForEvent(event) {
     return this.channelForGroup(EVENT_GROUPS[event] || CHANNEL_GROUPS.control);
   }
 
+  subscribeChannelsForEvent(event) {
+    return this.uniqueChannels([this.channelForEvent(event), this.channel]);
+  }
+
+  publishChannelsForEvent(event) {
+    const primary = this.channelForEvent(event);
+    if (this.shouldPublishLegacy(event)) return this.uniqueChannels([primary, this.channel]);
+    return this.uniqueChannels([primary]);
+  }
+
   channelForGroup(group) {
     return this.channels.get(group) || this.channel;
   }
+
+  presenceChannels() {
+    return this.uniqueChannels([this.channelForGroup(CHANNEL_GROUPS.presence), this.channel]);
+  }
+
+  primaryPresenceChannels() {
+    return this.uniqueChannels([this.channelForGroup(CHANNEL_GROUPS.presence)]);
+  }
+
+  allRoomChannels() {
+    return this.uniqueChannels([this.channel, ...Array.from(this.channels.values())]);
+  }
+
+  enableLegacyBridge(duration = 10 * 60 * 1000) {
+    this.legacyBridgeUntil = Math.max(this.legacyBridgeUntil, Date.now() + duration);
+  }
+
+  shouldPublishLegacy(event) {
+    if (!this.channel || this.channelForEvent(event)?.name === this.channel.name) return false;
+    if (Date.now() < this.legacyBridgeUntil) return true;
+    return this.legacyPresenceItems.some((item) => item.clientId !== this.user?.userId);
+  }
+
+  uniqueChannels(channels = []) {
+    const seen = new Set();
+    return channels.filter((channel) => {
+      if (!channel || seen.has(channel.name)) return false;
+      seen.add(channel.name);
+      return true;
+    });
+  }
+
+  rememberSignal(signalId) {
+    if (!signalId) return;
+    this.seenSignalIds.add(signalId);
+    if (this.seenSignalIds.size > 500) {
+      this.seenSignalIds = new Set(Array.from(this.seenSignalIds).slice(-250));
+    }
+  }
+
+  isDuplicateSignal(payload = {}) {
+    if (!payload.signalId) return false;
+    if (this.seenSignalIds.has(payload.signalId)) return true;
+    this.rememberSignal(payload.signalId);
+    return false;
+  }
+
 
   recordPublish(event) {
     const second = Math.floor(Date.now() / 1000);
