@@ -336,14 +336,12 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     const playableUrl = playableSourceUrl(selected);
     if (!playableUrl) return;
     suppressMediaEventsUntilRef.current = Date.now() + 12_000;
-    const switchLocalSource = media.loadUrl(playableUrl).then(() => {
+    const mediaForRoom = { ...selected, url: playableUrl };
+    playback.selectMedia(mediaForRoom);
+    media.loadUrl(playableUrl).then(() => {
       window.setTimeout(() => media.scanMedia?.(), 700);
       window.setTimeout(() => media.scanMedia?.(), 1600);
-    });
-
-    Promise.resolve(switchLocalSource).finally(() => {
-      playback.selectMedia({ ...selected, url: playableUrl });
-    });
+    }).catch(() => {});
   }, [media, playback]);
 
   const inviteLink = `havyn://room/${room.roomId}`;

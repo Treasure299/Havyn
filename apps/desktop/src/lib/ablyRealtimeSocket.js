@@ -534,8 +534,10 @@ export class AblyRealtimeSocket {
 
   canControl(userId) {
     const participant = this.currentParticipant(userId);
-    if (!this.room || !participant) return false;
+    if (!this.room) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.EVERYONE) return true;
+    if (this.room.hostUserId === userId) return true;
+    if (!participant) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.HOST_AND_COHOSTS) return ["host", "cohost"].includes(participant.role);
     return participant.role === "host";
   }
@@ -650,8 +652,7 @@ export class AblyRealtimeSocket {
 
   answerPlaybackSync({ userId } = {}) {
     if (!userId || userId === this.user?.userId) return;
-    const current = this.currentParticipant(this.user?.userId);
-    if (!current || !this.canControl(this.user.userId)) return;
+    if (!this.canControl(this.user.userId)) return;
     const state = projectedPlaybackState(this.room?.playbackState);
     if (!state) return;
     this.broadcast("playback-state-sync", {

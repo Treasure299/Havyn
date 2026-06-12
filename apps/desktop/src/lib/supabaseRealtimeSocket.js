@@ -313,8 +313,10 @@ export class SupabaseRealtimeSocket {
 
   canControl(userId) {
     const participant = this.currentParticipant(userId);
-    if (!this.room || !participant) return false;
+    if (!this.room) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.EVERYONE) return true;
+    if (this.room.hostUserId === userId) return true;
+    if (!participant) return false;
     if (this.room.playbackMode === PLAYBACK_MODES.HOST_AND_COHOSTS) return ["host", "cohost"].includes(participant.role);
     return participant.role === "host";
   }
