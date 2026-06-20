@@ -1,6 +1,7 @@
 import { Copy, HelpCircle, LogOut, Maximize2, Minimize2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMediaDetection } from "../hooks/useMediaDetection";
+import { useDismissableLayer } from "../hooks/useDismissableLayer";
 import { usePlaybackSync } from "../hooks/usePlaybackSync";
 import { useWebRTC } from "../hooks/useWebRTC";
 import CallControls from "./CallControls";
@@ -72,6 +73,8 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const [cinemaControlsOpen, setCinemaControlsOpen] = useState(false);
   const [cinemaChatCollapsed, setCinemaChatCollapsed] = useState(true);
   const audioNoticeRef = useRef(null);
+  const cinemaControlsButtonRef = useRef(null);
+  const cinemaControlsRef = useRef(null);
   const [guideOpen, setGuideOpen] = useState(() => (
     localStorage.getItem("havyn:guide:watch:armed") === "true" ||
     localStorage.getItem("havyn:guide:watch:v1") !== "done"
@@ -89,6 +92,10 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       return enabled;
     });
   }
+
+  const closeCinemaControls = useCallback(() => setCinemaControlsOpen(false), []);
+
+  useDismissableLayer(cinemaControlsOpen, [cinemaControlsButtonRef, cinemaControlsRef], closeCinemaControls);
 
   function playMessageBeep() {
     if (!focusMode) return;
@@ -118,21 +125,24 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     event.preventDefault();
     const layoutRect = watchLayoutRef.current?.getBoundingClientRect();
     const layoutRight = layoutRect?.right || window.innerWidth;
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    document.body.classList.add("is-resizing", "is-resizing-x");
     const stop = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", stop);
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture?.(event.pointerId);
+      document.body.classList.remove("is-resizing", "is-resizing-x");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
       window.removeEventListener("blur", stop);
     };
     const move = (moveEvent) => {
-      if (moveEvent.buttons === 0) {
-        stop();
-        return;
-      }
       const nextWidth = Math.round(layoutRight - moveEvent.clientX - 8);
       setSideWidth(Math.min(560, Math.max(260, nextWidth)));
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", stop);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
     window.addEventListener("blur", stop);
   }
 
@@ -143,21 +153,24 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     const startHeight = event.currentTarget.parentElement
       ?.querySelector(".browser-shell")
       ?.getBoundingClientRect().height || 560;
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    document.body.classList.add("is-resizing", "is-resizing-y");
     const stop = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", stop);
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture?.(event.pointerId);
+      document.body.classList.remove("is-resizing", "is-resizing-y");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
       window.removeEventListener("blur", stop);
     };
     const move = (moveEvent) => {
-      if (moveEvent.buttons === 0) {
-        stop();
-        return;
-      }
       const nextHeight = Math.round(startHeight + (moveEvent.clientY - startY));
       setViewerHeight(Math.min(window.innerHeight - 180, Math.max(320, nextHeight)));
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", stop);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
     window.addEventListener("blur", stop);
   }
 
@@ -166,21 +179,24 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = event.currentTarget.previousElementSibling?.getBoundingClientRect().height || callHeight;
+    const handle = event.currentTarget;
+    handle.setPointerCapture?.(event.pointerId);
+    document.body.classList.add("is-resizing", "is-resizing-y");
     const stop = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", stop);
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture?.(event.pointerId);
+      document.body.classList.remove("is-resizing", "is-resizing-y");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
       window.removeEventListener("blur", stop);
     };
     const move = (moveEvent) => {
-      if (moveEvent.buttons === 0) {
-        stop();
-        return;
-      }
       const nextHeight = Math.round(startHeight + (moveEvent.clientY - startY));
       setCallHeight(Math.min(420, Math.max(132, nextHeight)));
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", stop);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
     window.addEventListener("blur", stop);
   }
 
@@ -420,6 +436,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       {focusMode && (
         <>
           <button
+            ref={cinemaControlsButtonRef}
             className={`cinema-controls-toggle ${cinemaControlsOpen ? "is-open" : ""}`}
             type="button"
             onClick={() => setCinemaControlsOpen((value) => !value)}
@@ -427,7 +444,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           >
             <Maximize2 size={15} />
           </button>
-          <div className={`cinema-top-controls glass ${cinemaControlsOpen ? "is-open" : ""}`}>
+          <div ref={cinemaControlsRef} className={`cinema-top-controls glass ${cinemaControlsOpen ? "is-open" : ""}`}>
             <button className="icon-text" type="button" onClick={toggleFocusMode}><Minimize2 size={16} /> Exit Fullscreen</button>
             <div>
               <strong>{room.playbackState?.activeMediaTitle || "Detected video"}</strong>
@@ -468,7 +485,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
             webPlaybackState={playback.playbackState}
             layoutSignal={focusMode ? "cinema" : "normal"}
           />
-          <div className="viewer-resize-handle" title="Resize viewing area" onMouseDown={startViewerResize} onDoubleClick={() => setViewerHeight(null)} />
+          <div className="viewer-resize-handle" title="Resize viewing area" onPointerDown={startViewerResize} onDoubleClick={() => setViewerHeight(null)} />
           <div className="viewer-toolbar">
             <div className="guide-source-target">
               <MediaDetectionPanel
@@ -494,7 +511,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           role="separator"
           aria-orientation="vertical"
           title="Resize panels"
-          onMouseDown={startSideResize}
+          onPointerDown={startSideResize}
           onDoubleClick={() => setSideWidth(336)}
         />
         <aside
@@ -534,7 +551,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
               chatOpen={focusMode && !cinemaChatCollapsed}
             />
           </section>
-          <div className="side-resize-handle" title="Resize call area" onMouseDown={startCallResize} onDoubleClick={() => setCallHeight(190)} />
+          <div className="side-resize-handle" title="Resize call area" onPointerDown={startCallResize} onDoubleClick={() => setCallHeight(190)} />
           <div className="guide-chat-target side-stack">
             <ChatPanel
               messages={roomState.messages}

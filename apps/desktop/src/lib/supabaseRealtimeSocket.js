@@ -371,6 +371,7 @@ export class SupabaseRealtimeSocket {
       activeMediaTitle: media.title || "Detected media",
       controllerUserId: userId
     };
+    this.localEmit("playback-state-sync", this.room.playbackState);
     this.broadcast("media-selected", { media, playbackState: this.room.playbackState });
     this.broadcast("playback-state-sync", this.room.playbackState);
     this.emitRoomState();
@@ -403,6 +404,8 @@ export class SupabaseRealtimeSocket {
     if (action === "rate-change") next.playbackRate = Number(playbackRate || 1);
     if (action === "ended") next.isPlaying = false;
     this.room.playbackState = next;
+    this.localEmit(event, next);
+    this.localEmit("playback-state-sync", next);
     this.broadcast("room-action", roomAction(`${displayName(this, userId)} ${actionLabel(action)}`));
     this.broadcast(event, next);
     this.broadcast("playback-state-sync", next);

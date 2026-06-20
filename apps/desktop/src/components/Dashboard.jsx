@@ -1,6 +1,7 @@
-import { Check, Clock3, Globe2, HelpCircle, LogOut, Plus, Save, Send, Ticket, UserPlus, Users, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, Clock3, Globe2, HelpCircle, LogOut, Menu, Plus, Save, Send, Ticket, UserCircle2, UserPlus, Users, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDismissableLayer } from "../hooks/useDismissableLayer";
 import BackgroundVideo from "./BackgroundVideo";
 import CreateRoomModal from "./CreateRoomModal";
 import InteractiveGuide from "./InteractiveGuide";
@@ -26,6 +27,8 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   const [username, setUsername] = useState(user.username || "");
   const [usernameNote, setUsernameNote] = useState("");
   const [friendUsername, setFriendUsername] = useState("");
+  const profileButtonRef = useRef(null);
+  const profileMenuRef = useRef(null);
 
   useEffect(() => {
     setUsername(user.username || "");
@@ -67,6 +70,10 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
     window.requestAnimationFrame(() => setTutorialOpen(true));
   }
 
+  const closeProfile = useCallback(() => setProfileOpen(false), []);
+
+  useDismissableLayer(profileOpen, [profileButtonRef, profileMenuRef], closeProfile);
+
   function toggleProfile() {
     setProfileOpen((value) => !value);
   }
@@ -106,15 +113,39 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   ];
 
   const profileMenu = profileOpen ? createPortal(
-    <form className="profile-popover glass" onSubmit={saveUsername}>
-      <strong>Profile</strong>
-      <label>
-        Username
-        <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="choose_username" />
-      </label>
-      {usernameNote && <span className="action-note">{usernameNote}</span>}
-      <button className="secondary-button" type="submit"><Save size={15} /> Save username</button>
-    </form>,
+    <div ref={profileMenuRef} className="profile-popover account-popover glass" role="menu" aria-label="Account menu">
+      <div className="profile-popover-head">
+        <div>
+          <strong>{user.displayName}</strong>
+          <span>{user.username ? `@${user.username}` : "Set a username"}</span>
+        </div>
+        <VersionNotice compact />
+      </div>
+      <form className="account-section" onSubmit={saveUsername}>
+        <label>
+          Username
+          <input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase())} pattern="[a-z0-9_]{3,24}" placeholder="choose_username" />
+        </label>
+        {usernameNote && <span className="action-note">{usernameNote}</span>}
+        <button className="secondary-button" type="submit"><Save size={15} /> Save username</button>
+      </form>
+      {social.friendRequests.length > 0 && (
+        <div className="account-section account-requests">
+          <strong>Friend requests</strong>
+          {social.friendRequests.map((request) => (
+            <div className="friend-request-row" key={request.id}>
+              <div>
+                <strong>{request.displayName}</strong>
+                <span>@{request.username}</span>
+              </div>
+              <button className="icon-button" type="button" title="Accept" onClick={() => social.acceptFriendRequest(request.id)}><Check size={15} /></button>
+              <button className="icon-button" type="button" title="Decline" onClick={() => social.declineFriendRequest(request.id)}><X size={15} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button className="danger-button account-signout" type="button" role="menuitem" onClick={onSignOut}><LogOut size={16} /> Sign out</button>
+    </div>,
     document.body
   ) : null;
 
@@ -127,12 +158,19 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
           <button className="icon-text" onClick={openGuide} title="How Havyn works"><HelpCircle size={17} /> Guide</button>
           <NotificationBell user={user} social={social} onJoinRoom={roomState.joinRoom} onOpen={() => setProfileOpen(false)} />
           <div className="profile-menu-wrap guide-profile-target">
-            <button className="user-chip profile-chip-button" type="button" onClick={toggleProfile}>
-              {user.displayName}{user.username ? ` @${user.username}` : ""}
+            <button
+              ref={profileButtonRef}
+              className={`account-menu-button ${profileOpen ? "is-open" : ""}`}
+              type="button"
+              onClick={toggleProfile}
+              aria-haspopup="menu"
+              aria-expanded={profileOpen}
+              title="Account menu"
+            >
+              <UserCircle2 size={18} />
+              <Menu size={17} />
             </button>
           </div>
-          <VersionNotice compact />
-          <button className="icon-button" onClick={onSignOut} title="Sign out"><LogOut size={18} /></button>
         </div>
       </header>
 

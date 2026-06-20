@@ -281,6 +281,7 @@ function createMainWindow() {
     minWidth: 1180,
     minHeight: 720,
     title: "Havyn",
+    autoHideMenuBar: true,
     icon: path.join(__dirname, "../public/brand/havyn-icon.ico"),
     backgroundColor: "#0B0B0F",
     webPreferences: {
@@ -293,6 +294,7 @@ function createMainWindow() {
   });
 
   mainWindow.loadURL(isDev ? "http://127.0.0.1:5173" : `file://${path.join(__dirname, "../dist/index.html")}`);
+  mainWindow.setMenuBarVisibility(false);
   mainWindow.on("closed", () => {
     if (mediaEventTimer) clearInterval(mediaEventTimer);
     mainWindow = null;

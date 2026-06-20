@@ -1,9 +1,12 @@
 import { Mic, Phone, PhoneOff, Settings2, Video, X } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDismissableLayer } from "../hooks/useDismissableLayer";
 
 export default function CallControls({ call, onDevicesOpenChange }) {
   const [devicesOpen, setDevicesOpen] = useState(false);
+  const devicesButtonRef = useRef(null);
+  const devicesMenuRef = useRef(null);
   const audioInputs = call.devices?.audioInputs || [];
   const videoInputs = call.devices?.videoInputs || [];
 
@@ -15,13 +18,15 @@ export default function CallControls({ call, onDevicesOpenChange }) {
     });
   }
 
-  function closeDevices() {
+  const closeDevices = useCallback(() => {
     setDevicesOpen(false);
     onDevicesOpenChange?.(false);
-  }
+  }, [onDevicesOpenChange]);
+
+  useDismissableLayer(devicesOpen, [devicesButtonRef, devicesMenuRef], closeDevices);
 
   const devicePicker = devicesOpen ? createPortal(
-    <div className="device-popover glass">
+    <div ref={devicesMenuRef} className="device-popover glass">
       <div className="device-popover-head">
         <strong>Call devices</strong>
         <button className="icon-button" type="button" title="Close devices" onClick={closeDevices}><X size={15} /></button>
@@ -66,6 +71,7 @@ export default function CallControls({ call, onDevicesOpenChange }) {
         ) : (
           <>
             <button
+              ref={devicesButtonRef}
               className={`icon-button ${devicesOpen ? "is-active" : ""}`}
               onClick={toggleDevices}
               title="Call devices"

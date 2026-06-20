@@ -150,9 +150,13 @@ function FloatingBubble({ tile, index, isPlaying, rightInset = 0 }) {
       type: "move",
       startX: event.clientX,
       startY: event.clientY,
-      frame
+      frame,
+      handle: event.currentTarget,
+      pointerId: event.pointerId
     };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     movedRef.current = false;
+    document.body.classList.add("is-resizing", "is-moving-tile");
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
@@ -166,8 +170,12 @@ function FloatingBubble({ tile, index, isPlaying, rightInset = 0 }) {
     dragRef.current = {
       type: "resize",
       startX: event.clientX,
-      frame
+      frame,
+      handle: event.currentTarget,
+      pointerId: event.pointerId
     };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    document.body.classList.add("is-resizing", "is-resizing-tile");
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
@@ -177,10 +185,6 @@ function FloatingBubble({ tile, index, isPlaying, rightInset = 0 }) {
   function move(event) {
     const drag = dragRef.current;
     if (!drag) return;
-    if (event.buttons === 0) {
-      stop();
-      return;
-    }
     if (drag.type === "move") {
       movedRef.current = movedRef.current || Math.abs(event.clientX - drag.startX) > 3 || Math.abs(event.clientY - drag.startY) > 3;
       setFrame(clampFrame({
@@ -196,9 +200,14 @@ function FloatingBubble({ tile, index, isPlaying, rightInset = 0 }) {
   }
 
   function stop() {
+    const drag = dragRef.current;
     const shouldRestore = collapsed && !movedRef.current;
     if (movedRef.current && rightInset > 0) restoreFrameRef.current = null;
+    if (drag?.handle?.hasPointerCapture?.(drag.pointerId)) {
+      drag.handle.releasePointerCapture?.(drag.pointerId);
+    }
     dragRef.current = null;
+    document.body.classList.remove("is-resizing", "is-moving-tile", "is-resizing-tile");
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", stop);
     window.removeEventListener("pointercancel", stop);

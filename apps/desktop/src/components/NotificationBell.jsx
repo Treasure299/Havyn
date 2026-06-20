@@ -1,9 +1,12 @@
 import { Bell, Check, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useDismissableLayer } from "../hooks/useDismissableLayer";
 
 export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
   const notificationItems = useMemo(() => [
     ...social.invites.map((invite) => ({ ...invite, type: "room", sortAt: invite.createdAt })),
     ...social.friendRequests.map((request) => ({ ...request, type: "friend", sortAt: request.createdAt }))
@@ -17,6 +20,10 @@ export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
   useEffect(() => {
     setSeenNotifications(localStorage.getItem(notificationSeenKey) || "");
   }, [notificationSeenKey]);
+
+  const closeNotifications = useCallback(() => setOpen(false), []);
+
+  useDismissableLayer(open, [buttonRef, menuRef], closeNotifications);
 
   function toggleNotifications() {
     setOpen((value) => {
@@ -37,7 +44,7 @@ export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
   }
 
   const menu = open ? createPortal(
-    <section className="notification-popover glass">
+    <section ref={menuRef} className="notification-popover glass">
       <div className="notification-head">
         <strong>Notifications</strong>
         <span>{notificationItems.length}</span>
@@ -77,6 +84,7 @@ export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
   return (
     <div className="notification-menu-wrap">
       <button
+        ref={buttonRef}
         className={`icon-button notification-button ${hasUnreadNotifications ? "has-unread" : ""}`}
         onClick={toggleNotifications}
         title="Notifications"

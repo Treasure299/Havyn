@@ -39,12 +39,14 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     const incomingUpdatedAt = Number(state.updatedAt || 0);
     const currentUpdatedAt = Number(playbackStateRef.current?.updatedAt || 0);
     const isCorrectionForMe = state.correctedUserId === user.id;
+    const isExplicitPlaybackAction = ["play", "pause", "seek", "rate-change", "ended"].includes(action);
 
     if (
       incomingUpdatedAt &&
       currentUpdatedAt &&
       incomingUpdatedAt + 250 < currentUpdatedAt &&
-      !isCorrectionForMe
+      !isCorrectionForMe &&
+      !isExplicitPlaybackAction
     ) {
       return;
     }
@@ -64,6 +66,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
 
   useEffect(() => {
     const sync = (state) => applyRemoteState(state, "sync");
+    const command = (payload) => applyRemoteState(payload?.state || payload, payload?.action || "sync");
     const play = (state) => applyRemoteState(state, "play");
     const pause = (state) => applyRemoteState(state, "pause");
     const seek = (state) => applyRemoteState(state, "seek");
@@ -71,6 +74,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     const ended = (state) => applyRemoteState(state, "ended");
 
     socket.on("playback-state-sync", sync);
+    socket.on("playback-command", command);
     socket.on("playback-play", play);
     socket.on("playback-pause", pause);
     socket.on("playback-seek", seek);
@@ -78,6 +82,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     socket.on("media-ended", ended);
     return () => {
       socket.off("playback-state-sync", sync);
+      socket.off("playback-command", command);
       socket.off("playback-play", play);
       socket.off("playback-pause", pause);
       socket.off("playback-seek", seek);
@@ -162,13 +167,12 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
 
   async function controlPlayback(action) {
     const currentTime = localCurrentTimeRef.current ?? playbackState?.currentTime ?? 0;
-    const applied = await applyPlayback?.({
+    await applyPlayback?.({
       action,
       currentTime,
       playbackRate: playbackState?.playbackRate ?? room?.playbackState?.playbackRate ?? 1,
       reason: "local-control"
     });
-    if (applied === false) return;
     sendPlayback(action, { currentTime });
   }
 

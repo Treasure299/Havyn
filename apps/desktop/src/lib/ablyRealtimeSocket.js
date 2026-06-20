@@ -9,6 +9,13 @@ const PLAYBACK_MODES = {
 
 const PLAYBACK_EVENTS = ["playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"];
 const DIRECT_EVENTS = ["webrtc-offer", "webrtc-answer", "webrtc-ice-candidate", "webrtc-ice-candidates"];
+const LEGACY_PLAYBACK_BRIDGE_EVENTS = new Set([
+  "room-meta",
+  "room-state",
+  "media-selected",
+  "playback-sync-request",
+  "playback-state-sync"
+]);
 
 const CHANNEL_GROUPS = {
   control: "control",
@@ -22,6 +29,7 @@ const EVENT_GROUPS = {
   "chat-message": CHANNEL_GROUPS.chat,
   "room-action": CHANNEL_GROUPS.chat,
   "permission-denied": CHANNEL_GROUPS.control,
+  "playback-command": CHANNEL_GROUPS.control,
   "room-meta": CHANNEL_GROUPS.control,
   "room-state": CHANNEL_GROUPS.control,
   "presence-patch": CHANNEL_GROUPS.presence,
@@ -237,6 +245,12 @@ export class AblyRealtimeSocket {
             return;
           }
           if (event === "playback-state-sync" && payload.targetUserId && payload.targetUserId !== this.user?.userId) return;
+          if (event === "playback-command") {
+            const state = payload.state || payload;
+            this.updatePlaybackState(state);
+            this.localEmit(event, payload);
+            return;
+          }
           if (["playback-state-sync", ...PLAYBACK_EVENTS].includes(event)) {
             this.updatePlaybackState(payload);
           }
@@ -438,6 +452,7 @@ export class AblyRealtimeSocket {
 
   publishChannelsForEvent(event) {
     const primary = this.channelForEvent(event);
+    if (LEGACY_PLAYBACK_BRIDGE_EVENTS.has(event)) return this.uniqueChannels([primary, this.channel]);
     if (this.shouldPublishLegacy(event)) return this.uniqueChannels([primary, this.channel]);
     return this.uniqueChannels([primary]);
   }
@@ -575,6 +590,7 @@ export class AblyRealtimeSocket {
     this.refreshPresence({ mediaReady: true });
     this.broadcast("media-detected", { userId, media });
     this.broadcast("participant-media-ready", { userId, mediaReady: true });
+    this.syncPlayback({});
   }
 
   selectMedia({ userId, media }) {
@@ -591,6 +607,7 @@ export class AblyRealtimeSocket {
       activeMediaTitle: media.title || "Detected media",
       controllerUserId: userId
     };
+    this.localEmit("playback-state-sync", this.room.playbackState);
     this.broadcast("media-selected", { media, playbackState: this.room.playbackState });
     this.broadcast("playback-state-sync", this.room.playbackState);
     this.emitRoomState();
@@ -623,7 +640,10 @@ export class AblyRealtimeSocket {
     if (action === "rate-change") next.playbackRate = Number(playbackRate || 1);
     if (action === "ended") next.isPlaying = false;
     this.room.playbackState = next;
+    this.localEmit(event, next);
+    this.localEmit("playback-state-sync", next);
     this.broadcast("room-action", roomAction(`${displayName(this, userId)} ${actionLabel(action)}`));
+    this.broadcast("playback-command", { action, state: next });
     this.broadcast(event, next);
     this.broadcast("playback-state-sync", next);
     this.emitRoomState();
@@ -644,6 +664,7 @@ export class AblyRealtimeSocket {
   }
 
   requestPlaybackSync({ userId } = {}) {
+    this.syncPlayback({});
     this.broadcast("playback-sync-request", {
       userId: userId || this.user?.userId,
       requestedAt: Date.now()

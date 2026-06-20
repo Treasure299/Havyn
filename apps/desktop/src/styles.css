@@ -48,6 +48,35 @@ button, input, select {
   font: inherit;
 }
 
+body.is-resizing {
+  user-select: none;
+  cursor: default;
+}
+
+body.is-resizing * {
+  user-select: none !important;
+}
+
+body.is-resizing-x,
+body.is-resizing-x * {
+  cursor: col-resize !important;
+}
+
+body.is-resizing-y,
+body.is-resizing-y * {
+  cursor: row-resize !important;
+}
+
+body.is-moving-tile,
+body.is-moving-tile * {
+  cursor: grabbing !important;
+}
+
+body.is-resizing-tile,
+body.is-resizing-tile * {
+  cursor: nwse-resize !important;
+}
+
 button {
   cursor: pointer;
   transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
@@ -1085,11 +1114,9 @@ label {
 .version-notice {
   justify-self: start;
   width: max-content;
-  color: rgba(255,255,255,0.58);
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025)),
-    rgba(10,10,14,0.54);
-  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.45);
+  background: rgba(255,255,255,0.045);
+  border: 1px solid rgba(255,255,255,0.06);
   border-radius: 999px;
   padding: 5px 9px;
   font-size: 11px;
@@ -1101,8 +1128,9 @@ label {
 }
 
 .version-notice-compact {
-  color: rgba(255,255,255,0.5);
-  padding-inline: 8px;
+  color: rgba(255,255,255,0.42);
+  padding: 4px 7px;
+  font-size: 10px;
 }
 
 .profile-menu-wrap {
@@ -1112,13 +1140,45 @@ label {
 
 .profile-chip-button {
   min-height: 40px;
+  max-width: 210px;
+  display: grid;
+  grid-template-columns: minmax(0, auto);
+  justify-items: start;
+  gap: 1px;
   color: var(--text);
-  background: rgba(255,255,255,0.055);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.035)),
+    rgba(255,255,255,0.035);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.025);
 }
 
-.profile-chip-button:hover {
-  border-color: rgba(255,255,255,0.24);
-  background: rgba(255,255,255,0.085);
+.profile-chip-button span,
+.profile-chip-button small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-chip-button span {
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.profile-chip-button small {
+  color: rgba(255,255,255,0.5);
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.profile-chip-button:hover,
+.profile-chip-button.is-open {
+  border-color: rgba(239,62,58,0.46);
+  background:
+    linear-gradient(180deg, rgba(239,62,58,0.14), rgba(255,255,255,0.045)),
+    rgba(255,255,255,0.055);
+  box-shadow: 0 0 0 1px rgba(239,62,58,0.12), 0 12px 34px rgba(0,0,0,0.24);
 }
 
 .profile-popover {
@@ -1126,17 +1186,95 @@ label {
   right: 86px;
   top: 104px;
   z-index: 2147483000;
-  width: 280px;
+  width: 300px;
   display: grid;
   gap: 12px;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 14px;
-  background: rgba(14,14,19,0.95);
+  border-color: rgba(239,62,58,0.24);
+  background:
+    radial-gradient(circle at 24% 0%, rgba(239,62,58,0.18), transparent 42%),
+    rgba(13,13,17,0.97);
+  box-shadow: 0 28px 90px rgba(0,0,0,0.52), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.profile-popover-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
+.profile-popover-head div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.profile-popover-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.profile-popover-head span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .profile-popover input {
   height: 38px;
   padding: 0 11px;
+}
+
+.account-menu-button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.035)),
+    rgba(12,12,16,0.62);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.account-menu-button:hover,
+.account-menu-button:focus-visible,
+.account-menu-button.is-open {
+  border-color: rgba(239,62,58,0.52);
+  background:
+    linear-gradient(180deg, rgba(239,62,58,0.16), rgba(255,255,255,0.04)),
+    rgba(12,12,16,0.75);
+  box-shadow: 0 16px 38px rgba(0,0,0,0.26), 0 0 0 1px rgba(239,62,58,0.1);
+}
+
+.account-popover {
+  right: clamp(28px, 4vw, 58px);
+  top: 86px;
+  width: 330px;
+}
+
+.account-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.account-requests {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.account-signout {
+  width: 100%;
 }
 
 .modal-backdrop {
