@@ -10,7 +10,9 @@ function normalizeDetectedItems(items = [], webview) {
   const pageUrl = webview?.getURL?.() || "";
   return (items || []).map((item) => ({
     ...item,
-    pageUrl: item.pageUrl || pageUrl || item.url,
+    // The webview URL is the authoritative user-facing page. A frame's own
+    // pageUrl may be a referrer or an internal provider route.
+    pageUrl: pageUrl || item.pageUrl || item.url,
     frameUrl: item.frameUrl || item.url,
     url: item.url || item.frameUrl || pageUrl
   }));
@@ -84,16 +86,20 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
     if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
     const index = findVideos().indexOf(video);
     lastMediaEvent = {
+      eventId: "dom:" + eventName + ":" + Date.now() + ":" + Math.random().toString(36).slice(2),
       eventName,
       media: describeVideo(video, index),
-      controlledByHavyn: Date.now() < applyingRemoteUntil
+      controlledByHavyn: Date.now() < Math.max(
+        applyingRemoteUntil,
+        Number(video.dataset.havynControlledUntil || 0)
+      )
     };
     console.debug("__HAVYN_MEDIA_EVENT__");
   };
 
   const attach = (video) => {
-    if (!video || video.dataset.havynDomAttached) return;
-    video.dataset.havynDomAttached = "true";
+    if (!video || video.dataset.havynMediaEventsAttached) return;
+    video.dataset.havynMediaEventsAttached = "dom";
     ["play", "pause", "seeking", "seeked", "timeupdate", "loadedmetadata", "canplay", "playing", "ended", "ratechange"].forEach((eventName) => {
       video.addEventListener(eventName, () => emitEvent(eventName, video), true);
     });
@@ -124,34 +130,73 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
     if (playbackRetryTimer || !pendingPlayback) return;
     playbackRetryTimer = setTimeout(() => {
       playbackRetryTimer = null;
-      if (pendingPlayback) window.__havynApplyPlayback(pendingPlayback);
+      const command = pendingPlayback;
+      pendingPlayback = null;
+      if (command) window.__havynApplyPlayback(command).catch(() => {});
     }, 700);
   };
 
-  window.__havynApplyPlayback = ({ action, currentTime, playbackRate }) => {
+  const queuePlaybackRetry = (state) => {
+    const retryCount = Number(state.__havynRetryCount || 0);
+    const expiresAt = Number(state.__havynExpiresAt || (Date.now() + 7000));
+    if (retryCount >= 8 || Date.now() >= expiresAt) {
+      pendingPlayback = null;
+      return;
+    }
+    pendingPlayback = {
+      ...state,
+      __havynRetryCount: retryCount + 1,
+      __havynExpiresAt: expiresAt
+    };
+    schedulePlaybackRetry();
+  };
+
+  window.__havynApplyPlayback = async ({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt }) => {
     const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
     if (!video) {
-      pendingPlayback = { action, currentTime, playbackRate };
-      schedulePlaybackRetry();
+      queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
       return false;
     }
     applyingRemoteUntil = Date.now() + 1200;
+    video.dataset.havynControlledUntil = String(applyingRemoteUntil);
     if (action !== "play") pendingPlayback = null;
     if (typeof playbackRate === "number") video.playbackRate = playbackRate;
     if (typeof currentTime === "number" && Math.abs((video.currentTime || 0) - currentTime) > 0.35) {
       video.currentTime = Math.max(0, currentTime);
     }
     if (action === "play" && video.paused) {
-      pendingPlayback = { action, currentTime, playbackRate };
-      video.play()
-        .then(() => {
-          pendingPlayback = null;
-        })
-        .catch(() => schedulePlaybackRetry());
+      try {
+        await video.play();
+        pendingPlayback = null;
+        return !video.paused;
+      } catch {
+        queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+        return false;
+      }
     }
     if (action === "pause" && !video.paused) video.pause();
-    return true;
+    return action === "pause" ? video.paused : true;
   };
+
+  document.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    pendingPlayback = null;
+    applyingRemoteUntil = 0;
+    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+    playbackRetryTimer = null;
+    findVideos().forEach((video) => {
+      video.dataset.havynControlledUntil = "0";
+    });
+  }, true);
+  document.addEventListener("keydown", () => {
+    pendingPlayback = null;
+    applyingRemoteUntil = 0;
+    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+    playbackRetryTimer = null;
+    findVideos().forEach((video) => {
+      video.dataset.havynControlledUntil = "0";
+    });
+  }, true);
 
   new MutationObserver(scheduleScan).observe(document.documentElement || document, { childList: true, subtree: true });
   scan();
@@ -237,7 +282,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
     const normalizedFrameMedia = normalizeDetectedItems(frameMedia, webview);
     if (normalizedFrameMedia.length) {
       domBrowserEvents.mediaDetected(normalizedFrameMedia);
-      onWebMediaDetected?.(normalizedFrameMedia, null);
       return normalizedFrameMedia;
     }
     await webview.executeJavaScript(WEBVIEW_DETECTOR_SCRIPT, true).catch(() => false);
@@ -245,7 +289,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
     const normalized = normalizeDetectedItems(media, webview);
     if (normalized.length) {
       domBrowserEvents.mediaDetected(normalized);
-      onWebMediaDetected?.(normalized, null);
     }
     return normalized;
   }, [onWebMediaDetected]);
@@ -287,7 +330,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       const event = await webview.executeJavaScript("window.__havynReadMediaEvent?.()", true).catch(() => null);
       if (event) {
         domBrowserEvents.mediaEvent(event);
-        onWebMediaEvent?.(event);
       }
     };
     const handleIpcMessage = (event) => {
@@ -295,14 +337,12 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       if (event.channel === "browser:media-detected-from-page") {
         const media = normalizeDetectedItems(payload?.media || [], webview);
         domBrowserEvents.mediaDetected(media);
-        onWebMediaDetected?.(media, null);
       }
       if (event.channel === "browser:media-event-from-page") {
         const nextPayload = payload?.media
           ? { ...payload, media: normalizeDetectedItems([payload.media], webview)[0] }
           : payload;
         domBrowserEvents.mediaEvent(nextPayload);
-        onWebMediaEvent?.(nextPayload);
       }
     };
     const blockPopup = (event) => {
@@ -333,12 +373,13 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   useEffect(() => {
     if (!useDomWebview) return undefined;
     const removeDetected = window.havyn?.browser?.onMediaDetected?.((media) => {
-      domBrowserEvents.mediaDetected(media || []);
-      onWebMediaDetected?.(media || [], null);
+      domBrowserEvents.mediaDetected(normalizeDetectedItems(media || [], webviewRef.current));
     });
     const removeEvent = window.havyn?.browser?.onMediaEvent?.((payload) => {
-      domBrowserEvents.mediaEvent(payload);
-      onWebMediaEvent?.(payload);
+      domBrowserEvents.mediaEvent(payload?.media ? {
+        ...payload,
+        media: normalizeDetectedItems([payload.media], webviewRef.current)[0]
+      } : payload);
     });
     return () => {
       removeDetected?.();

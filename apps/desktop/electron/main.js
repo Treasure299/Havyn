@@ -76,16 +76,20 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
     if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
     const index = findVideos().indexOf(video);
     lastMediaEvent = {
+      eventId: "frame:" + eventName + ":" + Date.now() + ":" + Math.random().toString(36).slice(2),
       eventName,
       media: describeVideo(video, index),
-      controlledByHavyn: Date.now() < applyingRemoteUntil
+      controlledByHavyn: Date.now() < Math.max(
+        applyingRemoteUntil,
+        Number(video.dataset.havynControlledUntil || 0)
+      )
     };
     console.debug("__HAVYN_FRAME_MEDIA_EVENT__");
   };
 
   const attach = (video) => {
-    if (!video || video.dataset.havynFrameAttached) return;
-    video.dataset.havynFrameAttached = "true";
+    if (!video || video.dataset.havynMediaEventsAttached) return;
+    video.dataset.havynMediaEventsAttached = "frame";
     ["play", "pause", "seeking", "seeked", "timeupdate", "loadedmetadata", "canplay", "playing", "ended", "ratechange"].forEach((eventName) => {
       video.addEventListener(eventName, () => emitEvent(eventName, video), true);
     });
@@ -116,34 +120,73 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
     if (playbackRetryTimer || !pendingPlayback) return;
     playbackRetryTimer = setTimeout(() => {
       playbackRetryTimer = null;
-      if (pendingPlayback) window.__havynApplyPlayback(pendingPlayback);
+      const command = pendingPlayback;
+      pendingPlayback = null;
+      if (command) window.__havynApplyPlayback(command).catch(() => {});
     }, 700);
   };
 
-  window.__havynApplyPlayback = ({ action, currentTime, playbackRate }) => {
+  const queuePlaybackRetry = (state) => {
+    const retryCount = Number(state.__havynRetryCount || 0);
+    const expiresAt = Number(state.__havynExpiresAt || (Date.now() + 7000));
+    if (retryCount >= 8 || Date.now() >= expiresAt) {
+      pendingPlayback = null;
+      return;
+    }
+    pendingPlayback = {
+      ...state,
+      __havynRetryCount: retryCount + 1,
+      __havynExpiresAt: expiresAt
+    };
+    schedulePlaybackRetry();
+  };
+
+  window.__havynApplyPlayback = async ({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt }) => {
     const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
     if (!video) {
-      pendingPlayback = { action, currentTime, playbackRate };
-      schedulePlaybackRetry();
+      queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
       return false;
     }
     applyingRemoteUntil = Date.now() + 1200;
+    video.dataset.havynControlledUntil = String(applyingRemoteUntil);
     if (action !== "play") pendingPlayback = null;
     if (typeof playbackRate === "number") video.playbackRate = playbackRate;
     if (typeof currentTime === "number" && Math.abs((video.currentTime || 0) - currentTime) > 0.35) {
       video.currentTime = Math.max(0, currentTime);
     }
     if (action === "play" && video.paused) {
-      pendingPlayback = { action, currentTime, playbackRate };
-      video.play()
-        .then(() => {
-          pendingPlayback = null;
-        })
-        .catch(() => schedulePlaybackRetry());
+      try {
+        await video.play();
+        pendingPlayback = null;
+        return !video.paused;
+      } catch {
+        queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+        return false;
+      }
     }
     if (action === "pause" && !video.paused) video.pause();
-    return true;
+    return action === "pause" ? video.paused : true;
   };
+
+  document.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    pendingPlayback = null;
+    applyingRemoteUntil = 0;
+    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+    playbackRetryTimer = null;
+    findVideos().forEach((video) => {
+      video.dataset.havynControlledUntil = "0";
+    });
+  }, true);
+  document.addEventListener("keydown", () => {
+    pendingPlayback = null;
+    applyingRemoteUntil = 0;
+    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+    playbackRetryTimer = null;
+    findVideos().forEach((video) => {
+      video.dataset.havynControlledUntil = "0";
+    });
+  }, true);
 
   new MutationObserver(scheduleScan).observe(document.documentElement || document, { childList: true, subtree: true });
   scan();
@@ -528,10 +571,27 @@ async function applyWebviewPlayback(webContentsId, state) {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc || wc.isDestroyed()) return false;
   const frames = await installDetectorInWebviewFrames(wc);
-  const results = await Promise.all(frames.map((frame) => (
-    frame.executeJavaScript(`window.__havynApplyPlayback?.(${JSON.stringify(state)}) || false`, true).catch(() => false)
-  )));
-  return results.some(Boolean);
+  const inspected = await Promise.all(frames.map(async (frame) => ({
+    frame,
+    url: frame.url || "",
+    mediaCount: await frame.executeJavaScript("window.__havynScanMedia?.().length || 0", true).catch(() => 0)
+  })));
+  const targetUrl = state?.activeMediaFrameUrl || state?.frameUrl || "";
+  const candidates = inspected
+    .filter((item) => item.mediaCount > 0)
+    .sort((left, right) => {
+      const leftMatch = targetUrl && left.url === targetUrl ? 1 : 0;
+      const rightMatch = targetUrl && right.url === targetUrl ? 1 : 0;
+      return rightMatch - leftMatch;
+    });
+  for (const { frame } of candidates) {
+    const applied = await frame.executeJavaScript(
+      `window.__havynApplyPlayback?.(${JSON.stringify(state)}) || false`,
+      true
+    ).catch(() => false);
+    if (applied) return true;
+  }
+  return false;
 }
 
 ipcMain.handle("browser:create", (_event, bounds) => {
@@ -754,6 +814,7 @@ ipcMain.on("browser:media-event-from-page", (_event, payload) => {
   if (payload?.tabId === activeTabId) {
     const tab = tabs.get(payload.tabId);
     mainWindow?.webContents.send("browser:media-event", {
+      eventId: payload.eventId,
       eventName: payload.eventName,
       media: normalizeDetectedMedia(tab, [payload.media])[0],
       controlledByHavyn: payload.controlledByHavyn
@@ -762,9 +823,12 @@ ipcMain.on("browser:media-event-from-page", (_event, payload) => {
 });
 
 app.whenReady().then(() => {
+  const canUseMedia = (_webContents, permission) => ["media"].includes(permission);
+  session.defaultSession.setPermissionCheckHandler(canUseMedia);
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(["media"].includes(permission));
   });
+  browserSession().setPermissionCheckHandler(canUseMedia);
   browserSession().setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(["media"].includes(permission));
   });

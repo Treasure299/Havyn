@@ -37,10 +37,13 @@ const sameBrowserPage = (left = "", right = "") => {
 
 const isCurrentPlayableSource = (currentUrl = "", selected = {}) => (
   sameBrowserPage(currentUrl, selected.url) ||
+  sameBrowserPage(currentUrl, selected.pageUrl) ||
   sameBrowserPage(currentUrl, selected.frameUrl)
 );
 
-const playableSourceUrl = (selected = {}) => selected.frameUrl || selected.url || selected.pageUrl || "";
+// Keep the user on the provider's normal page. The frame URL identifies the
+// detected media target but is not a stable, user-facing browser destination.
+const playableSourceUrl = (selected = {}) => selected.pageUrl || selected.url || selected.frameUrl || "";
 
 const playbackCommandFromState = (state, reason = "state-sync") => {
   if (!state) return null;
@@ -48,6 +51,7 @@ const playbackCommandFromState = (state, reason = "state-sync") => {
     action: state.isPlaying ? "play" : "pause",
     currentTime: calculateProjectedTime(state),
     playbackRate: state.playbackRate || 1,
+    activeMediaFrameUrl: state.activeMediaFrameUrl,
     reason
   };
 };
@@ -62,6 +66,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const autoSyncKeyRef = useRef("");
   const autoSyncTimersRef = useRef([]);
   const suppressMediaEventsUntilRef = useRef(0);
+  const mediaIntentRef = useRef({ lastTime: null, seekStart: null, lastToggle: null });
   const [sideWidth, setSideWidth] = useState(336);
   const [viewerHeight, setViewerHeight] = useState(null);
   const [callHeight, setCallHeight] = useState(190);
@@ -202,26 +207,89 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
 
   const handleMediaEvent = useCallback((event) => {
     if (!room) return;
-    if (event.controlledByHavyn) return;
-    const isPlaybackEvent = ["play", "pause", "seeked", "ratechange"].includes(event.eventName);
-    if (isPlaybackEvent && Date.now() < suppressMediaEventsUntilRef.current) return;
+    const eventName = event.eventName;
+    const now = Date.now();
+    const currentTime = Number(event.media?.currentTime);
+    const hasCurrentTime = Number.isFinite(currentTime);
+    const intent = mediaIntentRef.current;
     const playbackApi = playbackRef.current;
+
+    if (event.controlledByHavyn) {
+      if (hasCurrentTime) intent.lastTime = currentTime;
+      return;
+    }
+
+    if (eventName === "seeking") {
+      intent.seekStart = {
+        startedAt: now,
+        fromTime: Number.isFinite(intent.lastTime)
+          ? intent.lastTime
+          : calculateProjectedTime(playbackApi?.playbackState)
+      };
+      return;
+    }
+
+    if (["timeupdate", "loadedmetadata", "canplay", "playing"].includes(eventName) && hasCurrentTime) {
+      intent.lastTime = currentTime;
+    }
+
+    if (eventName === "ratechange") {
+      const authoritativeRate = Number(playbackApi?.playbackState?.playbackRate || 1);
+      const observedRate = Number(event.media?.playbackRate || 1);
+      if (Math.abs(observedRate - authoritativeRate) > 0.01) {
+        mediaRef.current?.applyPlayback?.({
+          playbackRate: authoritativeRate,
+          reason: "rate-restore"
+        });
+      }
+      return;
+    }
+
+    // Source startup can generate synthetic seeks. Real play and pause clicks
+    // must remain responsive while the selected source settles.
+    if (eventName === "seeked" && now < suppressMediaEventsUntilRef.current) return;
     const payload = { roomId: room.roomId, userId: user.id, currentTime: event.media.currentTime };
 
     if (playbackApi?.canControl) {
-      if (event.eventName === "play") socket.emit("playback-play", payload);
-      if (event.eventName === "pause") socket.emit("playback-pause", payload);
-      if (event.eventName === "seeked") socket.emit("playback-seek", payload);
-      if (event.eventName === "ratechange") {
-        socket.emit("playback-rate-change", { ...payload, playbackRate: event.media.playbackRate });
+      if (eventName === "play") {
+        intent.lastToggle = { eventName, at: now };
+        if (hasCurrentTime) intent.lastTime = currentTime;
+        socket.emit("playback-play", payload);
       }
-    } else if (["play", "pause", "seeked", "ratechange"].includes(event.eventName)) {
+      if (eventName === "pause") {
+        intent.lastToggle = { eventName, at: now };
+        if (hasCurrentTime) intent.lastTime = currentTime;
+        suppressMediaEventsUntilRef.current = now + 650;
+        socket.emit("playback-pause", payload);
+        window.setTimeout(() => {
+          mediaRef.current?.applyPlayback?.({
+            action: "pause",
+            currentTime,
+            playbackRate: playbackRef.current?.playbackState?.playbackRate || 1,
+            reason: "pause-confirm"
+          });
+        }, 120);
+      }
+      if (eventName === "seeked") {
+        const seekStart = intent.seekStart;
+        intent.seekStart = null;
+        const seekDistance = seekStart && hasCurrentTime ? Math.abs(currentTime - seekStart.fromTime) : 0;
+        const recentToggle = intent.lastToggle && now - intent.lastToggle.at < 750;
+        const isIntentionalSeek = Boolean(
+          seekStart &&
+          now - seekStart.startedAt < 3000 &&
+          seekDistance >= (recentToggle ? 2 : 0.75)
+        );
+        if (hasCurrentTime) intent.lastTime = currentTime;
+        if (isIntentionalSeek) socket.emit("playback-seek", payload);
+      }
+    } else if (["play", "pause", "seeked"].includes(eventName)) {
       const command = playbackCommandFromState(playbackApi?.playbackState, "permission-restore");
       if (event.video) mediaRef.current?.applyWebPlayback(event.video, command);
       else mediaRef.current?.applyPlayback(command);
     }
 
-    if (event.eventName === "ended") {
+    if (eventName === "ended") {
       socket.emit("media-ended", payload);
     }
   }, [room, socket, user.id]);
@@ -301,7 +369,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, [media, socket]);
 
   useEffect(() => {
-    const activeUrl = playback.playbackState?.activeMediaFrameUrl || playback.playbackState?.activeMediaUrl || room.playbackState?.activeMediaFrameUrl || room.playbackState?.activeMediaUrl;
+    const activeUrl = playback.playbackState?.activeMediaPageUrl || playback.playbackState?.activeMediaUrl || room.playbackState?.activeMediaPageUrl || room.playbackState?.activeMediaUrl;
     if (!activeUrl || activeUrl === autoLoadedMediaUrlRef.current) return;
     const activeState = playback.playbackState || room.playbackState || {};
     if (isCurrentPlayableSource(media.currentUrl, {
@@ -323,8 +391,10 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     media,
     media.currentUrl,
     playback.playbackState?.activeMediaFrameUrl,
+    playback.playbackState?.activeMediaPageUrl,
     playback.playbackState?.activeMediaUrl,
     room.playbackState?.activeMediaFrameUrl,
+    room.playbackState?.activeMediaPageUrl,
     room.playbackState?.activeMediaUrl
   ]);
 
@@ -349,11 +419,27 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, []);
 
   const selectRoomMedia = useCallback((selected) => {
-    const playableUrl = playableSourceUrl(selected);
+    // Capture the active top-level tab at the moment of selection. Never derive
+    // the shared page from a cross-origin frame's referrer.
+    const playableUrl = media.currentUrl || selected.pageUrl || selected.url || selected.frameUrl || "";
     if (!playableUrl) return;
     suppressMediaEventsUntilRef.current = Date.now() + 12_000;
-    const mediaForRoom = { ...selected, url: playableUrl };
+    // Source selection establishes a paused baseline. Playback begins through a
+    // separate controller action, avoiding blocked-autoplay retry loops.
+    const mediaForRoom = {
+      ...selected,
+      url: playableUrl,
+      pageUrl: playableUrl,
+      frameUrl: selected.frameUrl || selected.url || playableUrl,
+      paused: true,
+      playbackRate: 1
+    };
     playback.selectMedia(mediaForRoom);
+    if (sameBrowserPage(media.currentUrl, playableUrl)) {
+      media.applyPlayback?.({ action: "pause", playbackRate: 1, reason: "source-selected" });
+      window.setTimeout(() => media.scanMedia?.(), 250);
+      return;
+    }
     media.loadUrl(playableUrl).then(() => {
       window.setTimeout(() => media.scanMedia?.(), 700);
       window.setTimeout(() => media.scanMedia?.(), 1600);

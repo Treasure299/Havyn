@@ -131,19 +131,150 @@ function emitEvent(eventName, video) {
   if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
   const index = findVideos().indexOf(video);
   const payload = {
+    eventId: `${tabId}:${eventName}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     tabId,
     eventName,
     media: describeVideo(video, index),
-    controlledByHavyn: Date.now() < applyingRemoteUntil
+    controlledByHavyn: Date.now() < Math.max(
+      applyingRemoteUntil,
+      Number(video.dataset.havynControlledUntil || 0)
+    )
   };
   lastMediaEvent = payload;
   sendPageSignal("browser:media-event-from-page", payload);
   if (["loadedmetadata", "canplay", "playing"].includes(eventName)) emitDetected(true);
 }
 
+function attachClickToggle(video) {
+  if (!video || video.dataset.havynClickToggleAttached) return;
+  video.dataset.havynClickToggleAttached = "true";
+  let pointerDownAt = 0;
+  let clickTimer = null;
+
+  video.addEventListener("pointerdown", (event) => {
+    if (event.button === 0) pointerDownAt = Date.now();
+  }, true);
+  video.addEventListener("dblclick", () => {
+    if (clickTimer) clearTimeout(clickTimer);
+    clickTimer = null;
+  }, true);
+  video.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.detail > 1 || Date.now() - pointerDownAt > 450) return;
+    const rect = video.getBoundingClientRect();
+    const controlsHeight = Math.min(72, rect.height * 0.18);
+    if (video.controls && event.clientY >= rect.bottom - controlsHeight) return;
+    const wasPaused = video.paused;
+    if (clickTimer) clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => {
+      clickTimer = null;
+      if (video.paused !== wasPaused) return;
+      if (wasPaused) video.play().catch(() => {});
+      else video.pause();
+    }, 220);
+  }, true);
+}
+
+function videoAtPoint(clientX, clientY) {
+  const direct = document.elementsFromPoint?.(clientX, clientY)
+    ?.find((node) => node?.tagName === "VIDEO");
+  if (direct) return direct;
+  return findVideos()
+    .filter((video) => {
+      const rect = video.getBoundingClientRect();
+      return rect.width > 80 && rect.height > 60 &&
+        clientX >= rect.left && clientX <= rect.right &&
+        clientY >= rect.top && clientY <= rect.bottom;
+    })
+    .sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      return rightRect.width * rightRect.height - leftRect.width * leftRect.height;
+    })[0] || null;
+}
+
+function isPlayerControlTarget(target, video) {
+  const control = target?.closest?.(
+    "button, input, select, textarea, a, [role='button'], [role='slider'], " +
+    "[class*='control'], [class*='progress'], [class*='seek'], [class*='volume']"
+  );
+  if (!control || !video) return false;
+  if (control.matches?.("input, select, textarea, [role='slider']")) return true;
+  const videoRect = video.getBoundingClientRect();
+  const controlRect = control.getBoundingClientRect();
+  const videoArea = Math.max(1, videoRect.width * videoRect.height);
+  const controlArea = Math.max(0, controlRect.width * controlRect.height);
+  // A large role=button layer is commonly the site's click-to-toggle surface,
+  // not a discrete player control. Let Havyn's guarded fallback handle it.
+  return controlArea / videoArea < 0.28;
+}
+
+function installDocumentClickToggle() {
+  if (window.__havynDocumentClickToggleInstalled) return;
+  window.__havynDocumentClickToggleInstalled = true;
+  let pointerDown = null;
+  let clickTimer = null;
+
+  document.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    pendingPlayback = null;
+    applyingRemoteUntil = 0;
+    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+    playbackRetryTimer = null;
+    findVideos().forEach((video) => {
+      video.dataset.havynControlledUntil = "0";
+    });
+    pointerDown = { x: event.clientX, y: event.clientY, at: Date.now() };
+  }, true);
+
+  document.addEventListener("keydown", () => {
+    pendingPlayback = null;
+    applyingRemoteUntil = 0;
+    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+    playbackRetryTimer = null;
+    findVideos().forEach((video) => {
+      video.dataset.havynControlledUntil = "0";
+    });
+  }, true);
+
+  document.addEventListener("dblclick", () => {
+    if (clickTimer) clearTimeout(clickTimer);
+    clickTimer = null;
+  }, true);
+
+  document.addEventListener("click", (event) => {
+    if (
+      event.button !== 0 ||
+      event.detail > 1 ||
+      !pointerDown ||
+      Date.now() - pointerDown.at > 450 ||
+      Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 8
+    ) return;
+
+    const video = videoAtPoint(event.clientX, event.clientY);
+    if (!video || event.target === video) return;
+    if (isPlayerControlTarget(event.target, video)) return;
+    const rect = video.getBoundingClientRect();
+    if (event.clientY >= rect.bottom - Math.min(76, rect.height * 0.2)) return;
+    const wasPaused = video.paused;
+    const previousTime = video.currentTime;
+    if (clickTimer) clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => {
+      clickTimer = null;
+      // Normal playback (especially a site's press-to-2x gesture) advances time
+      // during this delay. Only a real state change or a substantial seek means
+      // the site handled the click itself.
+      const siteHandledClick = video.paused !== wasPaused || Math.abs(video.currentTime - previousTime) > 1.25;
+      if (siteHandledClick) return;
+      if (wasPaused) video.play().catch(() => {});
+      else video.pause();
+    }, 260);
+  }, true);
+}
+
 function attach(video) {
-  if (video.dataset.havynPreloadListenersAttached) return;
-  video.dataset.havynPreloadListenersAttached = "true";
+  attachClickToggle(video);
+  if (video.dataset.havynMediaEventsAttached) return;
+  video.dataset.havynMediaEventsAttached = "preload";
   ["play", "pause", "seeking", "seeked", "timeupdate", "loadedmetadata", "canplay", "playing", "ended", "ratechange"].forEach((eventName) => {
     video.addEventListener(eventName, () => emitEvent(eventName, video), true);
   });
@@ -192,41 +323,60 @@ function dismissResumePrompt() {
   }
 }
 
-function applyPlayback({ action, currentTime, playbackRate }) {
+async function applyPlayback({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt }) {
   const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
   if (!video) {
-    pendingPlayback = { action, currentTime, playbackRate };
-    schedulePlaybackRetry();
+    queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
     return false;
   }
   applyingRemoteUntil = Date.now() + 900;
+  video.dataset.havynControlledUntil = String(applyingRemoteUntil);
   if (action !== "play") pendingPlayback = null;
   if (typeof playbackRate === "number") video.playbackRate = playbackRate;
   if (typeof currentTime === "number" && Math.abs(video.currentTime - currentTime) > 0.35) {
     video.currentTime = Math.max(0, currentTime);
   }
   if (action === "play" && video.paused) {
-    pendingPlayback = { action, currentTime, playbackRate };
-    video.play()
-      .then(() => {
-        pendingPlayback = null;
-      })
-      .catch(() => schedulePlaybackRetry());
+    try {
+      await video.play();
+      pendingPlayback = null;
+      return !video.paused;
+    } catch {
+      queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+      return false;
+    }
   }
   if (action === "pause" && !video.paused) video.pause();
-  return true;
+  return action === "pause" ? video.paused : true;
 }
 
 function schedulePlaybackRetry() {
   if (playbackRetryTimer || !pendingPlayback) return;
   playbackRetryTimer = setTimeout(() => {
     playbackRetryTimer = null;
-    if (pendingPlayback) applyPlayback(pendingPlayback);
+    const command = pendingPlayback;
+    pendingPlayback = null;
+    if (command) applyPlayback(command).catch(() => {});
   }, 700);
 }
 
+function queuePlaybackRetry(state) {
+  const retryCount = Number(state.__havynRetryCount || 0);
+  const expiresAt = Number(state.__havynExpiresAt || (Date.now() + 7000));
+  if (retryCount >= 8 || Date.now() >= expiresAt) {
+    pendingPlayback = null;
+    return;
+  }
+  pendingPlayback = {
+    ...state,
+    __havynRetryCount: retryCount + 1,
+    __havynExpiresAt: expiresAt
+  };
+  schedulePlaybackRetry();
+}
+
 ipcRenderer.on("browser:scan-media", () => scan(true));
-ipcRenderer.on("browser:apply-playback", (_event, state) => applyPlayback(state));
+ipcRenderer.on("browser:apply-playback", (_event, state) => applyPlayback(state).catch(() => {}));
 
 window.__havynScanMedia = () => scan(true);
 window.__havynReadMediaEvent = () => {
@@ -253,14 +403,20 @@ function startObserver() {
   }
 }
 window.addEventListener("DOMContentLoaded", () => {
+  installDocumentClickToggle();
   startObserver();
   scheduleScan(true);
 });
 window.addEventListener("load", () => scheduleScan(true));
 startObserver();
+installDocumentClickToggle();
 setInterval(() => scan(false), 5000);
 setInterval(() => {
-  if (pendingPlayback) applyPlayback(pendingPlayback);
+  if (pendingPlayback) {
+    const command = pendingPlayback;
+    pendingPlayback = null;
+    applyPlayback(command).catch(() => {});
+  }
 }, 1500);
 setTimeout(() => scan(true), 500);
 setTimeout(() => scan(true), 1800);

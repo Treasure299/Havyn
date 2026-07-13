@@ -6,6 +6,7 @@ export function useMediaDetection({ socket, room, user, onMediaEvent }) {
   const [currentUrl, setCurrentUrl] = useState("");
   const browser = useMemo(() => window.havyn?.browser ? domBrowserBridge : null, []);
   const reportedMediaKey = useRef("");
+  const recentMediaEvents = useRef(new Map());
 
   function sortDetectedMedia(media = []) {
     return [...media].sort((a, b) => {
@@ -39,6 +40,22 @@ export function useMediaDetection({ socket, room, user, onMediaEvent }) {
     if (!browser) return undefined;
     const removeMedia = browser.onMediaDetected(reportDetectedMedia);
     const removeEvent = browser.onMediaEvent((event) => {
+      const eventKey = event?.eventId || [
+        event?.eventName,
+        event?.media?.id,
+        event?.media?.url,
+        Math.round(Number(event?.media?.currentTime || 0) * 20),
+        event?.media?.paused,
+        event?.media?.playbackRate
+      ].join("|");
+      const now = Date.now();
+      if (now - Number(recentMediaEvents.current.get(eventKey) || 0) < 500) return;
+      recentMediaEvents.current.set(eventKey, now);
+      if (recentMediaEvents.current.size > 120) {
+        for (const [key, seenAt] of recentMediaEvents.current) {
+          if (now - seenAt > 3000) recentMediaEvents.current.delete(key);
+        }
+      }
       if (event?.media) {
         setDetectedMedia((items) => sortDetectedMedia([
           event.media,

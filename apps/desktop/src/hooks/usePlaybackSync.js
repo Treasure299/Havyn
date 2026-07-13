@@ -60,6 +60,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       action: projectedState.isPlaying ? "play" : "pause",
       currentTime: projectedState.currentTime,
       playbackRate: projectedState.playbackRate,
+      activeMediaFrameUrl: projectedState.activeMediaFrameUrl,
       reason: action
     });
   }, [applyPlayback, onPlaybackState, user.id]);
@@ -133,6 +134,8 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
             updatedAt: Number(state.updatedAt || Date.now()),
             playbackRate: Number(state.playbackRate || 1),
             activeMediaUrl: state.activeMediaUrl || "",
+            activeMediaPageUrl: state.activeMediaPageUrl || state.activeMediaUrl || "",
+            activeMediaFrameUrl: state.activeMediaFrameUrl || "",
             activeMediaTitle: state.activeMediaTitle || "",
             controllerUserId: state.controllerUserId || user.id
           },
@@ -171,6 +174,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       action,
       currentTime,
       playbackRate: playbackState?.playbackRate ?? room?.playbackState?.playbackRate ?? 1,
+      activeMediaFrameUrl: playbackState?.activeMediaFrameUrl || room?.playbackState?.activeMediaFrameUrl,
       reason: "local-control"
     });
     sendPlayback(action, { currentTime });

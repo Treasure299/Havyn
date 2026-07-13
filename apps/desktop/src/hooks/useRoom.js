@@ -41,6 +41,8 @@ export function useRoom(user) {
     }
     return projectedPlaybackState({
       activeMediaUrl: savedState.activeMediaUrl || savedRoom?.active_media_url || "",
+      activeMediaPageUrl: savedState.activeMediaPageUrl || savedState.activeMediaUrl || savedRoom?.active_media_url || "",
+      activeMediaFrameUrl: savedState.activeMediaFrameUrl || "",
       activeMediaTitle: savedState.activeMediaTitle || savedRoom?.active_media_title || "",
       isPlaying: Boolean(savedState.isPlaying),
       currentTime: Number(savedState.currentTime || 0),
