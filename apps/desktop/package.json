@@ -8,9 +8,11 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev:cloudflare": "concurrently \"vite --mode cloudflare --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "vite": "vite --host 127.0.0.1",
     "electron": "electron .",
     "build": "vite build",
+    "build:cloudflare": "vite build --mode cloudflare",
     "dist": "npm run build && electron-builder --win nsis",
     "dist:mac": "npm run build && electron-builder --mac dmg --x64 --arm64"
   },

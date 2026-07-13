@@ -266,3 +266,28 @@ VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 `VITE_SOCKET_SERVER_URL` is ignored when `VITE_SIGNALING_PROVIDER=supabase`, but can stay in the file as a fallback value. Rebuild and repackage the desktop app after changing Vite env values.
+
+## Watchroom 2.0 Cloudflare Staging
+
+The Cloudflare coordinator is available as an isolated staging path while the
+current Ably build remains the rollback option. It uses one Durable Object per
+room for authoritative playback, permissions, presence, chat, and WebRTC
+signaling. Video, audio, and watched media continue to travel directly between
+participants or load locally; Cloudflare does not carry those media streams.
+
+Run the coordinator checks:
+
+```powershell
+npm run room:test
+npm run room:check
+```
+
+Run the desktop app against the staging coordinator:
+
+```powershell
+npm --workspace apps/desktop run dev:cloudflare
+```
+
+The regular `npm run desktop` command still uses the provider configured in
+`apps/desktop/.env`. See `apps/room-worker/README.md` for deployment, security,
+and rollback details.

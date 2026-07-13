@@ -1,5 +1,6 @@
 node_modules/
 apps/*/node_modules/
+apps/*/.wrangler/
 apps/desktop/dist/
 apps/desktop/release/
 apps/windows/bin/

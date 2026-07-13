@@ -1,0 +1,59 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "havyn-room-coordinator",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-13",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "HAVYN_ROOMS",
+        "class_name": "HavynRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["HavynRoom"]
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "local"
+  },
+  "env": {
+    "staging": {
+      "name": "havyn-room-coordinator-staging",
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "HAVYN_ROOMS",
+            "class_name": "HavynRoom"
+          }
+        ]
+      },
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "CLIENT_ORIGIN": "*"
+      }
+    },
+    "production": {
+      "name": "havyn-room-coordinator",
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "HAVYN_ROOMS",
+            "class_name": "HavynRoom"
+          }
+        ]
+      },
+      "vars": {
+        "ENVIRONMENT": "production",
+        "CLIENT_ORIGIN": "*"
+      }
+    }
+  }
+}
