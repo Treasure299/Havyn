@@ -31,6 +31,7 @@ const childServer = http.createServer((_request, response) => {
     <div id="player" style="position:relative;width:640px;height:360px">
       <video id="media" muted playsinline style="width:640px;height:360px"></video>
       <div id="surface" role="button" style="position:absolute;inset:0"></div>
+      <button id="sitePlay" aria-label="Play" style="position:absolute;left:16px;top:16px;z-index:2">Play</button>
     </div>
     <script>
       const canvas = document.createElement('canvas');
@@ -39,7 +40,20 @@ const childServer = http.createServer((_request, response) => {
       context.fillStyle = '#e21b2d'; context.fillRect(0, 0, 320, 180);
       const media = document.querySelector('#media');
       media.srcObject = canvas.captureStream(5);
+      window.siteSurfaceClickCount = 0;
+      window.siteControlClickCount = 0;
       document.querySelector('#surface').addEventListener('click', () => {
+        window.siteSurfaceClickCount += 1;
+        if (media.paused) media.play();
+        else media.pause();
+      });
+      document.querySelector('#sitePlay').addEventListener('click', () => {
+        window.siteControlClickCount += 1;
+        if (media.paused) media.play();
+        else media.pause();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.code !== 'Space') return;
         if (media.paused) media.play();
         else media.pause();
       });
@@ -133,6 +147,26 @@ let window;
   await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
   await childFrame.executeJavaScript(`
     (() => {
+      const control = document.querySelector('#sitePlay');
+      const rect = control.getBoundingClientRect();
+      const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+      control.dispatchEvent(new PointerEvent('pointerdown', init));
+      control.dispatchEvent(new MouseEvent('click', { ...init, detail: 1 }));
+      return true;
+    })();
+  `, true);
+  const nativeControlPlay = await waitFor(async () => {
+    const current = await window.webContents.executeJavaScript("window.__mediaEvents", true);
+    return current.find((event) => event.eventName === "play");
+  });
+  assert.equal(nativeControlPlay.controlledByHavyn, false);
+  assert.equal(await childFrame.executeJavaScript("window.siteControlClickCount", true), 1);
+  await childFrame.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'Space', key: ' ' }))", true);
+  await waitFor(() => childFrame.executeJavaScript("document.querySelector('video').paused", true));
+
+  await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
+  await childFrame.executeJavaScript(`
+    (() => {
       const surface = document.querySelector('#surface');
       const rect = surface.getBoundingClientRect();
       const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
@@ -144,6 +178,7 @@ let window;
   await new Promise((resolve) => setTimeout(resolve, 800));
   const surfaceEvents = await window.webContents.executeJavaScript("window.__mediaEvents", true);
   assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), false);
+  assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 0);
   assert.equal(surfaceEvents.filter((event) => event.eventName === "play").length, 1);
   assert.equal(surfaceEvents.filter((event) => event.eventName === "pause").length, 0);
 
@@ -162,7 +197,29 @@ let window;
   });
   assert.equal(remotePlay.controlledByHavyn, true);
   assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), false);
-  console.log("Child-frame clicks, site-owned surfaces, and remote playback commands passed end to end.");
+
+  // Reproduce the guest path: a remote command starts playback, then the guest
+  // clicks the custom player surface. The local pause must be emitted once and
+  // must not be mistaken for the preceding remote action.
+  await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
+  await childFrame.executeJavaScript(`
+    (() => {
+      const surface = document.querySelector('#surface');
+      const rect = surface.getBoundingClientRect();
+      const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+      surface.dispatchEvent(new PointerEvent('pointerdown', init));
+      surface.dispatchEvent(new MouseEvent('click', { ...init, detail: 1 }));
+      return true;
+    })();
+  `, true);
+  const guestPause = await waitFor(async () => {
+    const current = await window.webContents.executeJavaScript("window.__mediaEvents", true);
+    return current.find((event) => event.eventName === "pause");
+  });
+  assert.equal(guestPause.controlledByHavyn, false);
+  assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), true);
+  assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 0);
+  console.log("Child-frame clicks, guest-local clicks, and remote playback commands passed end to end.");
   app.exit(0);
 })().catch((error) => {
   console.error(error);

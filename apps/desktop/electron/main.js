@@ -135,14 +135,9 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   };
 
   const observePlaybackGesture = (video) => {
-    const initial = {
-      paused: video.paused,
-      currentTime: Number(video.currentTime || 0),
-      playbackRate: Number(video.playbackRate || 1)
-    };
     let handled = false;
     let cleaned = false;
-    const handledEvents = ["play", "pause", "playing", "ratechange", "seeking", "seeked"];
+    const handledEvents = ["play", "pause", "ratechange", "seeking", "seeked"];
     const markHandled = () => {
       handled = true;
     };
@@ -155,7 +150,6 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     handledEvents.forEach((eventName) => video.addEventListener(eventName, markHandled, true));
     const expiryTimer = setTimeout(cleanup, 1200);
     return {
-      initial,
       wasHandled: () => handled,
       cleanup
     };
@@ -209,23 +203,19 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
         gesture?.cleanup?.();
         return;
       }
-      const initial = gesture?.initial || {
-        paused: video.paused,
-        currentTime: Number(video.currentTime || 0),
-        playbackRate: Number(video.playbackRate || 1)
-      };
+      // Leave explicit controls to the site, but own the media-surface click.
+      // This prevents a custom player and Havyn from toggling in succession.
+      event.preventDefault();
+      event.stopImmediatePropagation();
       if (clickTimer) clearTimeout(clickTimer);
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        const siteHandledClick = Boolean(gesture?.wasHandled?.()) ||
-          video.paused !== initial.paused ||
-          Math.abs(video.currentTime - initial.currentTime) > 1.25 ||
-          Math.abs(video.playbackRate - initial.playbackRate) > 0.01;
+        const siteHandledClick = Boolean(gesture?.wasHandled?.());
         gesture?.cleanup?.();
         if (siteHandledClick) return;
-        if (initial.paused) video.play().catch(() => {});
+        if (video.paused) video.play().catch(() => {});
         else video.pause();
-      }, 320);
+      }, 220);
     }, true);
   };
 
