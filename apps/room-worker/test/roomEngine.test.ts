@@ -44,6 +44,22 @@ describe("RoomEngine playback authority", () => {
       sequence: 1
     });
     expect(event(result, "playback-command")?.payload).toMatchObject({ action: "play", commandId: "play-1" });
+    expect(event(result, "room-action")?.payload).toMatchObject({ message: "host played" });
+  });
+
+  it("broadcasts Treasure play so Vaultr can play and both see the action", () => {
+    const engine = RoomEngine.create("ROOM1234", "treasure", { playbackMode: "everyone" });
+    engine.join({ ...participant("treasure", "host"), displayName: "Treasure" });
+    engine.join({ ...participant("vaultr"), displayName: "Vaultr" });
+
+    const result = engine.handle("playback-play", { currentTime: 31.5 }, "treasure", "treasure-play-1");
+
+    expect(event(result, "playback-command")?.targetUserId).toBeUndefined();
+    expect(event(result, "playback-command")?.payload).toMatchObject({
+      action: "play",
+      state: expect.objectContaining({ isPlaying: true, currentTime: 31.5, controllerUserId: "treasure" })
+    });
+    expect(event(result, "room-action")?.payload).toMatchObject({ message: "Treasure played" });
   });
 
   it("rejects a viewer in host-only mode and sends a targeted correction", () => {

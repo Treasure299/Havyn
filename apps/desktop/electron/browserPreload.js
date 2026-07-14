@@ -39,12 +39,9 @@ try {
 }
 
 function sendPageSignal(channel, payload) {
+  // ipcMain receives senderFrame for both BrowserView and cross-origin webview
+  // subframes. That is the single authoritative route for media events.
   ipcRenderer.send(channel, payload);
-  try {
-    ipcRenderer.sendToHost(channel, payload);
-  } catch {
-    // BrowserView does not have an embedder host; webview does.
-  }
 }
 
 function readableDocuments() {
@@ -219,7 +216,7 @@ function isPlayerControlTarget(target, video) {
 }
 
 function installDocumentClickToggle() {
-  if (window.__havynDocumentClickToggleInstalled) return;
+  if (window.__havynDocumentClickToggleInstalled || window.__havynFrameClickToggleInstalled) return;
   window.__havynDocumentClickToggleInstalled = true;
   let pointerDown = null;
   let clickTimer = null;

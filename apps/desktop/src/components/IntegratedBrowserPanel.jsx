@@ -329,25 +329,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       setUrl(event.url);
       domBrowserEvents.navigation({ url: event.url });
     };
-    const handleConsole = async () => {
-      const event = await webview.executeJavaScript("window.__havynReadMediaEvent?.()", true).catch(() => null);
-      if (event) {
-        domBrowserEvents.mediaEvent(event);
-      }
-    };
-    const handleIpcMessage = (event) => {
-      const [payload] = event.args || [];
-      if (event.channel === "browser:media-detected-from-page") {
-        const media = normalizeDetectedItems(payload?.media || [], webview);
-        domBrowserEvents.mediaDetected(media);
-      }
-      if (event.channel === "browser:media-event-from-page") {
-        const nextPayload = payload?.media
-          ? { ...payload, media: normalizeDetectedItems([payload.media], webview)[0] }
-          : payload;
-        domBrowserEvents.mediaEvent(nextPayload);
-      }
-    };
     const blockPopup = (event) => {
       event.preventDefault?.();
       setNotice("Popup blocked");
@@ -357,8 +338,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
     webview.addEventListener("dom-ready", installDetector);
     webview.addEventListener("did-navigate", handleNavigate);
     webview.addEventListener("did-navigate-in-page", handleNavigate);
-    webview.addEventListener("console-message", handleConsole);
-    webview.addEventListener("ipc-message", handleIpcMessage);
     webview.addEventListener("new-window", blockPopup);
     webview.addEventListener("did-create-window", blockPopup);
     return () => {
@@ -366,8 +345,6 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       webview.removeEventListener("dom-ready", installDetector);
       webview.removeEventListener("did-navigate", handleNavigate);
       webview.removeEventListener("did-navigate-in-page", handleNavigate);
-      webview.removeEventListener("console-message", handleConsole);
-      webview.removeEventListener("ipc-message", handleIpcMessage);
       webview.removeEventListener("new-window", blockPopup);
       webview.removeEventListener("did-create-window", blockPopup);
     };

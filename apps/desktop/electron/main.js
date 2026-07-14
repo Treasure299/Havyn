@@ -17,7 +17,7 @@ const registeredWebviews = new Set();
 const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 
-const FRAME_DETECTOR_SCRIPT = String.raw`
+export const FRAME_DETECTOR_SCRIPT = String.raw`
 (() => {
   if (window.__havynFrameDetectorInstalled) {
     window.__havynScanMedia?.();
@@ -87,7 +87,92 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
       media,
       controlledByHavyn: matchesRemotePlaybackEvent(remotePlaybackExpectation, eventName, media)
     };
-    console.debug("__HAVYN_FRAME_MEDIA_EVENT__");
+    // Include the complete event in the console signal. Reading a second queued
+    // value from the frame here races Chromium's console delivery and can lose
+    // fast play events from cross-origin players.
+    console.debug("__HAVYN_FRAME_MEDIA_EVENT__" + JSON.stringify(lastMediaEvent));
+  };
+
+  const videoAtPoint = (clientX, clientY) => {
+    const direct = document.elementsFromPoint?.(clientX, clientY)
+      ?.find((node) => node?.tagName === "VIDEO");
+    if (direct) return direct;
+    return findVideos()
+      .filter((video) => {
+        const rect = video.getBoundingClientRect();
+        return rect.width > 80 && rect.height > 60 &&
+          clientX >= rect.left && clientX <= rect.right &&
+          clientY >= rect.top && clientY <= rect.bottom;
+      })
+      .sort((left, right) => {
+        const leftRect = left.getBoundingClientRect();
+        const rightRect = right.getBoundingClientRect();
+        return rightRect.width * rightRect.height - leftRect.width * leftRect.height;
+      })[0] || null;
+  };
+
+  const isDiscretePlayerControl = (target, video) => {
+    const control = target?.closest?.(
+      "button, input, select, textarea, a, [role='button'], [role='slider'], " +
+      "[class*='control'], [class*='progress'], [class*='seek'], [class*='volume']"
+    );
+    if (!control || !video) return false;
+    if (control.matches?.("input, select, textarea, [role='slider']")) return true;
+    const label = [
+      control.getAttribute?.("aria-label"),
+      control.getAttribute?.("title"),
+      control.getAttribute?.("data-title"),
+      control.getAttribute?.("data-tooltip"),
+      control.className,
+      control.textContent
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    if (/\b(play|pause|resume|replay)\b/i.test(label)) return false;
+    const videoRect = video.getBoundingClientRect();
+    const controlRect = control.getBoundingClientRect();
+    const videoArea = Math.max(1, videoRect.width * videoRect.height);
+    const controlArea = Math.max(0, controlRect.width * controlRect.height);
+    return controlArea / videoArea < 0.28;
+  };
+
+  const installClickToggle = () => {
+    if (window.__havynFrameClickToggleInstalled || window.__havynDocumentClickToggleInstalled) return;
+    window.__havynFrameClickToggleInstalled = true;
+    let pointerDown = null;
+    let clickTimer = null;
+
+    document.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      pointerDown = { x: event.clientX, y: event.clientY, at: Date.now() };
+    }, true);
+    document.addEventListener("dblclick", () => {
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = null;
+    }, true);
+    document.addEventListener("click", (event) => {
+      if (
+        event.button !== 0 ||
+        event.detail > 1 ||
+        !pointerDown ||
+        Date.now() - pointerDown.at > 900 ||
+        Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 12
+      ) return;
+
+      const video = videoAtPoint(event.clientX, event.clientY);
+      if (!video || isDiscretePlayerControl(event.target, video)) return;
+      const rect = video.getBoundingClientRect();
+      if (event.clientY >= rect.bottom - Math.min(76, rect.height * 0.2)) return;
+      const wasPaused = video.paused;
+      const previousTime = video.currentTime;
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        const siteHandledClick = video.paused !== wasPaused ||
+          Math.abs(video.currentTime - previousTime) > 1.25;
+        if (siteHandledClick) return;
+        if (wasPaused) video.play().catch(() => {});
+        else video.pause();
+      }, 260);
+    }, true);
   };
 
   const attach = (video) => {
@@ -190,6 +275,7 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
     });
   }, true);
 
+  installClickToggle();
   new MutationObserver(scheduleScan).observe(document.documentElement || document, { childList: true, subtree: true });
   scan();
   setTimeout(scheduleScan, 500);
@@ -559,16 +645,6 @@ async function scanWebviewMedia(webContentsId) {
   return normalizeWebviewMedia(wc, mediaByFrame.flat().filter(Boolean));
 }
 
-async function readWebviewMediaEvent(wc) {
-  if (!wc || wc.isDestroyed()) return null;
-  const frames = webviewFrames(wc);
-  for (const frame of frames) {
-    const payload = await frame.executeJavaScript("window.__havynReadMediaEvent?.()", true).catch(() => null);
-    if (payload) return normalizeWebviewMedia(wc, [payload.media]).map((media) => ({ ...payload, media }))[0];
-  }
-  return null;
-}
-
 async function applyWebviewPlayback(webContentsId, state) {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc || wc.isDestroyed()) return false;
@@ -774,10 +850,24 @@ ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc || registeredWebviews.has(wc.id)) return Boolean(wc);
   registeredWebviews.add(wc.id);
-  wc.on("console-message", async (_event, _level, message) => {
+  wc.on("console-message", async (details) => {
+    const message = details?.message || "";
     if (!String(message || "").includes("__HAVYN_FRAME_MEDIA_")) return;
-    const payload = await readWebviewMediaEvent(wc);
-    if (payload) mainWindow?.webContents.send("browser:media-event", payload);
+    if (String(message).includes("__HAVYN_FRAME_MEDIA_EVENT__")) {
+      const serialized = String(message).slice(String(message).indexOf("__HAVYN_FRAME_MEDIA_EVENT__") + "__HAVYN_FRAME_MEDIA_EVENT__".length);
+      try {
+        const payload = JSON.parse(serialized);
+        if (payload?.media) {
+          mainWindow?.webContents.send("browser:media-event", {
+            ...payload,
+            media: normalizeWebviewMedia(wc, [payload.media])[0],
+            sourceFrameUrl: payload.media.frameUrl || details?.frame?.url || ""
+          });
+        }
+      } catch {
+        // Ignore malformed messages from unrelated page scripts.
+      }
+    }
     if (String(message || "").includes("__HAVYN_FRAME_MEDIA_SCAN__")) {
       const media = await scanWebviewMedia(wc.id);
       if (media.length) mainWindow?.webContents.send("browser:media-detected", media);
@@ -807,12 +897,18 @@ ipcMain.handle("browser:apply-playback", async (_event, state) => {
 
 ipcMain.handle("browser:scan-media", async () => scanTabMedia());
 
-ipcMain.on("browser:media-detected-from-page", (_event, { tabId, media }) => {
+ipcMain.on("browser:media-detected-from-page", (event, { tabId, media }) => {
   const tab = tabs.get(tabId);
-  if (tabId === activeTabId) mainWindow?.webContents.send("browser:media-detected", normalizeDetectedMedia(tab, media));
+  if (tabId === activeTabId) {
+    mainWindow?.webContents.send("browser:media-detected", normalizeDetectedMedia(tab, media));
+    return;
+  }
+  if (registeredWebviews.has(event.sender.id)) {
+    mainWindow?.webContents.send("browser:media-detected", normalizeWebviewMedia(event.sender, media));
+  }
 });
 
-ipcMain.on("browser:media-event-from-page", (_event, payload) => {
+ipcMain.on("browser:media-event-from-page", (event, payload) => {
   if (payload?.tabId === activeTabId) {
     const tab = tabs.get(payload.tabId);
     mainWindow?.webContents.send("browser:media-event", {
@@ -821,10 +917,18 @@ ipcMain.on("browser:media-event-from-page", (_event, payload) => {
       media: normalizeDetectedMedia(tab, [payload.media])[0],
       controlledByHavyn: payload.controlledByHavyn
     });
+    return;
+  }
+  if (registeredWebviews.has(event.sender.id) && payload?.media) {
+    mainWindow?.webContents.send("browser:media-event", {
+      ...payload,
+      media: normalizeWebviewMedia(event.sender, [payload.media])[0],
+      sourceFrameUrl: payload.media.frameUrl || event.senderFrame?.url || ""
+    });
   }
 });
 
-app.whenReady().then(() => {
+if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(() => {
   const canUseMedia = (_webContents, permission) => ["media"].includes(permission);
   session.defaultSession.setPermissionCheckHandler(canUseMedia);
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
