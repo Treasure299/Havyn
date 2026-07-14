@@ -1,11 +1,12 @@
 import { ipcRenderer } from "electron";
+import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "./playbackEventClassifier.js";
 
 const tabIdArg = globalThis.process?.argv?.find((arg) => arg.startsWith("--havyn-tab-id="));
 const tabId = tabIdArg?.split("=")[1] || "unknown";
 let lastSignature = "";
 let pendingPlayback = null;
 let playbackRetryTimer = null;
-let applyingRemoteUntil = 0;
+let remotePlaybackExpectation = null;
 let lastMediaEvent = null;
 let scanTimer = null;
 let lastTimeUpdateAt = 0;
@@ -130,15 +131,13 @@ function emitEvent(eventName, video) {
   if (eventName === "timeupdate" && Date.now() - lastTimeUpdateAt < 1000) return;
   if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
   const index = findVideos().indexOf(video);
+  const media = describeVideo(video, index);
   const payload = {
     eventId: `${tabId}:${eventName}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     tabId,
     eventName,
-    media: describeVideo(video, index),
-    controlledByHavyn: Date.now() < Math.max(
-      applyingRemoteUntil,
-      Number(video.dataset.havynControlledUntil || 0)
-    )
+    media,
+    controlledByHavyn: matchesRemotePlaybackEvent(remotePlaybackExpectation, eventName, media)
   };
   lastMediaEvent = payload;
   sendPageSignal("browser:media-event-from-page", payload);
@@ -159,7 +158,7 @@ function attachClickToggle(video) {
     clickTimer = null;
   }, true);
   video.addEventListener("click", (event) => {
-    if (event.button !== 0 || event.detail > 1 || Date.now() - pointerDownAt > 450) return;
+    if (event.button !== 0 || event.detail > 1 || Date.now() - pointerDownAt > 900) return;
     const rect = video.getBoundingClientRect();
     const controlsHeight = Math.min(72, rect.height * 0.18);
     if (video.controls && event.clientY >= rect.bottom - controlsHeight) return;
@@ -199,6 +198,17 @@ function isPlayerControlTarget(target, video) {
   );
   if (!control || !video) return false;
   if (control.matches?.("input, select, textarea, [role='slider']")) return true;
+  const controlLabel = [
+    control.getAttribute?.("aria-label"),
+    control.getAttribute?.("title"),
+    control.getAttribute?.("data-title"),
+    control.getAttribute?.("data-tooltip"),
+    control.className,
+    control.textContent
+  ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  // Let Havyn verify center play/pause controls. Some custom players render the
+  // button but fail to toggle when embedded, while keyboard playback still works.
+  if (/\b(play|pause|resume|replay)\b/i.test(controlLabel)) return false;
   const videoRect = video.getBoundingClientRect();
   const controlRect = control.getBoundingClientRect();
   const videoArea = Math.max(1, videoRect.width * videoRect.height);
@@ -217,22 +227,22 @@ function installDocumentClickToggle() {
   document.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     pendingPlayback = null;
-    applyingRemoteUntil = 0;
+    remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
     playbackRetryTimer = null;
     findVideos().forEach((video) => {
-      video.dataset.havynControlledUntil = "0";
+      delete video.dataset.havynControlledUntil;
     });
     pointerDown = { x: event.clientX, y: event.clientY, at: Date.now() };
   }, true);
 
   document.addEventListener("keydown", () => {
     pendingPlayback = null;
-    applyingRemoteUntil = 0;
+    remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
     playbackRetryTimer = null;
     findVideos().forEach((video) => {
-      video.dataset.havynControlledUntil = "0";
+      delete video.dataset.havynControlledUntil;
     });
   }, true);
 
@@ -246,8 +256,8 @@ function installDocumentClickToggle() {
       event.button !== 0 ||
       event.detail > 1 ||
       !pointerDown ||
-      Date.now() - pointerDown.at > 450 ||
-      Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 8
+      Date.now() - pointerDown.at > 900 ||
+      Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 12
     ) return;
 
     const video = videoAtPoint(event.clientX, event.clientY);
@@ -329,8 +339,7 @@ async function applyPlayback({ action, currentTime, playbackRate, __havynRetryCo
     queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
     return false;
   }
-  applyingRemoteUntil = Date.now() + 900;
-  video.dataset.havynControlledUntil = String(applyingRemoteUntil);
+  remotePlaybackExpectation = createRemotePlaybackExpectation({ action, currentTime, playbackRate });
   if (action !== "play") pendingPlayback = null;
   if (typeof playbackRate === "number") video.playbackRate = playbackRate;
   if (typeof currentTime === "number" && Math.abs(video.currentTime - currentTime) > 0.35) {

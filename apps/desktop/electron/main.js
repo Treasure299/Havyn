@@ -1,6 +1,7 @@
 import { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, webContents } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "./playbackEventClassifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -13,6 +14,8 @@ const loadedExtensions = new Map();
 let adBlockDesired = true;
 let browserVisible = true;
 const registeredWebviews = new Set();
+const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.toString();
+const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 
 const FRAME_DETECTOR_SCRIPT = String.raw`
 (() => {
@@ -22,7 +25,9 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
   }
   window.__havynFrameDetectorInstalled = true;
   let lastMediaEvent = null;
-  let applyingRemoteUntil = 0;
+  const createRemotePlaybackExpectation = ${createRemotePlaybackExpectationSource};
+  const matchesRemotePlaybackEvent = ${matchesRemotePlaybackEventSource};
+  let remotePlaybackExpectation = null;
   let pendingPlayback = null;
   let playbackRetryTimer = null;
   let scanTimer = null;
@@ -75,14 +80,12 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
     if (eventName === "timeupdate" && Date.now() - lastTimeUpdateAt < 1000) return;
     if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
     const index = findVideos().indexOf(video);
+    const media = describeVideo(video, index);
     lastMediaEvent = {
       eventId: "frame:" + eventName + ":" + Date.now() + ":" + Math.random().toString(36).slice(2),
       eventName,
-      media: describeVideo(video, index),
-      controlledByHavyn: Date.now() < Math.max(
-        applyingRemoteUntil,
-        Number(video.dataset.havynControlledUntil || 0)
-      )
+      media,
+      controlledByHavyn: matchesRemotePlaybackEvent(remotePlaybackExpectation, eventName, media)
     };
     console.debug("__HAVYN_FRAME_MEDIA_EVENT__");
   };
@@ -147,8 +150,7 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
       queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
       return false;
     }
-    applyingRemoteUntil = Date.now() + 1200;
-    video.dataset.havynControlledUntil = String(applyingRemoteUntil);
+    remotePlaybackExpectation = createRemotePlaybackExpectation({ action, currentTime, playbackRate });
     if (action !== "play") pendingPlayback = null;
     if (typeof playbackRate === "number") video.playbackRate = playbackRate;
     if (typeof currentTime === "number" && Math.abs((video.currentTime || 0) - currentTime) > 0.35) {
@@ -171,20 +173,20 @@ const FRAME_DETECTOR_SCRIPT = String.raw`
   document.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     pendingPlayback = null;
-    applyingRemoteUntil = 0;
+    remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
     playbackRetryTimer = null;
     findVideos().forEach((video) => {
-      video.dataset.havynControlledUntil = "0";
+      delete video.dataset.havynControlledUntil;
     });
   }, true);
   document.addEventListener("keydown", () => {
     pendingPlayback = null;
-    applyingRemoteUntil = 0;
+    remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
     playbackRetryTimer = null;
     findVideos().forEach((video) => {
-      video.dataset.havynControlledUntil = "0";
+      delete video.dataset.havynControlledUntil;
     });
   }, true);
 

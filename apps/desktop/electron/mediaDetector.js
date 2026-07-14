@@ -24,7 +24,21 @@
   const sendDetected = (media) => window.__havynMediaDetected = media;
   const sendEvent = (payload) => window.__havynLastMediaEvent = payload;
   let pendingPlayback = null;
-  let applyingRemoteUntil = 0;
+  let remotePlaybackExpectation = null;
+
+  const matchesRemotePlaybackEvent = (expectation, eventName, media, now = Date.now()) => {
+    if (!expectation || now > Number(expectation.expiresAt || 0)) return false;
+    if (eventName === "play" || eventName === "playing") return expectation.action === "play";
+    if (eventName === "pause") return expectation.action === "pause" || expectation.action === "ended";
+    if (eventName === "ended") return expectation.action === "ended";
+    if (eventName === "seeking" || eventName === "seeked") {
+      return expectation.currentTime !== null && Math.abs(Number(media.currentTime || 0) - expectation.currentTime) <= 1.75;
+    }
+    if (eventName === "ratechange") {
+      return expectation.playbackRate !== null && Math.abs(Number(media.playbackRate || 1) - expectation.playbackRate) <= 0.01;
+    }
+    return false;
+  };
 
   const visibleText = (node) => (node?.innerText || node?.textContent || "").replace(/\s+/g, " ").trim();
   const clickElement = (node) => {
@@ -56,10 +70,11 @@
     ["play", "pause", "seeking", "seeked", "timeupdate", "loadedmetadata", "canplay", "ended", "ratechange"].forEach((eventName) => {
       video.addEventListener(eventName, () => {
         const index = getVideos().indexOf(video);
+        const media = describeVideo(video, index);
         sendEvent({
           eventName,
-          media: describeVideo(video, index),
-          controlledByHavyn: Date.now() < applyingRemoteUntil
+          media,
+          controlledByHavyn: matchesRemotePlaybackEvent(remotePlaybackExpectation, eventName, media)
         });
         console.debug("__havyn_media_event__");
       });
@@ -85,7 +100,12 @@
       pendingPlayback = { action, currentTime, playbackRate };
       return false;
     }
-    applyingRemoteUntil = Date.now() + 900;
+    remotePlaybackExpectation = {
+      action: String(action || "sync"),
+      currentTime: Number.isFinite(Number(currentTime)) ? Number(currentTime) : null,
+      playbackRate: Number.isFinite(Number(playbackRate)) ? Number(playbackRate) : null,
+      expiresAt: Date.now() + 1400
+    };
     if (action !== "play") pendingPlayback = null;
     if (typeof playbackRate === "number") video.playbackRate = playbackRate;
     if (typeof currentTime === "number" && Math.abs(video.currentTime - currentTime) > 0.35) {
