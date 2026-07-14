@@ -3,6 +3,7 @@ apps/*/node_modules/
 apps/*/.wrangler/
 apps/desktop/dist/
 apps/desktop/release/
+apps/desktop/release-cloudflare/
 apps/windows/bin/
 apps/windows/obj/
 .env
