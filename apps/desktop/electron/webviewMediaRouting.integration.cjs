@@ -28,13 +28,21 @@ function waitFor(check, timeoutMs = 10_000) {
 const childServer = http.createServer((_request, response) => {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   response.end(`<!doctype html><html><body style="margin:0;background:#000">
-    <video id="media" muted playsinline style="width:640px;height:360px"></video>
+    <div id="player" style="position:relative;width:640px;height:360px">
+      <video id="media" muted playsinline style="width:640px;height:360px"></video>
+      <div id="surface" role="button" style="position:absolute;inset:0"></div>
+    </div>
     <script>
       const canvas = document.createElement('canvas');
       canvas.width = 320; canvas.height = 180;
       const context = canvas.getContext('2d');
       context.fillStyle = '#e21b2d'; context.fillRect(0, 0, 320, 180);
-      document.querySelector('#media').srcObject = canvas.captureStream(5);
+      const media = document.querySelector('#media');
+      media.srcObject = canvas.captureStream(5);
+      document.querySelector('#surface').addEventListener('click', () => {
+        if (media.paused) media.play();
+        else media.pause();
+      });
     </script>
   </body></html>`);
 });
@@ -123,6 +131,26 @@ let window;
   assert.equal(events.filter((event) => event.eventName === "pause").length, 1);
 
   await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
+  await childFrame.executeJavaScript(`
+    (() => {
+      const surface = document.querySelector('#surface');
+      const rect = surface.getBoundingClientRect();
+      const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+      surface.dispatchEvent(new PointerEvent('pointerdown', init));
+      surface.dispatchEvent(new MouseEvent('click', { ...init, detail: 1 }));
+      return true;
+    })();
+  `, true);
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const surfaceEvents = await window.webContents.executeJavaScript("window.__mediaEvents", true);
+  assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), false);
+  assert.equal(surfaceEvents.filter((event) => event.eventName === "play").length, 1);
+  assert.equal(surfaceEvents.filter((event) => event.eventName === "pause").length, 0);
+
+  await childFrame.executeJavaScript("document.querySelector('video').pause()", true);
+  await waitFor(() => childFrame.executeJavaScript("document.querySelector('video').paused", true));
+
+  await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
   const remoteApplied = await childFrame.executeJavaScript(
     "window.__havynApplyPlayback({ action: 'play', currentTime: 0, playbackRate: 1 })",
     true
@@ -134,7 +162,7 @@ let window;
   });
   assert.equal(remotePlay.controlledByHavyn, true);
   assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), false);
-  console.log("Child-frame clicks and remote playback commands passed end to end.");
+  console.log("Child-frame clicks, site-owned surfaces, and remote playback commands passed end to end.");
   app.exit(0);
 })().catch((error) => {
   console.error(error);

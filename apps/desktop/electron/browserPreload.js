@@ -141,35 +141,6 @@ function emitEvent(eventName, video) {
   if (["loadedmetadata", "canplay", "playing"].includes(eventName)) emitDetected(true);
 }
 
-function attachClickToggle(video) {
-  if (!video || video.dataset.havynClickToggleAttached) return;
-  video.dataset.havynClickToggleAttached = "true";
-  let pointerDownAt = 0;
-  let clickTimer = null;
-
-  video.addEventListener("pointerdown", (event) => {
-    if (event.button === 0) pointerDownAt = Date.now();
-  }, true);
-  video.addEventListener("dblclick", () => {
-    if (clickTimer) clearTimeout(clickTimer);
-    clickTimer = null;
-  }, true);
-  video.addEventListener("click", (event) => {
-    if (event.button !== 0 || event.detail > 1 || Date.now() - pointerDownAt > 900) return;
-    const rect = video.getBoundingClientRect();
-    const controlsHeight = Math.min(72, rect.height * 0.18);
-    if (video.controls && event.clientY >= rect.bottom - controlsHeight) return;
-    const wasPaused = video.paused;
-    if (clickTimer) clearTimeout(clickTimer);
-    clickTimer = setTimeout(() => {
-      clickTimer = null;
-      if (video.paused !== wasPaused) return;
-      if (wasPaused) video.play().catch(() => {});
-      else video.pause();
-    }, 220);
-  }, true);
-}
-
 function videoAtPoint(clientX, clientY) {
   const direct = document.elementsFromPoint?.(clientX, clientY)
     ?.find((node) => node?.tagName === "VIDEO");
@@ -203,9 +174,7 @@ function isPlayerControlTarget(target, video) {
     control.className,
     control.textContent
   ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-  // Let Havyn verify center play/pause controls. Some custom players render the
-  // button but fail to toggle when embedded, while keyboard playback still works.
-  if (/\b(play|pause|resume|replay)\b/i.test(controlLabel)) return false;
+  if (/\b(play|pause|resume|replay)\b/i.test(controlLabel)) return true;
   const videoRect = video.getBoundingClientRect();
   const controlRect = control.getBoundingClientRect();
   const videoArea = Math.max(1, videoRect.width * videoRect.height);
@@ -213,6 +182,33 @@ function isPlayerControlTarget(target, video) {
   // A large role=button layer is commonly the site's click-to-toggle surface,
   // not a discrete player control. Let Havyn's guarded fallback handle it.
   return controlArea / videoArea < 0.28;
+}
+
+function observePlaybackGesture(video) {
+  const initial = {
+    paused: video.paused,
+    currentTime: Number(video.currentTime || 0),
+    playbackRate: Number(video.playbackRate || 1)
+  };
+  let handled = false;
+  let cleaned = false;
+  const handledEvents = ["play", "pause", "playing", "ratechange", "seeking", "seeked"];
+  const markHandled = () => {
+    handled = true;
+  };
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    clearTimeout(expiryTimer);
+    handledEvents.forEach((eventName) => video.removeEventListener(eventName, markHandled, true));
+  };
+  handledEvents.forEach((eventName) => video.addEventListener(eventName, markHandled, true));
+  const expiryTimer = setTimeout(cleanup, 1200);
+  return {
+    initial,
+    wasHandled: () => handled,
+    cleanup
+  };
 }
 
 function installDocumentClickToggle() {
@@ -230,7 +226,15 @@ function installDocumentClickToggle() {
     findVideos().forEach((video) => {
       delete video.dataset.havynControlledUntil;
     });
-    pointerDown = { x: event.clientX, y: event.clientY, at: Date.now() };
+    pointerDown?.gesture?.cleanup?.();
+    const video = videoAtPoint(event.clientX, event.clientY);
+    pointerDown = {
+      x: event.clientX,
+      y: event.clientY,
+      at: Date.now(),
+      video,
+      gesture: video ? observePlaybackGesture(video) : null
+    };
   }, true);
 
   document.addEventListener("keydown", () => {
@@ -246,6 +250,8 @@ function installDocumentClickToggle() {
   document.addEventListener("dblclick", () => {
     if (clickTimer) clearTimeout(clickTimer);
     clickTimer = null;
+    pointerDown?.gesture?.cleanup?.();
+    pointerDown = null;
   }, true);
 
   document.addEventListener("click", (event) => {
@@ -257,29 +263,42 @@ function installDocumentClickToggle() {
       Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 12
     ) return;
 
-    const video = videoAtPoint(event.clientX, event.clientY);
-    if (!video || event.target === video) return;
-    if (isPlayerControlTarget(event.target, video)) return;
+    const gesture = pointerDown.gesture;
+    const video = pointerDown.video || videoAtPoint(event.clientX, event.clientY);
+    if (!video) {
+      gesture?.cleanup?.();
+      return;
+    }
+    if (isPlayerControlTarget(event.target, video)) {
+      gesture?.cleanup?.();
+      return;
+    }
     const rect = video.getBoundingClientRect();
-    if (event.clientY >= rect.bottom - Math.min(76, rect.height * 0.2)) return;
-    const wasPaused = video.paused;
-    const previousTime = video.currentTime;
+    if (event.clientY >= rect.bottom - Math.min(76, rect.height * 0.2)) {
+      gesture?.cleanup?.();
+      return;
+    }
+    const initial = gesture?.initial || {
+      paused: video.paused,
+      currentTime: Number(video.currentTime || 0),
+      playbackRate: Number(video.playbackRate || 1)
+    };
     if (clickTimer) clearTimeout(clickTimer);
     clickTimer = setTimeout(() => {
       clickTimer = null;
-      // Normal playback (especially a site's press-to-2x gesture) advances time
-      // during this delay. Only a real state change or a substantial seek means
-      // the site handled the click itself.
-      const siteHandledClick = video.paused !== wasPaused || Math.abs(video.currentTime - previousTime) > 1.25;
+      const siteHandledClick = Boolean(gesture?.wasHandled?.()) ||
+        video.paused !== initial.paused ||
+        Math.abs(video.currentTime - initial.currentTime) > 1.25 ||
+        Math.abs(video.playbackRate - initial.playbackRate) > 0.01;
+      gesture?.cleanup?.();
       if (siteHandledClick) return;
-      if (wasPaused) video.play().catch(() => {});
+      if (initial.paused) video.play().catch(() => {});
       else video.pause();
-    }, 260);
+    }, 320);
   }, true);
 }
 
 function attach(video) {
-  attachClickToggle(video);
   if (video.dataset.havynMediaEventsAttached) return;
   video.dataset.havynMediaEventsAttached = "preload";
   ["play", "pause", "seeking", "seeked", "timeupdate", "loadedmetadata", "canplay", "playing", "ended", "ratechange"].forEach((eventName) => {
