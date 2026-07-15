@@ -8,7 +8,11 @@ const DO_NOT_QUEUE = new Set([
   "webrtc-offer",
   "webrtc-answer",
   "webrtc-ice-candidate",
-  "webrtc-ice-candidates"
+  "webrtc-ice-candidates",
+  "screen-webrtc-offer",
+  "screen-webrtc-answer",
+  "screen-webrtc-ice-candidate",
+  "screen-webrtc-ice-candidates"
 ]);
 const MAX_RETRY_ATTEMPTS = 1;
 const MAX_RETRY_AGE_MS = 15_000;
@@ -162,6 +166,7 @@ export class CloudflareRealtimeSocket {
         visibility: connection.visibility,
         room: connection.room,
         displayName: connection.user.displayName,
+        capabilities: import.meta.env?.VITE_LIVE_SHARE_ENABLED === "true" ? ["live-share-v1"] : [],
         ...(allowDevAuth ? { devUser: { id: connection.user.userId, displayName: connection.user.displayName } } : {})
       })
     });

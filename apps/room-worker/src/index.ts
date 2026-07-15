@@ -18,6 +18,7 @@ interface ConnectionAttachment extends Participant {
 
 interface StoredRoom {
   state: RoomState;
+  preLiveSharePlayback?: RoomState["playbackState"] | null;
   recentCommandIds: string[];
   pendingDisconnects: Record<string, { participant: ConnectionAttachment; expiresAt: number }>;
 }
@@ -77,7 +78,7 @@ export class HavynRoom {
       const hostUserId = claims.creating ? claims.userId : String(claims.room?.hostUserId || "");
       if (!hostUserId) return new Response("Room does not exist", { status: 404 });
       const engine = RoomEngine.create(claims.roomId, hostUserId, claims.room || {});
-      stored = { state: engine.state, recentCommandIds: [], pendingDisconnects: {} };
+      stored = { state: engine.state, preLiveSharePlayback: null, recentCommandIds: [], pendingDisconnects: {} };
       await this.persist(stored);
     }
 
@@ -110,7 +111,8 @@ export class HavynRoom {
       muted: previous?.muted ?? true,
       cameraOff: previous?.cameraOff ?? true,
       joinedAt: previous?.joinedAt || now,
-      lastSeenAt: now
+      lastSeenAt: now,
+      capabilities: claims.capabilities || []
     };
     server.serializeAttachment(attachment);
     this.ctx.acceptWebSocket(server);
@@ -224,7 +226,8 @@ export class HavynRoom {
         this.stored = stored ? {
           ...stored,
           recentCommandIds: stored.recentCommandIds || [],
-          pendingDisconnects: stored.pendingDisconnects || {}
+          pendingDisconnects: stored.pendingDisconnects || {},
+          preLiveSharePlayback: stored.preLiveSharePlayback || null
         } : null;
         this.loading = null;
         return this.stored;
@@ -239,7 +242,7 @@ export class HavynRoom {
       .filter((socket) => socket !== excludedSocket)
       .map((socket) => socket.deserializeAttachment() as ConnectionAttachment | null)
       .filter((participant): participant is ConnectionAttachment => Boolean(participant?.userId));
-    return new RoomEngine(stored.state, [...pendingParticipants, ...activeParticipants]);
+    return new RoomEngine(stored.state, [...pendingParticipants, ...activeParticipants], stored.preLiveSharePlayback || null);
   }
 
   private async scheduleDisconnectAlarm(stored: StoredRoom): Promise<void> {
@@ -257,6 +260,7 @@ export class HavynRoom {
     if (!stored) return;
     if (result.stateChanged) {
       stored.state = engine.state;
+      stored.preLiveSharePlayback = engine.preLiveSharePlayback;
       await this.persist(stored);
     } else {
       this.stored = { ...stored, state: engine.state };
@@ -317,6 +321,9 @@ async function issueRoomTicket(request: Request, env: Env, roomId: string): Prom
   const user = await authenticateUser(request, env, body);
   if (!user) return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
   const requestedRoom = (body.room || {}) as Partial<RoomState>;
+  const capabilities = Array.isArray(body.capabilities)
+    ? body.capabilities.map(String).filter((capability) => capability === "live-share-v1")
+    : [];
   const creating = Boolean(body.creating);
   const claims: RoomTicketClaims = {
     roomId,
@@ -334,7 +341,8 @@ async function issueRoomTicket(request: Request, env: Env, roomId: string): Prom
       createdAt: requestedRoom.createdAt
     },
     exp: Date.now() + 60_000,
-    jti: crypto.randomUUID()
+    jti: crypto.randomUUID(),
+    capabilities
   };
   return corsResponse(JSON.stringify({ ticket: await signTicket(claims, secret), expiresAt: claims.exp, protocol: PROTOCOL_VERSION }), env);
 }

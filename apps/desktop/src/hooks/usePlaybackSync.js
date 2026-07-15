@@ -8,7 +8,7 @@ import {
   startPlaybackMaintenance
 } from "../lib/playbackMaintenance";
 
-export function usePlaybackSync({ socket, room, user, applyPlayback, localCurrentTime, onPlaybackState }) {
+export function usePlaybackSync({ socket, room, user, applyPlayback, localCurrentTime, onPlaybackState, suspended = false }) {
   const [playbackState, setPlaybackState] = useState(null);
   const localCurrentTimeRef = useRef(localCurrentTime);
   const playbackStateRef = useRef(null);
@@ -21,12 +21,12 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   }, [localCurrentTime]);
 
   const canControl = useMemo(() => {
-    if (!room) return false;
+    if (!room || suspended) return false;
     if (room.playbackMode === "everyone") return true;
     if (room.hostUserId === user.id) return true;
     if (room.playbackMode === "host-and-cohosts") return ["host", "cohost"].includes(role);
     return role === "host";
-  }, [room, role, user.id]);
+  }, [room, role, suspended, user.id]);
 
   useEffect(() => {
     playbackStateRef.current = playbackState || room?.playbackState || null;
@@ -103,6 +103,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   }, [applyPlayback, onPlaybackState, role, room?.playbackMode, room?.roomId, user.id]);
 
   useEffect(() => {
+    if (suspended) return undefined;
     const sync = (state) => applyRemoteState(state, "sync");
     const command = (payload) => applyRemoteState(payload?.state || payload, payload?.action || "sync");
     const play = (state) => applyRemoteState(state, "play");
@@ -127,10 +128,10 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       socket.off("playback-rate-change", rate);
       socket.off("media-ended", ended);
     };
-  }, [socket, applyRemoteState]);
+  }, [socket, applyRemoteState, suspended]);
 
   useEffect(() => {
-    if (!room?.roomId) return undefined;
+    if (!room?.roomId || suspended) return undefined;
     // Keep these timers stable while playback state changes. Production drift
     // smoothing can be added later without tying timer lifetime to media events.
     return startPlaybackMaintenance({
@@ -140,10 +141,10 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       userId: user.id,
       getCurrentTime: () => localCurrentTimeRef.current
     });
-  }, [socket, room?.roomId, user.id]);
+  }, [socket, room?.roomId, suspended, user.id]);
 
   useEffect(() => {
-    if (!supabase || !room?.roomId || room.hostUserId !== user.id) return undefined;
+    if (!supabase || !room?.roomId || room.hostUserId !== user.id || suspended) return undefined;
     let disposed = false;
     const persistPlayback = createSingleFlightRunner(async () => {
       if (disposed) return false;
@@ -166,9 +167,10 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [room?.hostUserId, room?.roomId, user.id]);
+  }, [room?.hostUserId, room?.roomId, suspended, user.id]);
 
   function selectMedia(media) {
+    if (suspended) return;
     socket.emit("media-selected", {
       roomId: room.roomId,
       userId: user.id,
@@ -177,6 +179,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   }
 
   function sendPlayback(action, data = {}) {
+    if (suspended) return;
     const eventName = {
       play: "playback-play",
       pause: "playback-pause",
@@ -197,6 +200,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   }
 
   function controlPlayback(action) {
+    if (suspended) return;
     const currentTime = localCurrentTimeRef.current ?? playbackState?.currentTime ?? 0;
     const command = {
       action,

@@ -1,14 +1,16 @@
-import { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, shell, webContents } from "electron";
+import { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, screen, session, shell, webContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "./playbackEventClassifier.js";
 import { createCallMediaPermissionGate } from "./callMediaPermission.js";
+import { createScreenSharePermissionGate } from "./screenSharePermission.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 let mainWindow;
 const callMediaPermission = createCallMediaPermissionGate(() => mainWindow?.webContents?.id);
+const screenSharePermission = createScreenSharePermissionGate(() => mainWindow?.webContents?.id);
 let activeTabId;
 let currentBounds;
 let mediaEventTimer;
@@ -950,6 +952,80 @@ ipcMain.handle("call-media:set-active", (event, active) => (
   callMediaPermission.setActive(event.sender.id, active)
 ));
 
+ipcMain.handle("screen-share:get-sources", async (event) => {
+  if (event.sender.id !== mainWindow?.webContents?.id) return [];
+  const sources = await desktopCapturer.getSources({
+    types: ["screen", "window"],
+    thumbnailSize: { width: 360, height: 204 },
+    fetchWindowIcons: true
+  });
+  screenSharePermission.registerSources(event.sender.id, sources);
+  return [{
+    id: "havyn:browser-region",
+    name: "Havyn browser",
+    displayId: "",
+    thumbnail: "",
+    appIcon: "",
+    type: "browser-region"
+  }, ...sources.map((source) => ({
+    id: source.id,
+    name: source.name,
+    displayId: source.display_id || "",
+    thumbnail: source.thumbnail?.toDataURL?.() || "",
+    appIcon: source.appIcon?.toDataURL?.() || "",
+    type: source.id.startsWith("screen:") ? "screen" : "window"
+  }))];
+});
+
+ipcMain.handle("screen-share:select-source", async (event, selection = {}) => {
+  if (event.sender.id !== mainWindow?.webContents?.id) return { armed: false };
+  const requestedId = String(selection.sourceId || "");
+  const browserRegion = requestedId === "havyn:browser-region";
+  const currentSources = await desktopCapturer.getSources({
+    types: browserRegion ? ["screen"] : ["screen", "window"],
+    thumbnailSize: { width: 0, height: 0 },
+    fetchWindowIcons: false
+  });
+  let source = currentSources.find((item) => item.id === requestedId);
+  let metadata = { captureMode: "source" };
+
+  if (browserRegion) {
+    const display = screen.getDisplayMatching(mainWindow.getBounds());
+    source = currentSources.find((item) => String(item.display_id) === String(display.id))
+      || currentSources.find((item) => item.id.startsWith("screen:"));
+    const requestedRect = selection.browserRect || {};
+    const contentBounds = mainWindow.getContentBounds();
+    const width = Math.max(1, Number(requestedRect.width) || 1);
+    const height = Math.max(1, Number(requestedRect.height) || 1);
+    metadata = {
+      captureMode: "browser-region",
+      cropRect: {
+        x: contentBounds.x + (Number(requestedRect.x) || 0) - display.bounds.x,
+        y: contentBounds.y + (Number(requestedRect.y) || 0) - display.bounds.y,
+        width,
+        height
+      },
+      displayBounds: { width: display.bounds.width, height: display.bounds.height }
+    };
+  }
+
+  if (!source) return { armed: false };
+  screenSharePermission.registerSources(event.sender.id, [source]);
+  const armed = screenSharePermission.select(
+    event.sender.id,
+    source.id,
+    Boolean(selection.withAudio),
+    metadata
+  );
+  return { armed, ...metadata };
+});
+
+ipcMain.handle("screen-share:cancel", (event) => {
+  if (event.sender.id !== mainWindow?.webContents?.id) return false;
+  screenSharePermission.reset();
+  return true;
+});
+
 ipcMain.handle("app:get-browser-preload-url", () => `file://${path.join(__dirname, "browserPreload.js").replace(/\\/g, "/")}`);
 ipcMain.handle("app:get-browser-partition", () => browserPartition());
 
@@ -1054,12 +1130,27 @@ ipcMain.on("browser:media-event-from-page", (event, payload) => {
 
 if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(() => {
   initializeDiagnosticLog();
-  const canUseAppMedia = (requestingWebContents, permission) => (
-    callMediaPermission.canGrant(requestingWebContents?.id, permission)
-  );
+  const canUseAppMedia = (requestingWebContents, permission) => {
+    if (["display-capture", "screen-capture"].includes(permission)) {
+      return requestingWebContents?.id === mainWindow?.webContents?.id;
+    }
+    if (permission === "media" && screenSharePermission.canGrant(requestingWebContents?.id)) {
+      return true;
+    }
+    return callMediaPermission.canGrant(requestingWebContents?.id, permission);
+  };
   session.defaultSession.setPermissionCheckHandler(canUseAppMedia);
   session.defaultSession.setPermissionRequestHandler((requestingWebContents, permission, callback) => {
     callback(canUseAppMedia(requestingWebContents, permission));
+  });
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    const requestingWebContents = webContents.fromFrame?.(request.frame);
+    const selection = screenSharePermission.consume(requestingWebContents?.id);
+    if (!selection) return callback({});
+    callback({
+      video: selection.source,
+      ...(selection.withAudio ? { audio: "loopback" } : {})
+    });
   });
   browserSession().setPermissionCheckHandler(() => false);
   browserSession().setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -1067,7 +1158,10 @@ if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(() => {
   createMainWindow();
 });
 
-app.on("before-quit", () => callMediaPermission.reset());
+app.on("before-quit", () => {
+  callMediaPermission.reset();
+  screenSharePermission.reset();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

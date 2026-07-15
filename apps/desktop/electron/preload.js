@@ -4,6 +4,11 @@ contextBridge.exposeInMainWorld("havyn", {
   callMedia: {
     setActive: (active) => ipcRenderer.invoke("call-media:set-active", Boolean(active))
   },
+  screenShare: {
+    getSources: () => ipcRenderer.invoke("screen-share:get-sources"),
+    selectSource: (sourceId, withAudio, browserRect) => ipcRenderer.invoke("screen-share:select-source", { sourceId, withAudio, browserRect }),
+    cancel: () => ipcRenderer.invoke("screen-share:cancel")
+  },
   diagnostics: {
     isEnabled: () => ipcRenderer.invoke("diagnostics:is-enabled"),
     log: (record) => ipcRenderer.send("diagnostics:log", record),

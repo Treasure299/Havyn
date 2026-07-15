@@ -1,9 +1,10 @@
-import { Copy, FolderOpen, HelpCircle, LogOut, Maximize2, Menu, Minimize2, UserCircle2 } from "lucide-react";
+import { Copy, FolderOpen, HelpCircle, LogOut, Maximize2, Menu, Minimize2, MonitorUp, UserCircle2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMediaDetection } from "../hooks/useMediaDetection";
 import { useDismissableLayer } from "../hooks/useDismissableLayer";
 import { usePlaybackSync } from "../hooks/usePlaybackSync";
+import { useScreenShare } from "../hooks/useScreenShare";
 import { useWebRTC } from "../hooks/useWebRTC";
 import { logPlaybackDiagnostic } from "../lib/playbackDiagnostics";
 import { canonicalMediaSelection, isOnSharedMediaPage, sameBrowserPage, sharedMediaPageUrl } from "../lib/mediaSource";
@@ -11,6 +12,8 @@ import CallControls from "./CallControls";
 import ChatPanel from "./ChatPanel";
 import IntegratedBrowserPanel from "./IntegratedBrowserPanel";
 import InteractiveGuide from "./InteractiveGuide";
+import LiveSharePicker from "./LiveSharePicker";
+import LiveShareSurface from "./LiveShareSurface";
 import Logo from "./Logo";
 import MediaDetectionPanel from "./MediaDetectionPanel";
 import NotificationBell from "./NotificationBell";
@@ -40,6 +43,8 @@ const playbackCommandFromState = (state, reason = "state-sync") => {
 export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const { room, socket } = roomState;
   const call = useWebRTC({ socket, room, user });
+  const liveShareEnabled = import.meta.env.VITE_LIVE_SHARE_ENABLED === "true";
+  const screenShare = useScreenShare({ socket, room, user, enabled: liveShareEnabled });
   const playbackRef = useRef(null);
   const webVideoRef = useRef(null);
   const watchLayoutRef = useRef(null);
@@ -63,11 +68,13 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const [cinemaChatCollapsed, setCinemaChatCollapsed] = useState(true);
   const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false);
   const [roomMenuOpen, setRoomMenuOpen] = useState(false);
+  const [liveSharePickerOpen, setLiveSharePickerOpen] = useState(false);
   const audioNoticeRef = useRef(null);
   const cinemaControlsButtonRef = useRef(null);
   const cinemaControlsRef = useRef(null);
   const roomMenuButtonRef = useRef(null);
   const roomMenuRef = useRef(null);
+  const wasLiveShareRef = useRef(false);
   const [guideOpen, setGuideOpen] = useState(() => (
     localStorage.getItem("havyn:guide:watch:armed") === "true" ||
     localStorage.getItem("havyn:guide:watch:v1") !== "done"
@@ -200,7 +207,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }
 
   const handleMediaEvent = useCallback((event) => {
-    if (!room) return;
+    if (!room || room.roomExperience === "live-share") return;
     const eventName = event.eventName;
     const now = Date.now();
     const currentTime = Number(event.media?.currentTime);
@@ -308,7 +315,8 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     user,
     applyPlayback: media.applyPlayback,
     localCurrentTime: media.detectedMedia[0]?.currentTime,
-    onPlaybackState: roomState.updatePlaybackSnapshot
+    onPlaybackState: roomState.updatePlaybackSnapshot,
+    suspended: room.roomExperience === "live-share"
   });
   const mediaRef = useRef(media);
 
@@ -317,14 +325,34 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     playbackRef.current = playback;
   }, [media, playback]);
 
+  const sharingBrowserRegion = screenShare.isHosting && screenShare.captureMode === "browser-region";
+  const showingLiveShare = Boolean(screenShare.localStream || screenShare.watching) && !sharingBrowserRegion;
+
+  useEffect(() => {
+    const isLive = room.roomExperience === "live-share";
+    if (isLive && !wasLiveShareRef.current) {
+      media.applyPlayback?.({
+        action: "pause",
+        currentTime: calculateProjectedTime(room.playbackState),
+        playbackRate: room.playbackState?.playbackRate || 1,
+        activeMediaFrameUrl: room.playbackState?.activeMediaFrameUrl,
+        reason: "live-share-suspend"
+      });
+    }
+    if (!isLive && wasLiveShareRef.current) {
+      media.applyPlayback?.(playbackCommandFromState(room.playbackState, "live-share-restore"));
+    }
+    wasLiveShareRef.current = isLive;
+  }, [media, room.playbackState, room.roomExperience]);
+
   useEffect(() => {
     if (!canUseFocusLayout && callLayout === "focus") setCallLayout("grid");
   }, [callLayout, canUseFocusLayout]);
 
   useEffect(() => {
-    media.browser?.setVisible?.(!(guideOpen || devicesOpen));
+    media.browser?.setVisible?.(!(guideOpen || devicesOpen || liveSharePickerOpen || showingLiveShare));
     return () => media.browser?.setVisible?.(true);
-  }, [devicesOpen, guideOpen, media.browser]);
+  }, [devicesOpen, guideOpen, liveSharePickerOpen, media.browser, showingLiveShare]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -350,6 +378,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
 
   useEffect(() => {
     const handleSelected = ({ media: selected, playbackState: selectedState }) => {
+      if (room.roomExperience === "live-share") return;
       manualBrowsingRef.current = false;
       pendingMediaPageRef.current = "";
       const playableUrl = sharedMediaPageUrl(selected);
@@ -385,9 +414,10 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     };
     socket.on("media-selected", handleSelected);
     return () => socket.off("media-selected", handleSelected);
-  }, [media, socket]);
+  }, [media, room.roomExperience, socket]);
 
   useEffect(() => {
+    if (room.roomExperience === "live-share") return;
     const activeUrl = playback.playbackState?.activeMediaPageUrl || playback.playbackState?.activeMediaUrl || room.playbackState?.activeMediaPageUrl || room.playbackState?.activeMediaUrl;
     if (!activeUrl) return;
     if (pendingMediaPageRef.current && sameBrowserPage(activeUrl, pendingMediaPageRef.current)) {
@@ -443,10 +473,16 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     playback.playbackState?.activeMediaUrl,
     room.playbackState?.activeMediaFrameUrl,
     room.playbackState?.activeMediaPageUrl,
-    room.playbackState?.activeMediaUrl
+    room.playbackState?.activeMediaUrl,
+    room.roomExperience
   ]);
 
   useEffect(() => {
+    if (room.roomExperience === "live-share") {
+      autoSyncTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      autoSyncTimersRef.current = [];
+      return;
+    }
     const state = playback.playbackState || room.playbackState;
     const firstMedia = media.detectedMedia[0];
     if (!state?.activeMediaUrl || !firstMedia) return;
@@ -460,13 +496,14 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
         socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
       }, delay)
     ));
-  }, [media.detectedMedia, playback.playbackState, room.playbackState, room.roomId, socket, user.id]);
+  }, [media.detectedMedia, playback.playbackState, room.playbackState, room.roomExperience, room.roomId, socket, user.id]);
 
   useEffect(() => () => {
     autoSyncTimersRef.current.forEach((timer) => window.clearTimeout(timer));
   }, []);
 
   const selectRoomMedia = useCallback((selected) => {
+    if (room.roomExperience === "live-share") return;
     const mediaForRoom = canonicalMediaSelection(selected, media.currentUrl);
     const playableUrl = mediaForRoom.pageUrl;
     if (!playableUrl) return;
@@ -502,7 +539,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       window.setTimeout(() => media.scanMedia?.(), 700);
       window.setTimeout(() => media.scanMedia?.(), 1600);
     }).catch(() => {});
-  }, [media, playback, room.roomId]);
+  }, [media, playback, room.roomExperience, room.roomId]);
 
   const beginManualBrowsing = useCallback((nextUrl = "") => {
     manualBrowsingRef.current = true;
@@ -516,6 +553,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, [room.roomId]);
 
   const resyncToRoom = useCallback(async () => {
+    if (room.roomExperience === "live-share") return;
     const state = playbackRef.current?.playbackState || room.playbackState;
     const activeUrl = state?.activeMediaPageUrl || state?.activeMediaUrl;
     if (!activeUrl) return;
@@ -540,7 +578,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       media.scanMedia?.().catch(() => {});
       socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
     }, 1100);
-  }, [media, room.playbackState, room.roomId, socket, user.id]);
+  }, [media, room.playbackState, room.roomExperience, room.roomId, socket, user.id]);
 
   const inviteLink = `havyn://room/${room.roomId}`;
   const copyRoomCode = async () => {
@@ -627,6 +665,10 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     document.body
   ) : null;
 
+  const liveShareCompatible = liveShareEnabled && room.participants.length <= 4 && room.participants.every((participant) => (
+    participant.capabilities?.includes("live-share-v1")
+  ));
+
   return (
     <main className={`watch-room ${focusMode ? "is-focus-mode" : ""} ${focusMode && !cinemaChatCollapsed ? "is-cinema-chat-open" : ""}`}>
       <header className="room-header">
@@ -636,10 +678,21 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           <span>Host: {room.participants.find((p) => p.userId === room.hostUserId)?.displayName || "Host"} - {room.playbackMode}</span>
         </div>
         <div className="header-actions">
+          {liveShareEnabled && room.hostUserId === user.id && (
+            <button
+              className={`icon-text live-share-header-button ${room.roomExperience === "live-share" ? "is-live" : ""}`}
+              type="button"
+              disabled={!liveShareCompatible && room.roomExperience !== "live-share"}
+              onClick={() => room.roomExperience === "live-share" ? screenShare.stopShare() : setLiveSharePickerOpen(true)}
+              title={liveShareCompatible ? "Share a screen or window" : "Live Share requires up to 4 participants using a compatible Havyn build"}
+            >
+              <MonitorUp size={17} /> {room.roomExperience === "live-share" ? "Stop Live" : "Live Share"}
+            </button>
+          )}
           <button className="icon-button" onClick={toggleFocusMode} title={focusMode ? "Exit focus mode" : "Focus mode"}>
             {focusMode ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
           </button>
-          <select className="mode-select" value={room.playbackMode} onChange={(event) => roomState.setPlaybackMode(event.target.value)}>
+          <select className="mode-select" value={room.playbackMode} disabled={room.roomExperience === "live-share"} onChange={(event) => roomState.setPlaybackMode(event.target.value)}>
             <option value="host-only">host-only</option>
             <option value="host-and-cohosts">host-and-cohosts</option>
             <option value="everyone">everyone</option>
@@ -684,14 +737,20 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
               <strong>{room.playbackState?.activeMediaTitle || "Detected video"}</strong>
               <span>{room.playbackMode}</span>
             </div>
-            <button
-              className="first-sync-button"
-              type="button"
-              disabled={!playback.canControl || !playback.playbackState?.activeMediaUrl}
-              onClick={playback.play}
-            >
-              First Sync Play
-            </button>
+            {room.roomExperience === "live-share" ? (
+              <button className="danger-button" type="button" onClick={screenShare.isHost ? screenShare.stopShare : screenShare.leaveShare}>
+                {screenShare.isHost ? "Stop sharing" : "Leave Live Share"}
+              </button>
+            ) : (
+              <button
+                className="first-sync-button"
+                type="button"
+                disabled={!playback.canControl || !playback.playbackState?.activeMediaUrl}
+                onClick={playback.play}
+              >
+                First Sync Play
+              </button>
+            )}
           </div>
         </>
       )}
@@ -705,23 +764,46 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           className="watch-main"
           style={viewerHeight ? { gridTemplateRows: `${viewerHeight}px 3px auto` } : undefined}
         >
-          <IntegratedBrowserPanel
-            className="guide-browser-target"
-            browser={media.browser}
-            currentUrl={media.currentUrl}
-            onLoadUrl={media.loadUrl}
-            onUserNavigate={beginManualBrowsing}
-            activeMediaTitle={room.playbackState?.activeMediaTitle}
-            onWebMediaDetected={(items, video) => {
-              webVideoRef.current = video;
-              media.reportWebMedia(items);
-            }}
-            onWebMediaEvent={handleMediaEvent}
-            webPlaybackState={playback.playbackState}
-            layoutSignal={focusMode ? "cinema" : "normal"}
-          />
-          <div className="viewer-resize-handle" title="Resize viewing area" onPointerDown={startViewerResize} onDoubleClick={() => setViewerHeight(null)} />
-          <div className="viewer-toolbar">
+          <div className="viewing-stage">
+            <IntegratedBrowserPanel
+              className={`guide-browser-target ${showingLiveShare ? "is-live-share-hidden" : ""}`}
+              browser={media.browser}
+              currentUrl={media.currentUrl}
+              onLoadUrl={media.loadUrl}
+              onUserNavigate={beginManualBrowsing}
+              activeMediaTitle={room.playbackState?.activeMediaTitle}
+              onWebMediaDetected={(items, video) => {
+                webVideoRef.current = video;
+                media.reportWebMedia(items);
+              }}
+              onWebMediaEvent={handleMediaEvent}
+              webPlaybackState={playback.playbackState}
+              layoutSignal={focusMode ? "cinema" : "normal"}
+            />
+            {showingLiveShare && (
+              <LiveShareSurface share={screenShare} focusMode={focusMode} onToggleFocus={toggleFocusMode} />
+            )}
+            {sharingBrowserRegion && (
+              <div className="live-share-browser-badge glass"><i /> LIVE <span>Sharing Havyn browser</span></div>
+            )}
+            {!showingLiveShare && screenShare.invitation && (
+              <div className="live-share-invite glass">
+                <span className="live-kicker">LIVE SHARE</span>
+                <strong>{screenShare.invitation.hostDisplayName} started Live Share</strong>
+                <div>
+                  <button className="primary-button" type="button" onClick={screenShare.acceptShare}>Watch</button>
+                  <button className="ghost-button" type="button" onClick={screenShare.declineShare}>Not now</button>
+                </div>
+              </div>
+            )}
+            {!showingLiveShare && screenShare.available && !screenShare.invitation && (
+              <button className="live-share-available glass" type="button" onClick={screenShare.acceptShare}>
+                <MonitorUp size={17} /> Live Share available <span>Watch</span>
+              </button>
+            )}
+          </div>
+          {!showingLiveShare && room.roomExperience !== "live-share" && <div className="viewer-resize-handle" title="Resize viewing area" onPointerDown={startViewerResize} onDoubleClick={() => setViewerHeight(null)} />}
+          {!showingLiveShare && room.roomExperience !== "live-share" && <div className="viewer-toolbar">
             <div className="guide-source-target">
               <MediaDetectionPanel
                 detectedMedia={media.detectedMedia}
@@ -741,7 +823,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
                 onResync={resyncToRoom}
               />
             </div>
-          </div>
+          </div>}
         </div>
         <div
           className="watch-resize-handle"
@@ -784,7 +866,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
               layout={callLayout}
               focusPrimary={focusPrimary}
               floating={focusMode}
-              isPlaying={Boolean(playback.playbackState?.isPlaying || room.playbackState?.isPlaying)}
+              isPlaying={room.roomExperience === "live-share" ? false : Boolean(playback.playbackState?.isPlaying || room.playbackState?.isPlaying)}
               chatOpen={focusMode && !cinemaChatCollapsed}
             />
           </section>
@@ -819,6 +901,33 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           setGuideOpen(false);
         }}
       />
+      <LiveSharePicker
+        open={liveSharePickerOpen}
+        starting={screenShare.starting}
+        onClose={() => {
+          setLiveSharePickerOpen(false);
+          window.havyn?.screenShare?.cancel?.().catch(() => {});
+        }}
+        onStart={(selection) => {
+          const browserRect = document.querySelector(".viewing-stage .browser-frame")?.getBoundingClientRect();
+          return screenShare.startShare({
+            ...selection,
+            browserRect: browserRect ? {
+              x: browserRect.x,
+              y: browserRect.y,
+              width: browserRect.width,
+              height: browserRect.height
+            } : null
+          });
+        }}
+      />
+      {createPortal(
+        <>
+          {screenShare.error && <div className="toast live-share-toast" onClick={screenShare.clearError}>{screenShare.error}</div>}
+          {screenShare.notice && <div className="action-toast live-share-notice">{screenShare.notice}</div>}
+        </>,
+        document.body
+      )}
     </main>
   );
 }

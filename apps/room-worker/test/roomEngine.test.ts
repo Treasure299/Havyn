@@ -15,7 +15,8 @@ function participant(userId: string, role: Participant["role"] = "viewer"): Part
     muted: true,
     cameraOff: true,
     joinedAt: now,
-    lastSeenAt: now
+    lastSeenAt: now,
+    capabilities: ["live-share-v1"]
   };
 }
 
@@ -236,5 +237,123 @@ describe("RoomEngine call signaling", () => {
       muted: true,
       cameraOff: false
     });
+  });
+});
+
+describe("RoomEngine Live Share", () => {
+  it("allows only the host to start and stop while preserving playback exactly", () => {
+    const engine = roomWithTwoUsers("everyone");
+    engine.handle("playback-play", { currentTime: 42, playbackRate: 1.25 }, "host", "play-before-share");
+    const before = { ...engine.state.playbackState };
+
+    const denied = engine.handle("live-share-start", { shareId: "share-1", hasAudio: true }, "viewer", "share-denied");
+    expect(event(denied, "live-share-error")?.targetUserId).toBe("viewer");
+
+    const started = engine.handle("live-share-start", { shareId: "share-1", hasAudio: true }, "host", "share-start");
+    expect(event(started, "live-share-available")?.payload).toMatchObject({ shareId: "share-1", hasAudio: true });
+    expect(engine.state.roomExperience).toBe("live-share");
+    expect(engine.preLiveSharePlayback).toMatchObject({ currentTime: expect.any(Number), isPlaying: true });
+
+    const playbackDuringShare = engine.handle("playback-pause", { currentTime: 80 }, "host", "pause-during-share");
+    expect(event(playbackDuringShare, "playback-command")).toBeUndefined();
+
+    const stopped = engine.handle("live-share-stop", {}, "host", "share-stop");
+    expect(event(stopped, "live-share-ended")?.payload).toMatchObject({ shareId: "share-1" });
+    expect(engine.state.roomExperience).toBe("synced-media");
+    expect(engine.state.playbackState).toMatchObject({
+      activeMediaUrl: before.activeMediaUrl,
+      playbackRate: before.playbackRate,
+      isPlaying: before.isPlaying
+    });
+    expect(engine.preLiveSharePlayback).toBeNull();
+  });
+
+  it("supports accept, decline, leave, reaccept, and targeted screen signaling", () => {
+    const engine = roomWithTwoUsers();
+    engine.handle("live-share-start", { shareId: "share-2" }, "host", "share-start");
+
+    const declined = engine.handle("live-share-decline", { shareId: "share-2" }, "viewer", "decline");
+    expect(event(declined, "live-share-decline")?.targetUserId).toBe("host");
+
+    const accepted = engine.handle("live-share-accept", { shareId: "share-2" }, "viewer", "accept");
+    expect(event(accepted, "live-share-accept")?.targetUserId).toBe("host");
+    expect(engine.state.liveShare.viewerUserIds).toEqual(["viewer"]);
+
+    const revisionAfterAccept = engine.state.revision;
+    const reconnected = engine.handle("live-share-accept", { shareId: "share-2" }, "viewer", "accept-again");
+    expect(event(reconnected, "live-share-accept")?.targetUserId).toBe("host");
+    expect(event(reconnected, "room-state")).toBeUndefined();
+    expect(engine.state.revision).toBe(revisionAfterAccept);
+
+    const signal = engine.handle("screen-webrtc-offer", {
+      shareId: "share-2",
+      toUserId: "viewer",
+      description: { type: "offer", sdp: "screen-only" }
+    }, "host", "screen-signal");
+    expect(signal.events).toHaveLength(1);
+    expect(signal.events[0]).toMatchObject({ event: "screen-webrtc-offer", targetUserId: "viewer" });
+
+    const unaccepted = participant("observer");
+    engine.join(unaccepted);
+    expect(engine.handle("screen-webrtc-answer", {
+      shareId: "share-2",
+      toUserId: "host",
+      description: { type: "answer", sdp: "not-accepted" }
+    }, "observer", "unaccepted-signal").events).toHaveLength(0);
+
+    engine.handle("live-share-viewer-left", { shareId: "share-2" }, "viewer", "viewer-left");
+    expect(engine.state.liveShare.viewerUserIds).toEqual([]);
+    engine.handle("live-share-accept", { shareId: "share-2" }, "viewer", "reaccept");
+    expect(engine.state.liveShare.viewerUserIds).toEqual(["viewer"]);
+  });
+
+  it("enforces four room participants and blocks unsupported clients", () => {
+    const engine = RoomEngine.create("ROOM1234", "host");
+    ["host", "two", "three", "four", "five"].forEach((id, index) => {
+      engine.join(participant(id, index === 0 ? "host" : "viewer"));
+    });
+    expect(event(engine.handle("live-share-start", { shareId: "too-many" }, "host", "start"), "live-share-error")?.payload)
+      .toMatchObject({ reason: "Live Share supports up to 4 room participants." });
+
+    const compatible = roomWithTwoUsers();
+    compatible.participants.set("viewer", { ...participant("viewer"), capabilities: [] });
+    expect(event(compatible.handle("live-share-start", { shareId: "old-client" }, "host", "start-old"), "live-share-error")?.payload)
+      .toMatchObject({ reason: expect.stringContaining("newer Havyn build") });
+  });
+
+  it("limits an active share to three viewers, including late joiners", () => {
+    const engine = RoomEngine.create("ROOM1234", "host");
+    engine.join(participant("host", "host"));
+    ["two", "three", "four"].forEach((id) => engine.join(participant(id)));
+    engine.handle("live-share-start", { shareId: "share-full" }, "host", "start");
+    ["two", "three", "four"].forEach((id) => engine.handle("live-share-accept", { shareId: "share-full" }, id, `accept-${id}`));
+
+    engine.join(participant("late"));
+    const denied = engine.handle("live-share-accept", { shareId: "share-full" }, "late", "accept-late");
+    expect(event(denied, "live-share-error")?.targetUserId).toBe("late");
+    expect(engine.state.liveShare.viewerUserIds).toEqual(["two", "three", "four"]);
+  });
+
+  it("stops automatically when the host leaves", () => {
+    const engine = roomWithTwoUsers();
+    engine.handle("live-share-start", { shareId: "share-host-leave" }, "host", "start");
+    const result = engine.leave("host");
+    expect(event(result, "live-share-ended")?.payload).toMatchObject({ shareId: "share-host-leave" });
+    expect(engine.state.roomExperience).toBe("synced-media");
+  });
+
+  it("keeps call presence intact throughout Live Share", () => {
+    const engine = roomWithTwoUsers();
+    engine.handle("call-join", { muted: false, cameraOff: false }, "host", "host-call");
+    engine.handle("call-join", { muted: true, cameraOff: false }, "viewer", "viewer-call");
+
+    engine.handle("live-share-start", { shareId: "share-with-call" }, "host", "share-start");
+    engine.handle("live-share-accept", { shareId: "share-with-call" }, "viewer", "share-accept");
+    engine.handle("live-share-stop", {}, "host", "share-stop");
+
+    expect(engine.snapshot().participants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: "host", callStatus: "connected", muted: false, cameraOff: false }),
+      expect.objectContaining({ userId: "viewer", callStatus: "connected", muted: true, cameraOff: false })
+    ]));
   });
 });

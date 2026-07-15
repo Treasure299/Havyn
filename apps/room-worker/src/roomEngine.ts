@@ -1,4 +1,5 @@
 import {
+  defaultLiveShareState,
   defaultPlaybackState,
   isPlaybackMode,
   projectPlayback,
@@ -34,10 +35,16 @@ const PLAYBACK_ACTIONS: Record<string, string> = {
 export class RoomEngine {
   state: RoomState;
   participants: Map<string, Participant>;
+  preLiveSharePlayback: PlaybackState | null;
 
-  constructor(state: RoomState, participants: Iterable<Participant> = []) {
-    this.state = state;
+  constructor(state: RoomState, participants: Iterable<Participant> = [], preLiveSharePlayback: PlaybackState | null = null) {
+    this.state = {
+      ...state,
+      roomExperience: state.roomExperience === "live-share" ? "live-share" : "synced-media",
+      liveShare: { ...defaultLiveShareState(), ...(state.liveShare || {}) }
+    };
     this.participants = new Map(Array.from(participants, (participant) => [participant.userId, participant]));
+    this.preLiveSharePlayback = preLiveSharePlayback;
   }
 
   static create(roomId: string, hostUserId: string, room: Partial<RoomState> = {}): RoomEngine {
@@ -54,6 +61,8 @@ export class RoomEngine {
         controllerUserId: room.playbackState?.controllerUserId || hostUserId,
         sequence: Number(room.playbackState?.sequence || 0)
       },
+      roomExperience: "synced-media",
+      liveShare: defaultLiveShareState(),
       createdAt: room.createdAt || now,
       revision: Number(room.revision || 1)
     });
@@ -89,13 +98,21 @@ export class RoomEngine {
   leave(userId: string): EngineResult {
     const participant = this.participants.get(userId);
     if (!participant) return { events: [] };
+    const stopped = this.state.roomExperience === "live-share" && this.state.liveShare.hostUserId === userId
+      ? this.stopLiveShare(userId, true)
+      : null;
     this.participants.delete(userId);
+    const wasLiveShareViewer = this.state.liveShare.viewerUserIds.includes(userId);
+    if (this.state.roomExperience === "live-share") {
+      this.state.liveShare.viewerUserIds = this.state.liveShare.viewerUserIds.filter((viewerUserId) => viewerUserId !== userId);
+    }
     const events: EngineEvent[] = [
+      ...(stopped?.events || []),
       { event: "chat-message", payload: systemMessage(`${participant.displayName} left the room`) },
       { event: "user-left-call", payload: { userId } },
       { event: "room-state", payload: this.snapshot() }
     ];
-    return { events, participantChanged: true };
+    return { events, participantChanged: true, stateChanged: Boolean(stopped || wasLiveShareViewer) };
   }
 
   canControl(userId: string): boolean {
@@ -131,11 +148,26 @@ export class RoomEngine {
         return this.leaveCall(actorUserId);
       case "call-status":
         return this.callStatus(payload, actorUserId);
+      case "live-share-start":
+        return this.startLiveShare(payload, actorUserId);
+      case "live-share-accept":
+        return this.acceptLiveShare(payload, actorUserId);
+      case "live-share-decline":
+        return this.declineLiveShare(payload, actorUserId);
+      case "live-share-stop":
+        return this.stopLiveShare(actorUserId);
+      case "live-share-viewer-left":
+        return this.leaveLiveShare(payload, actorUserId);
       case "webrtc-offer":
       case "webrtc-answer":
       case "webrtc-ice-candidate":
       case "webrtc-ice-candidates":
         return this.directSignal(event, payload, actorUserId, commandId);
+      case "screen-webrtc-offer":
+      case "screen-webrtc-answer":
+      case "screen-webrtc-ice-candidate":
+      case "screen-webrtc-ice-candidates":
+        return this.directScreenSignal(event, payload, actorUserId, commandId);
       case "participant-media-ready":
         return this.mediaReady(payload, actorUserId);
       case "havyn-heartbeat":
@@ -167,6 +199,9 @@ export class RoomEngine {
   }
 
   private handlePlayback(event: string, payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
+    if (this.state.roomExperience === "live-share") {
+      return { events: [{ event: "permission-denied", payload: { reason: "Playback controls are paused during Live Share." }, targetUserId: userId }] };
+    }
     if (!this.canControl(userId)) return this.denied(userId);
     const action = PLAYBACK_ACTIONS[event];
     const now = Date.now();
@@ -374,6 +409,128 @@ export class RoomEngine {
   private directSignal(event: string, payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
     const targetUserId = String(payload.toUserId || "");
     if (!targetUserId || !this.participants.has(targetUserId)) return { events: [] };
+    return {
+      events: [{
+        event,
+        payload: { ...payload, fromUserId: userId, signalId: String(payload.signalId || commandId) },
+        targetUserId
+      }]
+    };
+  }
+
+  private startLiveShare(payload: Record<string, unknown>, userId: string): EngineResult {
+    if (this.state.hostUserId !== userId) {
+      return { events: [{ event: "live-share-error", payload: { reason: "Only the host can start Live Share." }, targetUserId: userId }] };
+    }
+    if (this.listParticipants().length > 4) {
+      return { events: [{ event: "live-share-error", payload: { reason: "Live Share supports up to 4 room participants." }, targetUserId: userId }] };
+    }
+    const unsupported = this.listParticipants().find((participant) => !participant.capabilities?.includes("live-share-v1"));
+    if (unsupported) {
+      return { events: [{ event: "live-share-error", payload: { reason: `${unsupported.displayName} needs a newer Havyn build for Live Share.` }, targetUserId: userId }] };
+    }
+    if (this.state.roomExperience === "live-share") return { events: [] };
+    const shareId = String(payload.shareId || crypto.randomUUID());
+    this.preLiveSharePlayback = projectPlayback(this.state.playbackState);
+    this.state.roomExperience = "live-share";
+    this.state.liveShare = {
+      status: "available",
+      shareId,
+      hostUserId: userId,
+      hasAudio: Boolean(payload.hasAudio),
+      startedAt: Date.now(),
+      viewerUserIds: []
+    };
+    this.bumpRevision();
+    const host = this.participants.get(userId);
+    return {
+      stateChanged: true,
+      events: [
+        { event: "live-share-available", payload: { ...this.state.liveShare, hostDisplayName: host?.displayName || "The host" } },
+        { event: "room-state", payload: this.snapshot() }
+      ]
+    };
+  }
+
+  private acceptLiveShare(payload: Record<string, unknown>, userId: string): EngineResult {
+    if (this.state.roomExperience !== "live-share" || String(payload.shareId || "") !== this.state.liveShare.shareId) return { events: [] };
+    if (userId === this.state.liveShare.hostUserId) return { events: [] };
+    const participant = this.participants.get(userId);
+    if (!participant?.capabilities?.includes("live-share-v1")) {
+      return { events: [{ event: "live-share-error", payload: { reason: "Update Havyn to watch Live Share." }, targetUserId: userId }] };
+    }
+    const alreadyWatching = this.state.liveShare.viewerUserIds.includes(userId);
+    if (!alreadyWatching && this.state.liveShare.viewerUserIds.length >= 3) {
+      return { events: [{ event: "live-share-error", payload: { reason: "Live Share supports up to 4 participants, including the host." }, targetUserId: userId }] };
+    }
+    if (!alreadyWatching) this.state.liveShare.viewerUserIds.push(userId);
+    this.state.liveShare.status = "active";
+    if (!alreadyWatching) this.bumpRevision();
+    return {
+      stateChanged: !alreadyWatching,
+      events: [
+        { event: "live-share-accept", payload: { shareId: this.state.liveShare.shareId, viewerUserId: userId }, targetUserId: this.state.liveShare.hostUserId || undefined },
+        ...(!alreadyWatching ? [{ event: "room-state", payload: this.snapshot() }] : [])
+      ]
+    };
+  }
+
+  private declineLiveShare(payload: Record<string, unknown>, userId: string): EngineResult {
+    if (this.state.roomExperience !== "live-share" || String(payload.shareId || "") !== this.state.liveShare.shareId) return { events: [] };
+    return {
+      events: [{
+        event: "live-share-decline",
+        payload: { shareId: this.state.liveShare.shareId, viewerUserId: userId },
+        targetUserId: this.state.liveShare.hostUserId || undefined
+      }]
+    };
+  }
+
+  private leaveLiveShare(payload: Record<string, unknown>, userId: string): EngineResult {
+    if (this.state.roomExperience !== "live-share" || String(payload.shareId || "") !== this.state.liveShare.shareId) return { events: [] };
+    this.state.liveShare.viewerUserIds = this.state.liveShare.viewerUserIds.filter((viewerUserId) => viewerUserId !== userId);
+    this.state.liveShare.status = this.state.liveShare.viewerUserIds.length ? "active" : "available";
+    this.bumpRevision();
+    return {
+      stateChanged: true,
+      events: [
+        { event: "live-share-viewer-left", payload: { shareId: this.state.liveShare.shareId, viewerUserId: userId }, targetUserId: this.state.liveShare.hostUserId || undefined },
+        { event: "room-state", payload: this.snapshot() }
+      ]
+    };
+  }
+
+  private stopLiveShare(userId: string, hostDeparture = false): EngineResult {
+    if (this.state.roomExperience !== "live-share") return { events: [] };
+    if (!hostDeparture && this.state.hostUserId !== userId) {
+      return { events: [{ event: "live-share-error", payload: { reason: "Only the host can stop Live Share." }, targetUserId: userId }] };
+    }
+    const shareId = this.state.liveShare.shareId;
+    const restoredPlaybackState = this.preLiveSharePlayback ? { ...this.preLiveSharePlayback } : { ...this.state.playbackState };
+    this.state.playbackState = restoredPlaybackState;
+    this.state.roomExperience = "synced-media";
+    this.state.liveShare = defaultLiveShareState();
+    this.preLiveSharePlayback = null;
+    this.bumpRevision();
+    return {
+      stateChanged: true,
+      events: [
+        { event: "live-share-ended", payload: { shareId, playbackState: restoredPlaybackState } },
+        { event: "room-state", payload: this.snapshot() }
+      ]
+    };
+  }
+
+  private directScreenSignal(event: string, payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
+    if (this.state.roomExperience !== "live-share") return { events: [] };
+    if (String(payload.shareId || "") !== this.state.liveShare.shareId) return { events: [] };
+    const targetUserId = String(payload.toUserId || "");
+    if (!targetUserId || !this.participants.has(targetUserId)) return { events: [] };
+    const hostUserId = this.state.liveShare.hostUserId;
+    const viewers = this.state.liveShare.viewerUserIds;
+    const hostToViewer = userId === hostUserId && viewers.includes(targetUserId);
+    const viewerToHost = targetUserId === hostUserId && viewers.includes(userId);
+    if (!hostToViewer && !viewerToHost) return { events: [] };
     return {
       events: [{
         event,

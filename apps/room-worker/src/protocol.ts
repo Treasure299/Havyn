@@ -3,6 +3,16 @@ export const PROTOCOL_VERSION = 2 as const;
 export const PLAYBACK_MODES = ["host-only", "host-and-cohosts", "everyone"] as const;
 export type PlaybackMode = typeof PLAYBACK_MODES[number];
 export type RoomRole = "host" | "cohost" | "viewer";
+export type RoomExperience = "synced-media" | "live-share";
+
+export interface LiveShareState {
+  status: "idle" | "available" | "active";
+  shareId: string | null;
+  hostUserId: string | null;
+  hasAudio: boolean;
+  startedAt: number | null;
+  viewerUserIds: string[];
+}
 
 export interface PlaybackState {
   isPlaying: boolean;
@@ -30,6 +40,7 @@ export interface Participant {
   cameraOff: boolean;
   joinedAt: string;
   lastSeenAt: string;
+  capabilities?: string[];
 }
 
 export interface RoomState {
@@ -39,6 +50,8 @@ export interface RoomState {
   visibility: "private" | "public";
   playbackMode: PlaybackMode;
   playbackState: PlaybackState;
+  roomExperience: RoomExperience;
+  liveShare: LiveShareState;
   createdAt: string;
   revision: number;
 }
@@ -52,6 +65,7 @@ export interface RoomTicketClaims {
   room?: Partial<RoomState>;
   exp: number;
   jti: string;
+  capabilities?: string[];
 }
 
 export interface ClientEnvelope {
@@ -91,6 +105,17 @@ export function defaultPlaybackState(hostUserId: string | null): PlaybackState {
     activeMediaTitle: "",
     controllerUserId: hostUserId,
     sequence: 0
+  };
+}
+
+export function defaultLiveShareState(): LiveShareState {
+  return {
+    status: "idle",
+    shareId: null,
+    hostUserId: null,
+    hasAudio: false,
+    startedAt: null,
+    viewerUserIds: []
   };
 }
 

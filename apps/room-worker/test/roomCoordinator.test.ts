@@ -29,7 +29,7 @@ afterEach(async () => {
   })));
 });
 
-async function roomTicket(roomId: string, userId: string, creating: boolean) {
+async function roomTicket(roomId: string, userId: string, creating: boolean, capabilities = ["live-share-v1"]) {
   const response = await worker.fetch(new Request(`https://havyn.test/v2/rooms/${roomId}/ticket`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -37,15 +37,16 @@ async function roomTicket(roomId: string, userId: string, creating: boolean) {
       creating,
       room: { roomId, roomName: "Test room", hostUserId: "host", playbackMode: "host-only" },
       displayName: userId,
-      devUser: { id: userId, displayName: userId }
+      devUser: { id: userId, displayName: userId },
+      capabilities
     })
   }));
   expect(response.status).toBe(200);
   return (await response.json() as { ticket: string }).ticket;
 }
 
-async function connect(roomId: string, userId: string, creating = false): Promise<TestClient> {
-  const ticket = await roomTicket(roomId, userId, creating);
+async function connect(roomId: string, userId: string, creating = false, capabilities = ["live-share-v1"]): Promise<TestClient> {
+  const ticket = await roomTicket(roomId, userId, creating, capabilities);
   const response = await worker.fetch(new Request(
     `https://havyn.test/v2/rooms/${roomId}/connect?ticket=${encodeURIComponent(ticket)}`,
     { headers: { Upgrade: "websocket" } }
@@ -209,6 +210,110 @@ describe("HavynRoom Durable Object", () => {
     ));
     expect(offer.payload).toMatchObject({ fromUserId: "host", toUserId: "viewer" });
     expect(host.messages.some((message) => message.event === "webrtc-offer")).toBe(false);
+  });
+
+  it("coordinates Live Share acceptance, targeted signaling, and exact playback restoration", async () => {
+    const roomId = `SHARE${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const host = await connect(roomId, "host", true);
+    const viewer = await connect(roomId, "viewer");
+
+    const seekId = host.send("playback-seek", { currentTime: 57.25 });
+    await viewer.waitFor((message) => (
+      message.event === "playback-command" && (message.payload as { commandId?: string })?.commandId === seekId
+    ));
+
+    host.send("live-share-start", { shareId: "share-integration", hasAudio: true });
+    const invitation = await viewer.waitFor((message) => message.event === "live-share-available");
+    expect(invitation.payload).toMatchObject({ shareId: "share-integration", hasAudio: true });
+
+    viewer.send("live-share-accept", { shareId: "share-integration" });
+    await host.waitFor((message) => (
+      message.event === "live-share-accept"
+      && (message.payload as { viewerUserId?: string })?.viewerUserId === "viewer"
+    ));
+
+    const offerId = host.send("screen-webrtc-offer", {
+      shareId: "share-integration",
+      toUserId: "viewer",
+      description: { type: "offer", sdp: "screen-offer" }
+    });
+    const offer = await viewer.waitFor((message) => (
+      message.event === "screen-webrtc-offer"
+      && (message.payload as { signalId?: string })?.signalId === offerId
+    ));
+    expect(offer.payload).toMatchObject({ fromUserId: "host", toUserId: "viewer" });
+    expect(host.messages.some((message) => message.event === "screen-webrtc-offer")).toBe(false);
+
+    const answerId = viewer.send("screen-webrtc-answer", {
+      shareId: "share-integration",
+      toUserId: "host",
+      description: { type: "answer", sdp: "screen-answer" }
+    });
+    const answer = await host.waitFor((message) => (
+      message.event === "screen-webrtc-answer"
+      && (message.payload as { signalId?: string })?.signalId === answerId
+    ));
+    expect(answer.payload).toMatchObject({ fromUserId: "viewer", toUserId: "host" });
+
+    host.send("playback-play", { currentTime: 70 });
+    const blocked = await host.waitFor((message) => (
+      message.event === "permission-denied"
+      && (message.payload as { reason?: string })?.reason === "Playback controls are paused during Live Share."
+    ));
+    expect(blocked.payload).toMatchObject({ reason: "Playback controls are paused during Live Share." });
+
+    host.send("live-share-stop", { shareId: "share-integration" });
+    const ended = await viewer.waitFor((message) => message.event === "live-share-ended");
+    expect(ended.payload).toMatchObject({
+      shareId: "share-integration",
+      playbackState: expect.objectContaining({ currentTime: 57.25, isPlaying: false })
+    });
+  });
+
+  it("restores an active Live Share after Durable Object eviction and invites a late joiner", async () => {
+    const roomId = `SHAREEVICT${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const host = await connect(roomId, "host", true);
+    const seekId = host.send("playback-seek", { currentTime: 91.5 });
+    await host.waitFor((message) => (
+      message.event === "playback-command" && (message.payload as { commandId?: string })?.commandId === seekId
+    ));
+    host.send("live-share-start", { shareId: "share-persisted", hasAudio: false });
+    await host.waitFor((message) => message.event === "live-share-available");
+
+    await evictDurableObject(testEnv.HAVYN_ROOMS.getByName(roomId));
+
+    const late = await connect(roomId, "late-viewer");
+    const snapshot = late.messages.find((message) => message.type === "snapshot");
+    expect(snapshot?.payload).toMatchObject({
+      roomExperience: "live-share",
+      liveShare: { shareId: "share-persisted", status: "available" }
+    });
+    late.send("live-share-accept", { shareId: "share-persisted" });
+    await host.waitFor((message) => (
+      message.event === "live-share-accept"
+      && (message.payload as { viewerUserId?: string })?.viewerUserId === "late-viewer"
+    ));
+
+    host.send("live-share-stop", { shareId: "share-persisted" });
+    const ended = await late.waitFor((message) => message.event === "live-share-ended");
+    expect(ended.payload).toMatchObject({
+      playbackState: expect.objectContaining({ currentTime: 91.5, isPlaying: false })
+    });
+  });
+
+  it("keeps ordinary rooms working when a connected client does not support Live Share", async () => {
+    const roomId = `COMPAT${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const host = await connect(roomId, "host", true);
+    await connect(roomId, "older-viewer", false, []);
+    host.send("live-share-start", { shareId: "unsupported" });
+    const error = await host.waitFor((message) => message.event === "live-share-error");
+    expect(error.payload).toMatchObject({ reason: expect.stringContaining("newer Havyn build") });
+
+    const playId = host.send("playback-play", { currentTime: 12 });
+    const play = await host.waitFor((message) => (
+      message.event === "playback-command" && (message.payload as { commandId?: string })?.commandId === playId
+    ));
+    expect(play.payload).toMatchObject({ action: "play" });
   });
 
   it("preserves call presence when a participant reconnects inside the grace window", async () => {
