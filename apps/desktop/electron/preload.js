@@ -1,6 +1,9 @@
 import { clipboard, contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("havyn", {
+  callMedia: {
+    setActive: (active) => ipcRenderer.invoke("call-media:set-active", Boolean(active))
+  },
   diagnostics: {
     isEnabled: () => ipcRenderer.invoke("diagnostics:is-enabled"),
     log: (record) => ipcRenderer.send("diagnostics:log", record),

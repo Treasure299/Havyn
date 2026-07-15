@@ -88,6 +88,21 @@ describe("RoomEngine playback authority", () => {
     expect(engine.state.playbackState.controllerUserId).toBe("viewer");
   });
 
+  it("lets only the host change playback mode, including from everyone mode", () => {
+    const engine = roomWithTwoUsers("everyone");
+    const denied = engine.handle("room-playback-mode", { playbackMode: "host-only" }, "viewer", "mode-viewer");
+    expect(engine.state.playbackMode).toBe("everyone");
+    expect(event(denied, "permission-denied")?.payload).toMatchObject({
+      reason: "Only the host can change playback mode."
+    });
+
+    for (const playbackMode of ["host-only", "host-and-cohosts", "everyone"] as const) {
+      const accepted = engine.handle("room-playback-mode", { playbackMode }, "host", `mode-${playbackMode}`);
+      expect(event(accepted, "permission-denied")).toBeUndefined();
+      expect(engine.state.playbackMode).toBe(playbackMode);
+    }
+  });
+
   it("increments playback sequence without multiplying events", () => {
     const engine = roomWithTwoUsers();
     const play = engine.handle("playback-play", { currentTime: 3 }, "host", "play-1");

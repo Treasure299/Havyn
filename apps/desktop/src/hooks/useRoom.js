@@ -12,6 +12,7 @@ export function useRoom(user) {
   const roomRef = useRef(null);
   const leavingRoomIdRef = useRef(null);
   const seenMessageIdsRef = useRef(new Set());
+  const audioContextRef = useRef(null);
 
   useEffect(() => {
     roomRef.current = room;
@@ -81,7 +82,10 @@ export function useRoom(user) {
   function playTone(kind) {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
-      const audio = new AudioContext();
+      if (!AudioContext) return;
+      const audio = audioContextRef.current || new AudioContext();
+      audioContextRef.current = audio;
+      if (audio.state === "suspended") void audio.resume();
       const oscillator = audio.createOscillator();
       const gain = audio.createGain();
       oscillator.type = "sine";
@@ -90,6 +94,10 @@ export function useRoom(user) {
       gain.gain.exponentialRampToValueAtTime(kind === "join" ? 0.035 : 0.025, audio.currentTime + 0.015);
       gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.18);
       oscillator.connect(gain).connect(audio.destination);
+      oscillator.onended = () => {
+        oscillator.disconnect();
+        gain.disconnect();
+      };
       oscillator.start();
       oscillator.stop(audio.currentTime + 0.2);
     } catch {
@@ -97,9 +105,28 @@ export function useRoom(user) {
     }
   }
 
+  useEffect(() => () => {
+    const audio = audioContextRef.current;
+    audioContextRef.current = null;
+    if (audio && audio.state !== "closed") void audio.close();
+  }, []);
+
   useEffect(() => {
     const handleRoomState = (nextRoom) => {
       if (nextRoom?.roomId && leavingRoomIdRef.current === nextRoom.roomId) return;
+      const previousRoom = roomRef.current;
+      if (
+        supabase &&
+        nextRoom?.hostUserId === userId &&
+        previousRoom?.roomId === nextRoom.roomId &&
+        previousRoom.playbackMode !== nextRoom.playbackMode
+      ) {
+        void supabase
+          .from("rooms")
+          .update({ playback_mode: nextRoom.playbackMode, updated_at: new Date().toISOString() })
+          .eq("id", nextRoom.roomId);
+      }
+      roomRef.current = nextRoom;
       setRoom(nextRoom);
     };
     const handleMessage = (message) => {
@@ -273,27 +300,10 @@ export function useRoom(user) {
   function setPlaybackMode(playbackMode) {
     if (!room || !user) return;
     if (!["host-only", "host-and-cohosts", "everyone"].includes(playbackMode)) return;
-    const participant = room.participants?.find((item) => item.userId === user.id);
-    const canChangeMode = room.playbackMode === "everyone" ||
-      participant?.role === "host" ||
-      (room.playbackMode === "host-and-cohosts" && participant?.role === "cohost");
-    if (!canChangeMode) {
-      setPermissionNotice("Only room controllers can change playback mode.");
+    if (room.hostUserId !== user.id) {
+      setPermissionNotice("Only the host can change playback mode.");
       window.setTimeout(() => setPermissionNotice(""), 2200);
       return;
-    }
-    setRoom((currentRoom) => {
-      if (!currentRoom) return currentRoom;
-      const nextRoom = { ...currentRoom, playbackMode };
-      roomRef.current = nextRoom;
-      return nextRoom;
-    });
-    if (supabase) {
-      supabase
-        .from("rooms")
-        .update({ playback_mode: playbackMode, updated_at: new Date().toISOString() })
-        .eq("id", room.roomId)
-        .then(() => {});
     }
     socket.emit("room-playback-mode", { roomId: room.roomId, userId: user.id, playbackMode });
   }

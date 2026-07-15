@@ -3,10 +3,12 @@ import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "nod
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "./playbackEventClassifier.js";
+import { createCallMediaPermissionGate } from "./callMediaPermission.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 let mainWindow;
+const callMediaPermission = createCallMediaPermissionGate(() => mainWindow?.webContents?.id);
 let activeTabId;
 let currentBounds;
 let mediaEventTimer;
@@ -944,6 +946,9 @@ ipcMain.handle("diagnostics:open-folder", () => {
   return diagnosticLogPath;
 });
 ipcMain.on("diagnostics:log", (_event, record) => appendDiagnosticRecord(record));
+ipcMain.handle("call-media:set-active", (event, active) => (
+  callMediaPermission.setActive(event.sender.id, active)
+));
 
 ipcMain.handle("app:get-browser-preload-url", () => `file://${path.join(__dirname, "browserPreload.js").replace(/\\/g, "/")}`);
 ipcMain.handle("app:get-browser-partition", () => browserPartition());
@@ -1049,18 +1054,20 @@ ipcMain.on("browser:media-event-from-page", (event, payload) => {
 
 if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(() => {
   initializeDiagnosticLog();
-  const canUseMedia = (_webContents, permission) => ["media"].includes(permission);
-  session.defaultSession.setPermissionCheckHandler(canUseMedia);
-  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(["media"].includes(permission));
+  const canUseAppMedia = (requestingWebContents, permission) => (
+    callMediaPermission.canGrant(requestingWebContents?.id, permission)
+  );
+  session.defaultSession.setPermissionCheckHandler(canUseAppMedia);
+  session.defaultSession.setPermissionRequestHandler((requestingWebContents, permission, callback) => {
+    callback(canUseAppMedia(requestingWebContents, permission));
   });
-  browserSession().setPermissionCheckHandler(canUseMedia);
-  browserSession().setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(["media"].includes(permission));
-  });
+  browserSession().setPermissionCheckHandler(() => false);
+  browserSession().setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   installRequestGuard();
   createMainWindow();
 });
+
+app.on("before-quit", () => callMediaPermission.reset());
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

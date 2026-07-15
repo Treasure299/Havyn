@@ -1,4 +1,4 @@
-import { supabase } from "./supabaseClient";
+import { supabase } from "./supabaseClient.js";
 
 const PROTOCOL_VERSION = 2;
 const DEFAULT_ENDPOINT = "http://localhost:8787";
@@ -10,6 +10,8 @@ const DO_NOT_QUEUE = new Set([
   "webrtc-ice-candidate",
   "webrtc-ice-candidates"
 ]);
+const MAX_RETRY_ATTEMPTS = 1;
+const MAX_RETRY_AGE_MS = 15_000;
 
 function queuedCommandGroup(event) {
   if (["playback-play", "playback-pause", "playback-seek", "playback-rate-change", "media-ended"].includes(event)) {
@@ -22,7 +24,7 @@ function queuedCommandGroup(event) {
 }
 
 function coordinatorEndpoint() {
-  return (import.meta.env.VITE_CLOUDFLARE_ROOM_URL || DEFAULT_ENDPOINT).replace(/\/$/, "");
+  return (import.meta.env?.VITE_CLOUDFLARE_ROOM_URL || DEFAULT_ENDPOINT).replace(/\/$/, "");
 }
 
 function websocketEndpoint(endpoint, roomId, ticket) {
@@ -145,7 +147,7 @@ export class CloudflareRealtimeSocket {
   async requestTicket(connection) {
     const { data } = await supabase?.auth.getSession() || { data: null };
     const accessToken = data?.session?.access_token;
-    const allowDevAuth = import.meta.env.DEV && import.meta.env.VITE_CLOUDFLARE_DEV_AUTH === "true";
+    const allowDevAuth = import.meta.env?.DEV && import.meta.env?.VITE_CLOUDFLARE_DEV_AUTH === "true";
     if (!accessToken && !allowDevAuth) throw new Error("Your Havyn session has expired. Please sign in again.");
     const response = await fetch(`${coordinatorEndpoint()}/v2/rooms/${encodeURIComponent(connection.roomId)}/ticket`, {
       method: "POST",
@@ -180,34 +182,40 @@ export class CloudflareRealtimeSocket {
       payload
     };
     if (this.ws?.readyState !== WebSocket.OPEN) {
-      this.queueCommand(envelope);
+      this.queueCommand(envelope, 0);
       return envelope.id;
     }
-    this.ws.send(JSON.stringify(envelope));
-    this.pendingAcks.set(envelope.id, { event, sentAt: envelope.sentAt });
-    this.trimPendingAcks();
+    this.sendEnvelope(envelope, 0);
     return envelope.id;
   }
 
-  queueCommand(envelope) {
+  sendEnvelope(envelope, attempts) {
+    this.ws.send(JSON.stringify(envelope));
+    this.pendingAcks.set(envelope.id, {
+      envelope,
+      attempts,
+      lastSentAt: Date.now()
+    });
+    this.trimPendingAcks();
+  }
+
+  queueCommand(envelope, attempts = 0) {
     if (DO_NOT_QUEUE.has(envelope.event)) return;
     const group = queuedCommandGroup(envelope.event);
     if (group) {
-      this.pendingCommands = this.pendingCommands.filter((item) => queuedCommandGroup(item.event) !== group);
+      this.pendingCommands = this.pendingCommands.filter((item) => queuedCommandGroup(item.envelope.event) !== group);
     }
-    this.pendingCommands.push(envelope);
+    this.pendingCommands.push({ envelope, attempts });
     this.pendingCommands = this.pendingCommands.slice(-40);
   }
 
   flushPendingCommands() {
     const pending = this.pendingCommands;
     this.pendingCommands = [];
-    pending.forEach((envelope) => {
-      if (this.ws?.readyState !== WebSocket.OPEN) return this.pendingCommands.push(envelope);
-      this.ws.send(JSON.stringify(envelope));
-      this.pendingAcks.set(envelope.id, { event: envelope.event, sentAt: envelope.sentAt });
+    pending.forEach(({ envelope, attempts }) => {
+      if (this.ws?.readyState !== WebSocket.OPEN) return this.pendingCommands.push({ envelope, attempts });
+      this.sendEnvelope(envelope, attempts);
     });
-    this.trimPendingAcks();
   }
 
   handleMessage(ws, rawMessage) {
@@ -227,8 +235,8 @@ export class CloudflareRealtimeSocket {
       this.pendingAcks.delete(envelope.replyTo);
       this.localEmit("room-command-ack", {
         commandId: envelope.replyTo,
-        event: command?.event || envelope.payload?.event,
-        roundTripMs: command ? Date.now() - command.sentAt : null,
+        event: command?.envelope?.event || envelope.payload?.event,
+        roundTripMs: command ? Date.now() - command.lastSentAt : null,
         duplicate: Boolean(envelope.payload?.duplicate)
       });
       return;
@@ -250,6 +258,15 @@ export class CloudflareRealtimeSocket {
 
   handleClose(ws, closeEvent) {
     if (ws !== this.ws) return;
+    if (!this.intentionalClose) {
+      const now = Date.now();
+      this.pendingAcks.forEach(({ envelope, attempts }) => {
+        if (attempts >= MAX_RETRY_ATTEMPTS) return;
+        if (now - envelope.sentAt > MAX_RETRY_AGE_MS) return;
+        this.queueCommand(envelope, attempts + 1);
+      });
+    }
+    this.pendingAcks.clear();
     this.ws = null;
     this.localEmit("room-transport-state", {
       state: this.intentionalClose ? "disconnected" : "reconnecting",
@@ -300,7 +317,7 @@ export class CloudflareRealtimeSocket {
   trimPendingAcks() {
     const cutoff = Date.now() - 30_000;
     this.pendingAcks.forEach((command, commandId) => {
-      if (command.sentAt < cutoff) this.pendingAcks.delete(commandId);
+      if (command.lastSentAt < cutoff) this.pendingAcks.delete(commandId);
     });
     if (this.pendingAcks.size > 200) {
       this.pendingAcks = new Map(Array.from(this.pendingAcks.entries()).slice(-120));

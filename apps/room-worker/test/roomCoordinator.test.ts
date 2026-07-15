@@ -108,6 +108,20 @@ async function connect(roomId: string, userId: string, creating = false): Promis
 }
 
 describe("HavynRoom Durable Object", () => {
+  it("gives a newcomer one snapshot while existing participants receive the join update", async () => {
+    const roomId = `JOIN${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const host = await connect(roomId, "host", true);
+    const viewer = await connect(roomId, "viewer");
+    await host.waitFor((message) => Boolean(
+      message.event === "room-state" &&
+      (message.payload as { participants?: Array<{ userId: string }> })?.participants?.some((item) => item.userId === "viewer")
+    ));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(viewer.messages.filter((message) => message.type === "snapshot")).toHaveLength(1);
+    expect(viewer.messages.filter((message) => message.event === "room-state")).toHaveLength(0);
+  });
+
   it("coordinates play and pause across two clients with host authority", async () => {
     const roomId = `SYNC${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
     const host = await connect(roomId, "host", true);
@@ -134,6 +148,35 @@ describe("HavynRoom Durable Object", () => {
       message.event === "playback-command" && (message.payload as { commandId?: string })?.commandId === pauseId
     ));
     expect(viewerPause.payload).toMatchObject({ action: "pause" });
+  });
+
+  it("acknowledges a retried command ID without broadcasting playback twice", async () => {
+    const roomId = `RETRY${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+    const host = await connect(roomId, "host", true);
+    const viewer = await connect(roomId, "viewer");
+    const commandId = host.send("playback-play", { currentTime: 22 });
+    await viewer.waitFor((message) => (
+      message.event === "playback-command" &&
+      (message.payload as { commandId?: string })?.commandId === commandId
+    ));
+    host.socket.send(JSON.stringify({
+      v: PROTOCOL_VERSION,
+      id: commandId,
+      type: "command",
+      roomId,
+      sentAt: Date.now(),
+      event: "playback-play",
+      payload: { currentTime: 22 }
+    }));
+    const duplicateAck = await host.waitFor((message) => message.type === "ack" && message.replyTo === commandId && (
+      message.payload as { duplicate?: boolean }
+    )?.duplicate === true);
+    expect(duplicateAck.payload).toMatchObject({ duplicate: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(viewer.messages.filter((message) => (
+      message.event === "playback-command" &&
+      (message.payload as { commandId?: string })?.commandId === commandId
+    ))).toHaveLength(1);
   });
 
   it("keeps room state and live sockets through Durable Object eviction", async () => {

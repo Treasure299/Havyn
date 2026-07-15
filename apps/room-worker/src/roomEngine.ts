@@ -221,7 +221,9 @@ export class RoomEngine {
     const playbackMode = payload.playbackMode;
     if (!isPlaybackMode(playbackMode)) return { events: [] };
     const participant = this.participants.get(userId);
-    if (!this.canControl(userId)) return this.denied(userId, "Only room controllers can change playback mode.");
+    if (participant?.role !== "host" && this.state.hostUserId !== userId) {
+      return this.denied(userId, "Only the host can change playback mode.");
+    }
     this.state.playbackMode = playbackMode;
     this.bumpRevision();
     return {

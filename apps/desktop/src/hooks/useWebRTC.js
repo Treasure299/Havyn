@@ -71,6 +71,12 @@ export function useWebRTC({ socket, room, user }) {
   const createPeerRef = useRef(null);
   const joiningRef = useRef(false);
 
+  const setCallMediaPermission = useCallback(async (active) => {
+    const permissionApi = window.havyn?.callMedia?.setActive;
+    if (!permissionApi) return true;
+    return permissionApi(active);
+  }, []);
+
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
@@ -317,6 +323,13 @@ export function useWebRTC({ socket, room, user }) {
     joiningRef.current = true;
     setCallError("");
     notifyCall("Joining call...", 0);
+    const mediaAllowed = await setCallMediaPermission(true).catch(() => false);
+    if (!mediaAllowed) {
+      setCallError("Camera and microphone permission could not be enabled.");
+      notifyCall("Call could not be joined.");
+      joiningRef.current = false;
+      return;
+    }
     let stream = await navigator.mediaDevices.getUserMedia(buildMediaConstraints(selectedAudioDeviceId, selectedVideoDeviceId)).catch(() => null);
     if (!stream) {
       stream = await navigator.mediaDevices.getUserMedia(mediaConstraints).catch((error) => {
@@ -328,6 +341,7 @@ export function useWebRTC({ socket, room, user }) {
     }
     if (!stream) {
       notifyCall("Call could not be joined.");
+      await setCallMediaPermission(false).catch(() => {});
       joiningRef.current = false;
       return;
     }
@@ -363,6 +377,7 @@ export function useWebRTC({ socket, room, user }) {
     iceCandidateQueuesRef.current.clear();
     remoteIceQueuesRef.current.clear();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    void setCallMediaPermission(false).catch(() => {});
     localStreamRef.current = null;
     joinedRef.current = false;
     mutedRef.current = true;
@@ -544,7 +559,8 @@ export function useWebRTC({ socket, room, user }) {
       peer.oniceconnectionstatechange = null;
       peer.close();
     });
-  }, []);
+    void setCallMediaPermission(false).catch(() => {});
+  }, [setCallMediaPermission]);
 
   useEffect(() => {
     refreshDevices();

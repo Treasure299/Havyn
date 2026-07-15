@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { logPlaybackDiagnostic } from "../lib/playbackDiagnostics";
+import {
+  createSingleFlightRunner,
+  persistPlaybackSnapshot,
+  shouldRecoverLocalPlayback,
+  startPlaybackMaintenance
+} from "../lib/playbackMaintenance";
 
 export function usePlaybackSync({ socket, room, user, applyPlayback, localCurrentTime, onPlaybackState }) {
   const [playbackState, setPlaybackState] = useState(null);
   const localCurrentTimeRef = useRef(localCurrentTime);
   const playbackStateRef = useRef(null);
+  const localApplyFailureRef = useRef(null);
   const role = room?.participants?.find((participant) => participant.userId === user.id)?.role ||
     (room?.hostUserId === user.id ? "host" : "viewer");
 
@@ -72,10 +79,18 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     playbackStateRef.current = projectedState;
     setPlaybackState(projectedState);
     onPlaybackState?.(projectedState);
-    if (state.controllerUserId === user.id && !state.correctedUserId) {
+    const localFailure = localApplyFailureRef.current;
+    const shouldRecoverLocalApply = shouldRecoverLocalPlayback({
+      state,
+      userId: user.id,
+      action,
+      failure: localFailure
+    });
+    if (state.controllerUserId === user.id && !state.correctedUserId && !shouldRecoverLocalApply) {
       logPlaybackDiagnostic("room-playback-skipped-own-command", { roomId: room?.roomId, action });
       return;
     }
+    if (shouldRecoverLocalApply) localApplyFailureRef.current = null;
     const command = {
       action: projectedState.isPlaying ? "play" : "pause",
       currentTime: projectedState.currentTime,
@@ -115,60 +130,42 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
   }, [socket, applyRemoteState]);
 
   useEffect(() => {
-    if (!room?.roomId || !playbackState) return undefined;
-    const requestSync = () => {
-      socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
-    };
-    const driftTimer = window.setInterval(() => {
-      if (typeof localCurrentTimeRef.current !== "number") return;
-      // MVP drift correction is intentionally simple. Production can smooth playback
-      // rate before seeking and should account for buffering, latency, and TURN paths.
-      socket.emit("playback-drift-correction", {
-        roomId: room.roomId,
-        userId: user.id,
-        currentTime: localCurrentTimeRef.current
-      });
-    }, 4000);
-    const syncTimer = window.setInterval(requestSync, 30000);
-    socket.io.on("reconnect", requestSync);
-    window.addEventListener("focus", requestSync);
-    return () => {
-      window.clearInterval(driftTimer);
-      window.clearInterval(syncTimer);
-      socket.io.off("reconnect", requestSync);
-      window.removeEventListener("focus", requestSync);
-    };
-  }, [socket, room?.roomId, user.id, playbackState]);
+    if (!room?.roomId) return undefined;
+    // Keep these timers stable while playback state changes. Production drift
+    // smoothing can be added later without tying timer lifetime to media events.
+    return startPlaybackMaintenance({
+      runtimeWindow: window,
+      socket,
+      roomId: room.roomId,
+      userId: user.id,
+      getCurrentTime: () => localCurrentTimeRef.current
+    });
+  }, [socket, room?.roomId, user.id]);
 
   useEffect(() => {
     if (!supabase || !room?.roomId || room.hostUserId !== user.id) return undefined;
-    const persistPlayback = () => {
+    let disposed = false;
+    const persistPlayback = createSingleFlightRunner(async () => {
+      if (disposed) return false;
       const state = projectedPlaybackState(playbackStateRef.current);
-      if (!state?.activeMediaUrl) return;
-      supabase
-        .from("rooms")
-        .update({
-          active_media_url: state.activeMediaUrl || null,
-          active_media_title: state.activeMediaTitle || null,
-          active_media_state: {
-            isPlaying: Boolean(state.isPlaying),
-            currentTime: Number(state.currentTime || 0),
-            updatedAt: Number(state.updatedAt || Date.now()),
-            playbackRate: Number(state.playbackRate || 1),
-            activeMediaUrl: state.activeMediaUrl || "",
-            activeMediaPageUrl: state.activeMediaPageUrl || state.activeMediaUrl || "",
-            activeMediaFrameUrl: state.activeMediaFrameUrl || "",
-            activeMediaTitle: state.activeMediaTitle || "",
-            controllerUserId: state.controllerUserId || user.id
-          },
-          updated_at: new Date().toISOString(),
-          last_seen_at: new Date().toISOString()
+      if (!state?.activeMediaUrl) return false;
+      return persistPlaybackSnapshot({
+        client: supabase,
+        roomId: room.roomId,
+        userId: user.id,
+        state,
+        onError: (error) => logPlaybackDiagnostic("room-playback-persist-failed", {
+          roomId: room.roomId,
+          message: error?.message || String(error)
         })
-        .eq("id", room.roomId);
+      });
+    });
+    void persistPlayback();
+    const timer = window.setInterval(() => void persistPlayback(), 5_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
     };
-    persistPlayback();
-    const timer = window.setInterval(persistPlayback, 5_000);
-    return () => window.clearInterval(timer);
   }, [room?.hostUserId, room?.roomId, user.id]);
 
   function selectMedia(media) {
@@ -210,9 +207,11 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     };
     logPlaybackDiagnostic("room-control-requested", { roomId: room?.roomId, action, canControl, mode: room?.playbackMode, role, command });
     let localApply;
+    localApplyFailureRef.current = null;
     try {
       localApply = applyPlayback?.(command);
     } catch (error) {
+      localApplyFailureRef.current = { action, at: Date.now() };
       logPlaybackDiagnostic("room-control-local-apply-failed", {
         roomId: room?.roomId,
         action,
@@ -224,11 +223,31 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     // command sent to everyone else in the room.
     sendPlayback(action, { currentTime });
     Promise.resolve(localApply).catch((error) => {
+      localApplyFailureRef.current = { action, at: Date.now() };
       logPlaybackDiagnostic("room-control-local-apply-failed", {
         roomId: room?.roomId,
         action,
         message: error?.message || String(error)
       });
+      const state = playbackStateRef.current;
+      const actionMatchesState = action === "play" ? state?.isPlaying : !state?.isPlaying;
+      if (state?.controllerUserId === user.id && actionMatchesState) {
+        const recovery = applyPlayback?.({
+          action,
+          currentTime: state.currentTime,
+          playbackRate: state.playbackRate,
+          activeMediaFrameUrl: state.activeMediaFrameUrl,
+          reason: "local-apply-recovery"
+        });
+        Promise.resolve(recovery).catch((recoveryError) => {
+          logPlaybackDiagnostic("room-control-local-recovery-failed", {
+            roomId: room?.roomId,
+            action,
+            message: recoveryError?.message || String(recoveryError)
+          });
+        });
+        localApplyFailureRef.current = null;
+      }
     });
   }
 

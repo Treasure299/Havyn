@@ -115,6 +115,11 @@ export class HavynRoom {
     server.serializeAttachment(attachment);
     this.ctx.acceptWebSocket(server);
     const result = engine.join(attachment);
+    result.events = result.events.map((event) => (
+      event.event === "room-state"
+        ? { ...event, excludeSessionId: attachment.sessionId }
+        : event
+    ));
     await this.dispatch(engine, result);
     this.send(server, "snapshot", undefined, engine.snapshot());
     return new Response(null, { status: 101, webSocket: client });
