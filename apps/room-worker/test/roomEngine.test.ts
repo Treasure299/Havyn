@@ -120,13 +120,38 @@ describe("RoomEngine media and late joins", () => {
     engine.join(participant("late-viewer"));
     const snapshot = engine.snapshot();
     expect(snapshot.playbackState).toMatchObject({
-      activeMediaUrl: "https://media.example/movie.m3u8",
+      activeMediaUrl: "https://example.com/movie",
       activeMediaPageUrl: "https://example.com/movie",
       activeMediaFrameUrl: "https://player.example/embed/1",
       isPlaying: true
     });
     expect(snapshot.playbackState.currentTime).toBeCloseTo(44, 1);
     vi.useRealTimers();
+  });
+
+  it("keeps the shared page canonical and uses the child URL only as a frame locator", () => {
+    const engine = roomWithTwoUsers();
+    const result = engine.handle("media-selected", {
+      media: {
+        url: "https://player.example/embed/1",
+        pageUrl: "https://example.com/movie",
+        frameUrl: "https://player.example/embed/1",
+        title: "Movie"
+      }
+    }, "host", "media-parent-page");
+
+    expect(engine.state.playbackState).toMatchObject({
+      activeMediaUrl: "https://example.com/movie",
+      activeMediaPageUrl: "https://example.com/movie",
+      activeMediaFrameUrl: "https://player.example/embed/1"
+    });
+    expect(event(result, "media-selected")?.payload).toMatchObject({
+      media: {
+        url: "https://example.com/movie",
+        pageUrl: "https://example.com/movie",
+        frameUrl: "https://player.example/embed/1"
+      }
+    });
   });
 
   it("targets drift correction only to the drifting viewer", () => {

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDismissableLayer } from "../hooks/useDismissableLayer";
 
-export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
+export default function NotificationBell({ user, social, onJoinRoom, onOpen, embedded = false }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef(null);
   const menuRef = useRef(null);
@@ -23,7 +23,7 @@ export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
 
   const closeNotifications = useCallback(() => setOpen(false), []);
 
-  useDismissableLayer(open, [buttonRef, menuRef], closeNotifications);
+  useDismissableLayer(!embedded && open, [buttonRef, menuRef], closeNotifications);
 
   function toggleNotifications() {
     setOpen((value) => {
@@ -43,8 +43,8 @@ export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
     if (roomId) await onJoinRoom(roomId);
   }
 
-  const menu = open ? createPortal(
-    <section ref={menuRef} className="notification-popover glass">
+  const menuContent = (
+    <section ref={menuRef} className={`${embedded ? "notification-inline" : "notification-popover glass"}`}>
       <div className="notification-head">
         <strong>Notifications</strong>
         <span>{notificationItems.length}</span>
@@ -77,20 +77,21 @@ export default function NotificationBell({ user, social, onJoinRoom, onOpen }) {
           </div>
         )}
       </div>
-    </section>,
-    document.body
-  ) : null;
+    </section>
+  );
+  const menu = open ? (embedded ? menuContent : createPortal(menuContent, document.body)) : null;
 
   return (
-    <div className="notification-menu-wrap">
+    <div className={`notification-menu-wrap ${embedded ? "is-embedded" : ""}`}>
       <button
         ref={buttonRef}
-        className={`icon-button notification-button ${hasUnreadNotifications ? "has-unread" : ""}`}
+        className={`${embedded ? "account-menu-row" : "icon-button"} notification-button ${hasUnreadNotifications ? "has-unread" : ""}`}
         onClick={toggleNotifications}
         title="Notifications"
         type="button"
       >
         <Bell size={17} />
+        {embedded && <><span>Notifications</span><small>{notificationItems.length}</small></>}
       </button>
       {menu}
     </div>

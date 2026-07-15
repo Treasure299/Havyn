@@ -1,6 +1,12 @@
 import { clipboard, contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("havyn", {
+  diagnostics: {
+    isEnabled: () => ipcRenderer.invoke("diagnostics:is-enabled"),
+    log: (record) => ipcRenderer.send("diagnostics:log", record),
+    getPath: () => ipcRenderer.invoke("diagnostics:get-path"),
+    openFolder: () => ipcRenderer.invoke("diagnostics:open-folder")
+  },
   clipboard: {
     readText: () => clipboard.readText(),
     writeText: (text) => clipboard.writeText(text)

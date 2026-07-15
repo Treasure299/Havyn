@@ -7,10 +7,20 @@ let lastSignature = "";
 let pendingPlayback = null;
 let playbackRetryTimer = null;
 let remotePlaybackExpectation = null;
+let playbackCommandSequence = 0;
+let latestPlaybackAction = "";
 let lastMediaEvent = null;
 let scanTimer = null;
 let lastTimeUpdateAt = 0;
 let lastResumeDismissAt = 0;
+let diagnosticsEnabled = false;
+
+ipcRenderer.invoke("diagnostics:is-enabled")
+  .then((enabled) => {
+    diagnosticsEnabled = Boolean(enabled);
+    if (diagnosticsEnabled) diagnostic("embedded-preload-ready", { tabId });
+  })
+  .catch(() => {});
 
 try {
   const blockedWindowOpen = () => null;
@@ -19,21 +29,6 @@ try {
     writable: true,
     value: blockedWindowOpen
   });
-  document.addEventListener("click", (event) => {
-    const link = event.target?.closest?.("a[target='_blank'], a[onclick], area[target='_blank']");
-    if (!link) return;
-    const href = link.getAttribute("href") || "";
-    if (/^(javascript:|#|$)/i.test(href)) return;
-    event.preventDefault();
-    event.stopPropagation();
-  }, true);
-  document.addEventListener("auxclick", (event) => {
-    if (event.button !== 1) return;
-    const link = event.target?.closest?.("a[href], area[href]");
-    if (!link) return;
-    event.preventDefault();
-    event.stopPropagation();
-  }, true);
 } catch {
   // Some pages lock down globals; request-level popup blocking still applies.
 }
@@ -42,6 +37,17 @@ function sendPageSignal(channel, payload) {
   // ipcMain receives senderFrame for both BrowserView and cross-origin webview
   // subframes. That is the single authoritative route for media events.
   ipcRenderer.send(channel, payload);
+}
+
+function diagnostic(event, details = {}) {
+  if (!diagnosticsEnabled) return;
+  ipcRenderer.send("diagnostics:log", {
+    scope: "embedded-preload",
+    event,
+    tabId,
+    frameUrl: window.location.href,
+    ...details
+  });
 }
 
 function readableDocuments() {
@@ -105,6 +111,67 @@ function describeVideo(video, index) {
   };
 }
 
+function diagnosticMediaState() {
+  return findVideos().slice(0, 4).map((video) => ({
+    currentTime: Number(video.currentTime || 0),
+    paused: Boolean(video.paused),
+    playbackRate: Number(video.playbackRate || 1),
+    readyState: Number(video.readyState || 0)
+  }));
+}
+
+function diagnosticInputSnapshot(event) {
+  const target = event.composedPath?.()[0] || event.target;
+  return {
+    type: event.type,
+    phase: event.eventPhase,
+    button: event.button,
+    defaultPrevented: event.defaultPrevented,
+    x: Math.round(event.clientX || 0),
+    y: Math.round(event.clientY || 0),
+    target: {
+      tag: target?.tagName || "",
+      id: target?.id || "",
+      className: typeof target?.className === "string" ? target.className.slice(0, 180) : "",
+      role: target?.getAttribute?.("role") || "",
+      hasOnClick: Boolean(target?.getAttribute?.("onclick"))
+    },
+    media: diagnosticMediaState()
+  };
+}
+
+function installDiagnosticInputTracing() {
+  if (window.__havynDiagnosticInputTracingInstalled) return;
+  window.__havynDiagnosticInputTracingInstalled = true;
+  document.addEventListener("pointerdown", (event) => {
+    diagnostic("input-pointerdown-capture", diagnosticInputSnapshot(event));
+  }, true);
+  document.addEventListener("pointerup", (event) => {
+    diagnostic("input-pointerup-capture", diagnosticInputSnapshot(event));
+  }, true);
+  document.addEventListener("click", (event) => {
+    const snapshot = diagnosticInputSnapshot(event);
+    diagnostic("input-click-capture", snapshot);
+    setTimeout(() => diagnostic("input-click-after-120ms", {
+      ...snapshot,
+      media: diagnosticMediaState()
+    }), 120);
+  }, true);
+  document.addEventListener("click", (event) => {
+    diagnostic("input-click-bubble", diagnosticInputSnapshot(event));
+  }, false);
+  document.addEventListener("keydown", (event) => {
+    if (["Space", "Enter", "ArrowLeft", "ArrowRight"].includes(event.code)) {
+      diagnostic("input-keydown-capture", {
+        code: event.code,
+        defaultPrevented: event.defaultPrevented,
+        target: event.target?.tagName || "",
+        media: diagnosticMediaState()
+      });
+    }
+  }, true);
+}
+
 function emitDetected(force = false) {
   const media = findVideos().map(describeVideo);
   const signature = JSON.stringify(media.map((item) => [
@@ -137,156 +204,38 @@ function emitEvent(eventName, video) {
     controlledByHavyn: matchesRemotePlaybackEvent(remotePlaybackExpectation, eventName, media)
   };
   lastMediaEvent = payload;
+  if (["play", "playing", "pause", "seeking", "seeked", "ratechange"].includes(eventName)) {
+    diagnostic("media-event", {
+      eventName,
+      controlledByHavyn: payload.controlledByHavyn,
+      media: {
+        currentTime: media.currentTime,
+        paused: media.paused,
+        playbackRate: media.playbackRate,
+        readyState: media.readyState
+      }
+    });
+  }
   sendPageSignal("browser:media-event-from-page", payload);
   if (["loadedmetadata", "canplay", "playing"].includes(eventName)) emitDetected(true);
 }
 
-function videoAtPoint(clientX, clientY) {
-  const direct = document.elementsFromPoint?.(clientX, clientY)
-    ?.find((node) => node?.tagName === "VIDEO");
-  if (direct) return direct;
-  return findVideos()
-    .filter((video) => {
-      const rect = video.getBoundingClientRect();
-      return rect.width > 80 && rect.height > 60 &&
-        clientX >= rect.left && clientX <= rect.right &&
-        clientY >= rect.top && clientY <= rect.bottom;
-    })
-    .sort((left, right) => {
-      const leftRect = left.getBoundingClientRect();
-      const rightRect = right.getBoundingClientRect();
-      return rightRect.width * rightRect.height - leftRect.width * leftRect.height;
-    })[0] || null;
+function cancelPendingPlayback(action = "local") {
+  playbackCommandSequence += 1;
+  latestPlaybackAction = action;
+  pendingPlayback = null;
+  remotePlaybackExpectation = null;
+  if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+  playbackRetryTimer = null;
 }
 
-function isPlayerControlTarget(target, video) {
-  const control = target?.closest?.(
-    "button, input, select, textarea, a, [role='button'], [role='slider'], " +
-    "[class*='control'], [class*='progress'], [class*='seek'], [class*='volume']"
-  );
-  if (!control || !video) return false;
-  if (control.matches?.("input, select, textarea, [role='slider']")) return true;
-  const controlLabel = [
-    control.getAttribute?.("aria-label"),
-    control.getAttribute?.("title"),
-    control.getAttribute?.("data-title"),
-    control.getAttribute?.("data-tooltip"),
-    control.className,
-    control.textContent
-  ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-  if (/\b(play|pause|resume|replay)\b/i.test(controlLabel)) return true;
-  const videoRect = video.getBoundingClientRect();
-  const controlRect = control.getBoundingClientRect();
-  const videoArea = Math.max(1, videoRect.width * videoRect.height);
-  const controlArea = Math.max(0, controlRect.width * controlRect.height);
-  // A large role=button layer is commonly the site's click-to-toggle surface,
-  // not a discrete player control. Let Havyn's guarded fallback handle it.
-  return controlArea / videoArea < 0.28;
-}
-
-function observePlaybackGesture(video) {
-  let handled = false;
-  let cleaned = false;
-  const handledEvents = ["play", "pause", "ratechange", "seeking", "seeked"];
-  const markHandled = () => {
-    handled = true;
-  };
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    clearTimeout(expiryTimer);
-    handledEvents.forEach((eventName) => video.removeEventListener(eventName, markHandled, true));
-  };
-  handledEvents.forEach((eventName) => video.addEventListener(eventName, markHandled, true));
-  const expiryTimer = setTimeout(cleanup, 1200);
-  return {
-    wasHandled: () => handled,
-    cleanup
-  };
-}
-
-function installDocumentClickToggle() {
-  if (window.__havynDocumentClickToggleInstalled || window.__havynFrameClickToggleInstalled) return;
-  window.__havynDocumentClickToggleInstalled = true;
-  let pointerDown = null;
-  let clickTimer = null;
-
+function installLocalIntentCancellation() {
+  if (window.__havynLocalIntentCancellationInstalled) return;
+  window.__havynLocalIntentCancellationInstalled = true;
   document.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    pendingPlayback = null;
-    remotePlaybackExpectation = null;
-    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
-    playbackRetryTimer = null;
-    findVideos().forEach((video) => {
-      delete video.dataset.havynControlledUntil;
-    });
-    pointerDown?.gesture?.cleanup?.();
-    const video = videoAtPoint(event.clientX, event.clientY);
-    pointerDown = {
-      x: event.clientX,
-      y: event.clientY,
-      at: Date.now(),
-      video,
-      gesture: video ? observePlaybackGesture(video) : null
-    };
+    if (event.button === 0) cancelPendingPlayback();
   }, true);
-
-  document.addEventListener("keydown", () => {
-    pendingPlayback = null;
-    remotePlaybackExpectation = null;
-    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
-    playbackRetryTimer = null;
-    findVideos().forEach((video) => {
-      delete video.dataset.havynControlledUntil;
-    });
-  }, true);
-
-  document.addEventListener("dblclick", () => {
-    if (clickTimer) clearTimeout(clickTimer);
-    clickTimer = null;
-    pointerDown?.gesture?.cleanup?.();
-    pointerDown = null;
-  }, true);
-
-  document.addEventListener("click", (event) => {
-    if (
-      event.button !== 0 ||
-      event.detail > 1 ||
-      !pointerDown ||
-      Date.now() - pointerDown.at > 900 ||
-      Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 12
-    ) return;
-
-    const gesture = pointerDown.gesture;
-    const video = pointerDown.video || videoAtPoint(event.clientX, event.clientY);
-    if (!video) {
-      gesture?.cleanup?.();
-      return;
-    }
-    if (isPlayerControlTarget(event.target, video)) {
-      gesture?.cleanup?.();
-      return;
-    }
-    const rect = video.getBoundingClientRect();
-    if (event.clientY >= rect.bottom - Math.min(76, rect.height * 0.2)) {
-      gesture?.cleanup?.();
-      return;
-    }
-    // The native controls and keyboard remain owned by the site. Havyn owns
-    // only a click on the media surface so a custom player cannot toggle once
-    // more after Havyn's fallback and leave the guest in the original state.
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (clickTimer) clearTimeout(clickTimer);
-    clickTimer = setTimeout(() => {
-      clickTimer = null;
-      const siteHandledClick = Boolean(gesture?.wasHandled?.());
-      gesture?.cleanup?.();
-      if (siteHandledClick) return;
-      if (video.paused) video.play().catch(() => {});
-      else video.pause();
-    }, 220);
-  }, true);
+  document.addEventListener("keydown", () => cancelPendingPlayback(), true);
 }
 
 function attach(video) {
@@ -340,10 +289,31 @@ function dismissResumePrompt() {
   }
 }
 
-async function applyPlayback({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt }) {
+async function applyPlayback(state = {}) {
+  diagnostic("playback-command-received", {
+    action: state.action || "sync",
+    currentTime: state.currentTime,
+    playbackRate: state.playbackRate,
+    reason: state.reason || ""
+  });
+  const isRetry = Number.isFinite(Number(state.__havynCommandId));
+  if (!isRetry) {
+    playbackCommandSequence += 1;
+    latestPlaybackAction = String(state.action || "sync");
+    pendingPlayback = null;
+    if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+    playbackRetryTimer = null;
+  }
+  const command = {
+    ...state,
+    __havynCommandId: isRetry ? Number(state.__havynCommandId) : playbackCommandSequence
+  };
+  const { action, currentTime, playbackRate } = command;
+  if (command.__havynCommandId !== playbackCommandSequence) return false;
   const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
   if (!video) {
-    queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+    diagnostic("playback-command-no-video", { action: command.action || "sync" });
+    queuePlaybackRetry(command);
     return false;
   }
   remotePlaybackExpectation = createRemotePlaybackExpectation({ action, currentTime, playbackRate });
@@ -355,14 +325,31 @@ async function applyPlayback({ action, currentTime, playbackRate, __havynRetryCo
   if (action === "play" && video.paused) {
     try {
       await video.play();
+      if (command.__havynCommandId !== playbackCommandSequence) {
+        if (latestPlaybackAction === "pause" && !video.paused) video.pause();
+        return false;
+      }
       pendingPlayback = null;
+      diagnostic("playback-command-applied", {
+        action: "play",
+        currentTime: video.currentTime,
+        paused: video.paused,
+        playbackRate: video.playbackRate
+      });
       return !video.paused;
     } catch {
-      queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+      diagnostic("playback-command-failed", { action: "play", reason: "play-promise-rejected" });
+      queuePlaybackRetry(command);
       return false;
     }
   }
   if (action === "pause" && !video.paused) video.pause();
+  diagnostic("playback-command-applied", {
+    action: action || "sync",
+    currentTime: video.currentTime,
+    paused: video.paused,
+    playbackRate: video.playbackRate
+  });
   return action === "pause" ? video.paused : true;
 }
 
@@ -377,6 +364,7 @@ function schedulePlaybackRetry() {
 }
 
 function queuePlaybackRetry(state) {
+  if (Number(state.__havynCommandId) !== playbackCommandSequence) return;
   const retryCount = Number(state.__havynRetryCount || 0);
   const expiresAt = Number(state.__havynExpiresAt || (Date.now() + 7000));
   if (retryCount >= 8 || Date.now() >= expiresAt) {
@@ -419,13 +407,15 @@ function startObserver() {
   }
 }
 window.addEventListener("DOMContentLoaded", () => {
-  installDocumentClickToggle();
+  installDiagnosticInputTracing();
+  installLocalIntentCancellation();
   startObserver();
   scheduleScan(true);
 });
 window.addEventListener("load", () => scheduleScan(true));
 startObserver();
-installDocumentClickToggle();
+installDiagnosticInputTracing();
+installLocalIntentCancellation();
 setInterval(() => scan(false), 5000);
 setInterval(() => {
   if (pendingPlayback) {

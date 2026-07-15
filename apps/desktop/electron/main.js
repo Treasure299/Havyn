@@ -1,4 +1,5 @@
-import { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, webContents } from "electron";
+import { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, shell, webContents } from "electron";
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "./playbackEventClassifier.js";
@@ -16,6 +17,69 @@ let browserVisible = true;
 const registeredWebviews = new Set();
 const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
+// Keep diagnostics available in tester builds until the watch-room behavior is
+// signed off. Set HAVYN_DIAGNOSTICS=0 only when shipping a build without logs.
+const diagnosticsEnabled = process.env.HAVYN_DIAGNOSTICS !== "0";
+let diagnosticLogPath = "";
+
+function sanitizeDiagnosticValue(value, key = "") {
+  if (value == null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") {
+    if (/token|secret|password|authorization|api.?key/i.test(key)) return "[redacted]";
+    if (/url|src|href/i.test(key)) {
+      try {
+        const parsed = new URL(value);
+        return `${parsed.origin}${parsed.pathname}`;
+      } catch {
+        return value.slice(0, 300);
+      }
+    }
+    return value.slice(0, 1000);
+  }
+  if (Array.isArray(value)) return value.slice(0, 30).map((item) => sanitizeDiagnosticValue(item, key));
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).slice(0, 80).map(([childKey, childValue]) => [
+        childKey,
+        sanitizeDiagnosticValue(childValue, childKey)
+      ])
+    );
+  }
+  return String(value).slice(0, 300);
+}
+
+function initializeDiagnosticLog() {
+  if (!diagnosticsEnabled || diagnosticLogPath) return;
+  const logDirectory = path.join(app.getPath("userData"), "logs");
+  mkdirSync(logDirectory, { recursive: true });
+  diagnosticLogPath = path.join(logDirectory, "havyn-playback-diagnostic.jsonl");
+  if (existsSync(diagnosticLogPath) && statSync(diagnosticLogPath).size > 5 * 1024 * 1024) {
+    const previousPath = path.join(logDirectory, "havyn-playback-diagnostic.previous.jsonl");
+    try {
+      renameSync(diagnosticLogPath, previousPath);
+    } catch {
+      // Keep the current file if antivirus or another viewer has it open.
+    }
+  }
+  appendDiagnosticRecord({ scope: "main", event: "diagnostic-session-start" });
+}
+
+function appendDiagnosticRecord(record = {}) {
+  if (!diagnosticsEnabled) return;
+  if (!diagnosticLogPath) initializeDiagnosticLog();
+  if (!diagnosticLogPath) return;
+  const entry = sanitizeDiagnosticValue({
+    timestamp: new Date().toISOString(),
+    appVersion: app.getVersion(),
+    pid: process.pid,
+    ...record
+  });
+  try {
+    appendFileSync(diagnosticLogPath, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch {
+    // Diagnostics must never interrupt the watch room.
+  }
+}
 
 export const FRAME_DETECTOR_SCRIPT = String.raw`
 (() => {
@@ -30,8 +94,60 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   let remotePlaybackExpectation = null;
   let pendingPlayback = null;
   let playbackRetryTimer = null;
+  let playbackCommandSequence = 0;
+  let latestPlaybackAction = "";
   let scanTimer = null;
   let lastTimeUpdateAt = 0;
+
+  const diagnostic = (event, details = {}) => {
+    if (!window.__havynDiagnosticsEnabled) return;
+    console.debug("__HAVYN_FRAME_DIAGNOSTIC__" + JSON.stringify({ event, frameUrl: window.location.href, ...details }));
+  };
+
+  const diagnosticMedia = () => findVideos().slice(0, 4).map((video) => ({
+    currentTime: Number(video.currentTime || 0),
+    paused: Boolean(video.paused),
+    playbackRate: Number(video.playbackRate || 1),
+    readyState: Number(video.readyState || 0)
+  }));
+
+  const diagnosticTarget = (event) => {
+    const target = event.composedPath?.()[0] || event.target;
+    return {
+      type: event.type,
+      phase: event.eventPhase,
+      button: event.button,
+      defaultPrevented: event.defaultPrevented,
+      x: Math.round(event.clientX || 0),
+      y: Math.round(event.clientY || 0),
+      target: {
+        tag: target?.tagName || "",
+        id: target?.id || "",
+        className: typeof target?.className === "string" ? target.className.slice(0, 180) : "",
+        role: target?.getAttribute?.("role") || "",
+        hasOnClick: Boolean(target?.getAttribute?.("onclick"))
+      },
+      media: diagnosticMedia()
+    };
+  };
+
+  document.addEventListener("pointerdown", (event) => diagnostic("input-pointerdown-capture", diagnosticTarget(event)), true);
+  document.addEventListener("pointerup", (event) => diagnostic("input-pointerup-capture", diagnosticTarget(event)), true);
+  document.addEventListener("click", (event) => {
+    diagnostic("input-click-capture", diagnosticTarget(event));
+    setTimeout(() => diagnostic("input-click-after-120ms", diagnosticTarget(event)), 120);
+  }, true);
+  document.addEventListener("click", (event) => diagnostic("input-click-bubble", diagnosticTarget(event)), false);
+  document.addEventListener("keydown", (event) => {
+    if (["Space", "Enter", "ArrowLeft", "ArrowRight"].includes(event.code)) {
+      diagnostic("input-keydown-capture", {
+        code: event.code,
+        defaultPrevented: event.defaultPrevented,
+        target: event.target?.tagName || "",
+        media: diagnosticMedia()
+      });
+    }
+  }, true);
 
   const allRoots = (root = document) => {
     const roots = [root];
@@ -87,136 +203,22 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
       media,
       controlledByHavyn: matchesRemotePlaybackEvent(remotePlaybackExpectation, eventName, media)
     };
+    if (["play", "playing", "pause", "seeking", "seeked", "ratechange"].includes(eventName)) {
+      diagnostic("media-event", {
+        eventName,
+        controlledByHavyn: lastMediaEvent.controlledByHavyn,
+        media: {
+          currentTime: media.currentTime,
+          paused: media.paused,
+          playbackRate: media.playbackRate,
+          readyState: media.readyState
+        }
+      });
+    }
     // Include the complete event in the console signal. Reading a second queued
     // value from the frame here races Chromium's console delivery and can lose
     // fast play events from cross-origin players.
     console.debug("__HAVYN_FRAME_MEDIA_EVENT__" + JSON.stringify(lastMediaEvent));
-  };
-
-  const videoAtPoint = (clientX, clientY) => {
-    const direct = document.elementsFromPoint?.(clientX, clientY)
-      ?.find((node) => node?.tagName === "VIDEO");
-    if (direct) return direct;
-    return findVideos()
-      .filter((video) => {
-        const rect = video.getBoundingClientRect();
-        return rect.width > 80 && rect.height > 60 &&
-          clientX >= rect.left && clientX <= rect.right &&
-          clientY >= rect.top && clientY <= rect.bottom;
-      })
-      .sort((left, right) => {
-        const leftRect = left.getBoundingClientRect();
-        const rightRect = right.getBoundingClientRect();
-        return rightRect.width * rightRect.height - leftRect.width * leftRect.height;
-      })[0] || null;
-  };
-
-  const isDiscretePlayerControl = (target, video) => {
-    const control = target?.closest?.(
-      "button, input, select, textarea, a, [role='button'], [role='slider'], " +
-      "[class*='control'], [class*='progress'], [class*='seek'], [class*='volume']"
-    );
-    if (!control || !video) return false;
-    if (control.matches?.("input, select, textarea, [role='slider']")) return true;
-    const label = [
-      control.getAttribute?.("aria-label"),
-      control.getAttribute?.("title"),
-      control.getAttribute?.("data-title"),
-      control.getAttribute?.("data-tooltip"),
-      control.className,
-      control.textContent
-    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-    if (/\b(play|pause|resume|replay)\b/i.test(label)) return true;
-    const videoRect = video.getBoundingClientRect();
-    const controlRect = control.getBoundingClientRect();
-    const videoArea = Math.max(1, videoRect.width * videoRect.height);
-    const controlArea = Math.max(0, controlRect.width * controlRect.height);
-    return controlArea / videoArea < 0.28;
-  };
-
-  const observePlaybackGesture = (video) => {
-    let handled = false;
-    let cleaned = false;
-    const handledEvents = ["play", "pause", "ratechange", "seeking", "seeked"];
-    const markHandled = () => {
-      handled = true;
-    };
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      clearTimeout(expiryTimer);
-      handledEvents.forEach((eventName) => video.removeEventListener(eventName, markHandled, true));
-    };
-    handledEvents.forEach((eventName) => video.addEventListener(eventName, markHandled, true));
-    const expiryTimer = setTimeout(cleanup, 1200);
-    return {
-      wasHandled: () => handled,
-      cleanup
-    };
-  };
-
-  const installClickToggle = () => {
-    if (window.__havynFrameClickToggleInstalled || window.__havynDocumentClickToggleInstalled) return;
-    window.__havynFrameClickToggleInstalled = true;
-    let pointerDown = null;
-    let clickTimer = null;
-
-    document.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      pointerDown?.gesture?.cleanup?.();
-      const video = videoAtPoint(event.clientX, event.clientY);
-      pointerDown = {
-        x: event.clientX,
-        y: event.clientY,
-        at: Date.now(),
-        video,
-        gesture: video ? observePlaybackGesture(video) : null
-      };
-    }, true);
-    document.addEventListener("dblclick", () => {
-      if (clickTimer) clearTimeout(clickTimer);
-      clickTimer = null;
-      pointerDown?.gesture?.cleanup?.();
-      pointerDown = null;
-    }, true);
-    document.addEventListener("click", (event) => {
-      if (
-        event.button !== 0 ||
-        event.detail > 1 ||
-        !pointerDown ||
-        Date.now() - pointerDown.at > 900 ||
-        Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 12
-      ) return;
-
-      const gesture = pointerDown.gesture;
-      const video = pointerDown.video || videoAtPoint(event.clientX, event.clientY);
-      if (!video) {
-        gesture?.cleanup?.();
-        return;
-      }
-      if (isDiscretePlayerControl(event.target, video)) {
-        gesture?.cleanup?.();
-        return;
-      }
-      const rect = video.getBoundingClientRect();
-      if (event.clientY >= rect.bottom - Math.min(76, rect.height * 0.2)) {
-        gesture?.cleanup?.();
-        return;
-      }
-      // Leave explicit controls to the site, but own the media-surface click.
-      // This prevents a custom player and Havyn from toggling in succession.
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (clickTimer) clearTimeout(clickTimer);
-      clickTimer = setTimeout(() => {
-        clickTimer = null;
-        const siteHandledClick = Boolean(gesture?.wasHandled?.());
-        gesture?.cleanup?.();
-        if (siteHandledClick) return;
-        if (video.paused) video.play().catch(() => {});
-        else video.pause();
-      }, 220);
-    }, true);
   };
 
   const attach = (video) => {
@@ -259,6 +261,7 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   };
 
   const queuePlaybackRetry = (state) => {
+    if (Number(state.__havynCommandId) !== playbackCommandSequence) return;
     const retryCount = Number(state.__havynRetryCount || 0);
     const expiresAt = Number(state.__havynExpiresAt || (Date.now() + 7000));
     if (retryCount >= 8 || Date.now() >= expiresAt) {
@@ -273,10 +276,31 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     schedulePlaybackRetry();
   };
 
-  window.__havynApplyPlayback = async ({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt }) => {
+  window.__havynApplyPlayback = async (state = {}) => {
+    diagnostic("playback-command-received", {
+      action: state.action || "sync",
+      currentTime: state.currentTime,
+      playbackRate: state.playbackRate,
+      reason: state.reason || ""
+    });
+    const isRetry = Number.isFinite(Number(state.__havynCommandId));
+    if (!isRetry) {
+      playbackCommandSequence += 1;
+      latestPlaybackAction = String(state.action || "sync");
+      pendingPlayback = null;
+      if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+      playbackRetryTimer = null;
+    }
+    const command = {
+      ...state,
+      __havynCommandId: isRetry ? Number(state.__havynCommandId) : playbackCommandSequence
+    };
+    const { action, currentTime, playbackRate } = command;
+    if (command.__havynCommandId !== playbackCommandSequence) return false;
     const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
     if (!video) {
-      queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+      diagnostic("playback-command-no-video", { action: command.action || "sync" });
+      queuePlaybackRetry(command);
       return false;
     }
     remotePlaybackExpectation = createRemotePlaybackExpectation({ action, currentTime, playbackRate });
@@ -288,19 +312,38 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     if (action === "play" && video.paused) {
       try {
         await video.play();
+        if (command.__havynCommandId !== playbackCommandSequence) {
+          if (latestPlaybackAction === "pause" && !video.paused) video.pause();
+          return false;
+        }
         pendingPlayback = null;
+        diagnostic("playback-command-applied", {
+          action: "play",
+          currentTime: video.currentTime,
+          paused: video.paused,
+          playbackRate: video.playbackRate
+        });
         return !video.paused;
       } catch {
-        queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+        diagnostic("playback-command-failed", { action: "play", reason: "play-promise-rejected" });
+        queuePlaybackRetry(command);
         return false;
       }
     }
     if (action === "pause" && !video.paused) video.pause();
+    diagnostic("playback-command-applied", {
+      action: action || "sync",
+      currentTime: video.currentTime,
+      paused: video.paused,
+      playbackRate: video.playbackRate
+    });
     return action === "pause" ? video.paused : true;
   };
 
   document.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
+    playbackCommandSequence += 1;
+    latestPlaybackAction = "local";
     pendingPlayback = null;
     remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
@@ -310,6 +353,8 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     });
   }, true);
   document.addEventListener("keydown", () => {
+    playbackCommandSequence += 1;
+    latestPlaybackAction = "local";
     pendingPlayback = null;
     remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
@@ -319,7 +364,6 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     });
   }, true);
 
-  installClickToggle();
   new MutationObserver(scheduleScan).observe(document.documentElement || document, { childList: true, subtree: true });
   scan();
   setTimeout(scheduleScan, 500);
@@ -644,19 +688,21 @@ async function scanTabMedia(tab = activeTab()) {
 }
 
 function normalizeDetectedMedia(tab, media = []) {
+  const pageUrl = tab?.url || "";
   return (media || []).map((item) => ({
     ...item,
     frameUrl: item.frameUrl || item.url,
-    pageUrl: item.pageUrl || tab?.url || item.url,
+    pageUrl: pageUrl || item.pageUrl || item.url,
     url: item.url || item.frameUrl || tab?.url
   }));
 }
 
-function normalizeWebviewMedia(wc, media = []) {
+export function normalizeWebviewMedia(wc, media = []) {
+  const pageUrl = wc?.getURL?.() || "";
   return (media || []).map((item) => ({
     ...item,
     frameUrl: item.frameUrl || item.url,
-    pageUrl: item.pageUrl || wc?.getURL?.() || item.url,
+    pageUrl: pageUrl || item.pageUrl || item.url,
     url: item.url || item.frameUrl || wc?.getURL?.()
   }));
 }
@@ -675,11 +721,14 @@ function webviewFrames(wc) {
 async function installDetectorInWebviewFrames(wc) {
   if (!wc || wc.isDestroyed()) return [];
   const frames = webviewFrames(wc);
-  await Promise.all(frames.map((frame) => frame.executeJavaScript(FRAME_DETECTOR_SCRIPT, true).catch(() => false)));
+  await Promise.all(frames.map(async (frame) => {
+    await frame.executeJavaScript(`window.__havynDiagnosticsEnabled = ${diagnosticsEnabled};`, true).catch(() => false);
+    return frame.executeJavaScript(FRAME_DETECTOR_SCRIPT, true).catch(() => false);
+  }));
   return frames;
 }
 
-async function scanWebviewMedia(webContentsId) {
+export async function scanWebviewMedia(webContentsId) {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc || wc.isDestroyed()) return [];
   const frames = await installDetectorInWebviewFrames(wc);
@@ -887,6 +936,15 @@ ipcMain.handle("browser:toggle-adblock", async () => {
 
 ipcMain.handle("browser:get-adblock-state", () => adBlockStateForUrl());
 
+ipcMain.handle("diagnostics:is-enabled", () => diagnosticsEnabled);
+ipcMain.handle("diagnostics:get-path", () => diagnosticLogPath);
+ipcMain.handle("diagnostics:open-folder", () => {
+  initializeDiagnosticLog();
+  if (diagnosticLogPath) shell.showItemInFolder(diagnosticLogPath);
+  return diagnosticLogPath;
+});
+ipcMain.on("diagnostics:log", (_event, record) => appendDiagnosticRecord(record));
+
 ipcMain.handle("app:get-browser-preload-url", () => `file://${path.join(__dirname, "browserPreload.js").replace(/\\/g, "/")}`);
 ipcMain.handle("app:get-browser-partition", () => browserPartition());
 
@@ -894,8 +952,25 @@ ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc || registeredWebviews.has(wc.id)) return Boolean(wc);
   registeredWebviews.add(wc.id);
+  wc.setWindowOpenHandler(({ url }) => {
+    mainWindow?.webContents.send("browser:load-state", {
+      type: "warning",
+      url,
+      message: "Popup blocked."
+    });
+    return { action: "deny" };
+  });
   wc.on("console-message", async (details) => {
     const message = details?.message || "";
+    if (String(message).includes("__HAVYN_FRAME_DIAGNOSTIC__")) {
+      const serialized = String(message).slice(String(message).indexOf("__HAVYN_FRAME_DIAGNOSTIC__") + "__HAVYN_FRAME_DIAGNOSTIC__".length);
+      try {
+        appendDiagnosticRecord({ scope: "embedded-frame", webContentsId: wc.id, ...JSON.parse(serialized) });
+      } catch {
+        appendDiagnosticRecord({ scope: "embedded-frame", event: "malformed-frame-diagnostic" });
+      }
+      return;
+    }
     if (!String(message || "").includes("__HAVYN_FRAME_MEDIA_")) return;
     if (String(message).includes("__HAVYN_FRAME_MEDIA_EVENT__")) {
       const serialized = String(message).slice(String(message).indexOf("__HAVYN_FRAME_MEDIA_EVENT__") + "__HAVYN_FRAME_MEDIA_EVENT__".length);
@@ -973,6 +1048,7 @@ ipcMain.on("browser:media-event-from-page", (event, payload) => {
 });
 
 if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(() => {
+  initializeDiagnosticLog();
   const canUseMedia = (_webContents, permission) => ["media"].includes(permission);
   session.defaultSession.setPermissionCheckHandler(canUseMedia);
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {

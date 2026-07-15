@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { domBrowserBridge } from "../lib/domBrowserBridge";
+import { createPlaybackDelivery } from "../lib/playbackDelivery";
 
 export function useMediaDetection({ socket, room, user, onMediaEvent }) {
   const [detectedMedia, setDetectedMedia] = useState([]);
@@ -7,6 +8,11 @@ export function useMediaDetection({ socket, room, user, onMediaEvent }) {
   const browser = useMemo(() => window.havyn?.browser ? domBrowserBridge : null, []);
   const reportedMediaKey = useRef("");
   const recentMediaEvents = useRef(new Map());
+  const playbackDelivery = useRef(null);
+
+  useEffect(() => () => {
+    playbackDelivery.current?.controller.dispose();
+  }, []);
 
   function sortDetectedMedia(media = []) {
     return [...media].sort((a, b) => {
@@ -78,7 +84,15 @@ export function useMediaDetection({ socket, room, user, onMediaEvent }) {
   }
 
   async function applyPlayback(state) {
-    return browser?.applyPlayback(state);
+    if (!browser || !state) return false;
+    if (playbackDelivery.current?.browser !== browser) {
+      playbackDelivery.current?.controller.dispose();
+      playbackDelivery.current = {
+        browser,
+        controller: createPlaybackDelivery((command) => browser.applyPlayback(command))
+      };
+    }
+    return playbackDelivery.current.controller.deliver(state);
   }
 
   async function scanMedia() {

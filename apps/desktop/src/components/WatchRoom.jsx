@@ -1,9 +1,12 @@
-import { Copy, HelpCircle, LogOut, Maximize2, Minimize2 } from "lucide-react";
+import { Copy, FolderOpen, HelpCircle, LogOut, Maximize2, Menu, Minimize2, UserCircle2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMediaDetection } from "../hooks/useMediaDetection";
 import { useDismissableLayer } from "../hooks/useDismissableLayer";
 import { usePlaybackSync } from "../hooks/usePlaybackSync";
 import { useWebRTC } from "../hooks/useWebRTC";
+import { logPlaybackDiagnostic } from "../lib/playbackDiagnostics";
+import { canonicalMediaSelection, isOnSharedMediaPage, sameBrowserPage, sharedMediaPageUrl } from "../lib/mediaSource";
 import CallControls from "./CallControls";
 import ChatPanel from "./ChatPanel";
 import IntegratedBrowserPanel from "./IntegratedBrowserPanel";
@@ -23,28 +26,6 @@ const calculateProjectedTime = (state) => {
   return base + ((Date.now() - Number(state.updatedAt || Date.now())) / 1000) * Number(state.playbackRate || 1);
 };
 
-const sameBrowserPage = (left = "", right = "") => {
-  try {
-    const leftUrl = new URL(left);
-    const rightUrl = new URL(right);
-    leftUrl.hash = "";
-    rightUrl.hash = "";
-    return leftUrl.toString() === rightUrl.toString();
-  } catch {
-    return Boolean(left && right && left === right);
-  }
-};
-
-const isCurrentPlayableSource = (currentUrl = "", selected = {}) => (
-  sameBrowserPage(currentUrl, selected.url) ||
-  sameBrowserPage(currentUrl, selected.pageUrl) ||
-  sameBrowserPage(currentUrl, selected.frameUrl)
-);
-
-// Keep the user on the provider's normal page. The frame URL identifies the
-// detected media target but is not a stable, user-facing browser destination.
-const playableSourceUrl = (selected = {}) => selected.pageUrl || selected.url || selected.frameUrl || "";
-
 const playbackCommandFromState = (state, reason = "state-sync") => {
   if (!state) return null;
   return {
@@ -63,6 +44,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const webVideoRef = useRef(null);
   const watchLayoutRef = useRef(null);
   const autoLoadedMediaUrlRef = useRef("");
+  const mediaPageRepairRef = useRef({ sourceKey: "", mismatchUrl: "" });
+  const manualBrowsingRef = useRef(false);
+  const pendingMediaPageRef = useRef("");
   const autoSyncKeyRef = useRef("");
   const autoSyncTimersRef = useRef([]);
   const suppressMediaEventsUntilRef = useRef(0);
@@ -77,15 +61,23 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const [focusMode, setFocusMode] = useState(false);
   const [cinemaControlsOpen, setCinemaControlsOpen] = useState(false);
   const [cinemaChatCollapsed, setCinemaChatCollapsed] = useState(true);
+  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false);
+  const [roomMenuOpen, setRoomMenuOpen] = useState(false);
   const audioNoticeRef = useRef(null);
   const cinemaControlsButtonRef = useRef(null);
   const cinemaControlsRef = useRef(null);
+  const roomMenuButtonRef = useRef(null);
+  const roomMenuRef = useRef(null);
   const [guideOpen, setGuideOpen] = useState(() => (
     localStorage.getItem("havyn:guide:watch:armed") === "true" ||
     localStorage.getItem("havyn:guide:watch:v1") !== "done"
   ));
   const callTileCount = (call.localStream ? 1 : 0) + call.streams.length;
   const canUseFocusLayout = call.joined && callTileCount === 2;
+
+  useEffect(() => {
+    window.havyn?.diagnostics?.isEnabled?.().then(setDiagnosticsEnabled).catch(() => {});
+  }, []);
 
   function toggleFocusMode() {
     setFocusMode((next) => {
@@ -99,8 +91,10 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }
 
   const closeCinemaControls = useCallback(() => setCinemaControlsOpen(false), []);
+  const closeRoomMenu = useCallback(() => setRoomMenuOpen(false), []);
 
   useDismissableLayer(cinemaControlsOpen, [cinemaControlsButtonRef, cinemaControlsRef], closeCinemaControls);
+  useDismissableLayer(roomMenuOpen, [roomMenuButtonRef, roomMenuRef], closeRoomMenu);
 
   function playMessageBeep() {
     if (!focusMode) return;
@@ -214,7 +208,23 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     const intent = mediaIntentRef.current;
     const playbackApi = playbackRef.current;
 
+    logPlaybackDiagnostic("renderer-media-event", {
+      roomId: room.roomId,
+      eventName,
+      mode: room.playbackMode,
+      canControl: Boolean(playbackApi?.canControl),
+      controlledByHavyn: Boolean(event.controlledByHavyn),
+      sourceFrameUrl: event.sourceFrameUrl || event.media?.frameUrl || "",
+      media: {
+        currentTime: hasCurrentTime ? currentTime : null,
+        paused: Boolean(event.media?.paused),
+        playbackRate: Number(event.media?.playbackRate || 1),
+        readyState: Number(event.media?.readyState || 0)
+      }
+    });
+
     if (event.controlledByHavyn) {
+      logPlaybackDiagnostic("renderer-media-event-ignored-remote", { roomId: room.roomId, eventName });
       if (hasCurrentTime) intent.lastTime = currentTime;
       return;
     }
@@ -254,21 +264,14 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       if (eventName === "play") {
         intent.lastToggle = { eventName, at: now };
         if (hasCurrentTime) intent.lastTime = currentTime;
+        logPlaybackDiagnostic("renderer-media-event-sending", { roomId: room.roomId, eventName, payload });
         socket.emit("playback-play", payload);
       }
       if (eventName === "pause") {
         intent.lastToggle = { eventName, at: now };
         if (hasCurrentTime) intent.lastTime = currentTime;
-        suppressMediaEventsUntilRef.current = now + 650;
+        logPlaybackDiagnostic("renderer-media-event-sending", { roomId: room.roomId, eventName, payload });
         socket.emit("playback-pause", payload);
-        window.setTimeout(() => {
-          mediaRef.current?.applyPlayback?.({
-            action: "pause",
-            currentTime,
-            playbackRate: playbackRef.current?.playbackState?.playbackRate || 1,
-            reason: "pause-confirm"
-          });
-        }, 120);
       }
       if (eventName === "seeked") {
         const seekStart = intent.seekStart;
@@ -281,10 +284,14 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           seekDistance >= (recentToggle ? 2 : 0.75)
         );
         if (hasCurrentTime) intent.lastTime = currentTime;
-        if (isIntentionalSeek) socket.emit("playback-seek", payload);
+        if (isIntentionalSeek) {
+          logPlaybackDiagnostic("renderer-media-event-sending", { roomId: room.roomId, eventName: "seek", payload });
+          socket.emit("playback-seek", payload);
+        }
       }
     } else if (["play", "pause", "seeked"].includes(eventName)) {
       const command = playbackCommandFromState(playbackApi?.playbackState, "permission-restore");
+      logPlaybackDiagnostic("renderer-media-event-permission-restore", { roomId: room.roomId, eventName, command });
       if (event.video) mediaRef.current?.applyWebPlayback(event.video, command);
       else mediaRef.current?.applyPlayback(command);
     }
@@ -343,10 +350,22 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
 
   useEffect(() => {
     const handleSelected = ({ media: selected, playbackState: selectedState }) => {
-      const playableUrl = playableSourceUrl(selected);
+      manualBrowsingRef.current = false;
+      pendingMediaPageRef.current = "";
+      const playableUrl = sharedMediaPageUrl(selected);
+      logPlaybackDiagnostic("room-media-selected-received", {
+        roomId: room.roomId,
+        currentUrl: media.currentUrl,
+        playableUrl,
+        selected: {
+          url: selected?.url || "",
+          pageUrl: selected?.pageUrl || "",
+          frameUrl: selected?.frameUrl || ""
+        }
+      });
       if (playableUrl) {
         suppressMediaEventsUntilRef.current = Date.now() + 12_000;
-        if (isCurrentPlayableSource(media.currentUrl, selected)) {
+        if (isOnSharedMediaPage(media.currentUrl, selected)) {
           media.scanMedia?.().then(() => {
             if (selectedState) {
               media.applyPlayback?.(playbackCommandFromState(selectedState, "media-selected"));
@@ -370,17 +389,46 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
 
   useEffect(() => {
     const activeUrl = playback.playbackState?.activeMediaPageUrl || playback.playbackState?.activeMediaUrl || room.playbackState?.activeMediaPageUrl || room.playbackState?.activeMediaUrl;
-    if (!activeUrl || activeUrl === autoLoadedMediaUrlRef.current) return;
+    if (!activeUrl) return;
+    if (pendingMediaPageRef.current && sameBrowserPage(activeUrl, pendingMediaPageRef.current)) {
+      manualBrowsingRef.current = false;
+      pendingMediaPageRef.current = "";
+    }
+    if (manualBrowsingRef.current) return;
     const activeState = playback.playbackState || room.playbackState || {};
-    if (isCurrentPlayableSource(media.currentUrl, {
+    const isOnActivePage = isOnSharedMediaPage(media.currentUrl, {
       url: activeUrl,
       pageUrl: activeState.activeMediaPageUrl,
       frameUrl: activeState.activeMediaFrameUrl
-    })) {
+    });
+    if (isOnActivePage) {
       autoLoadedMediaUrlRef.current = activeUrl;
+      mediaPageRepairRef.current = { sourceKey: "", mismatchUrl: "" };
       return;
     }
+    const sourceKey = `${activeUrl}|${activeState.activeMediaFrameUrl || ""}`;
+    const mismatchUrl = media.currentUrl || "";
+    if (
+      mediaPageRepairRef.current.sourceKey === sourceKey &&
+      mediaPageRepairRef.current.mismatchUrl === mismatchUrl
+    ) {
+      logPlaybackDiagnostic("room-media-page-repair-skipped", {
+        roomId: room.roomId,
+        activeUrl,
+        currentUrl: mismatchUrl,
+        reason: "duplicate-mismatch"
+      });
+      return;
+    }
+    // Repair a real top-level navigation away from the shared source once.
+    // Repeated child-frame reports must never create a reload loop.
+    mediaPageRepairRef.current = { sourceKey, mismatchUrl };
     autoLoadedMediaUrlRef.current = activeUrl;
+    logPlaybackDiagnostic("room-media-page-repair", {
+      roomId: room.roomId,
+      activeUrl,
+      currentUrl: mismatchUrl
+    });
     suppressMediaEventsUntilRef.current = Date.now() + 12_000;
     media.loadUrl(activeUrl).then(() => {
       window.setTimeout(() => {
@@ -419,21 +467,31 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   }, []);
 
   const selectRoomMedia = useCallback((selected) => {
-    // Capture the active top-level tab at the moment of selection. Never derive
-    // the shared page from a cross-origin frame's referrer.
-    const playableUrl = media.currentUrl || selected.pageUrl || selected.url || selected.frameUrl || "";
+    const mediaForRoom = canonicalMediaSelection(selected, media.currentUrl);
+    const playableUrl = mediaForRoom.pageUrl;
     if (!playableUrl) return;
+    pendingMediaPageRef.current = playableUrl;
+    logPlaybackDiagnostic("room-media-selected-sending", {
+      roomId: room.roomId,
+      currentUrl: media.currentUrl,
+      selected: {
+        url: selected?.url || "",
+        pageUrl: selected?.pageUrl || "",
+        frameUrl: selected?.frameUrl || ""
+      },
+      canonical: {
+        url: mediaForRoom.url,
+        pageUrl: mediaForRoom.pageUrl,
+        frameUrl: mediaForRoom.frameUrl
+      }
+    });
     suppressMediaEventsUntilRef.current = Date.now() + 12_000;
     // Source selection establishes a paused baseline. Playback begins through a
     // separate controller action, avoiding blocked-autoplay retry loops.
-    const mediaForRoom = {
-      ...selected,
-      url: playableUrl,
-      pageUrl: playableUrl,
-      frameUrl: selected.frameUrl || selected.url || playableUrl,
+    Object.assign(mediaForRoom, {
       paused: true,
       playbackRate: 1
-    };
+    });
     playback.selectMedia(mediaForRoom);
     if (sameBrowserPage(media.currentUrl, playableUrl)) {
       media.applyPlayback?.({ action: "pause", playbackRate: 1, reason: "source-selected" });
@@ -444,7 +502,45 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
       window.setTimeout(() => media.scanMedia?.(), 700);
       window.setTimeout(() => media.scanMedia?.(), 1600);
     }).catch(() => {});
-  }, [media, playback]);
+  }, [media, playback, room.roomId]);
+
+  const beginManualBrowsing = useCallback((nextUrl = "") => {
+    manualBrowsingRef.current = true;
+    pendingMediaPageRef.current = "";
+    mediaPageRepairRef.current = { sourceKey: "", mismatchUrl: "" };
+    autoLoadedMediaUrlRef.current = "";
+    logPlaybackDiagnostic("room-manual-browsing", {
+      roomId: room.roomId,
+      nextUrl
+    });
+  }, [room.roomId]);
+
+  const resyncToRoom = useCallback(async () => {
+    const state = playbackRef.current?.playbackState || room.playbackState;
+    const activeUrl = state?.activeMediaPageUrl || state?.activeMediaUrl;
+    if (!activeUrl) return;
+    manualBrowsingRef.current = false;
+    pendingMediaPageRef.current = "";
+    mediaPageRepairRef.current = { sourceKey: "", mismatchUrl: "" };
+    autoLoadedMediaUrlRef.current = activeUrl;
+    suppressMediaEventsUntilRef.current = Date.now() + 12_000;
+    logPlaybackDiagnostic("room-manual-resync", {
+      roomId: room.roomId,
+      activeUrl,
+      currentUrl: media.currentUrl
+    });
+    if (!sameBrowserPage(media.currentUrl, activeUrl)) {
+      await media.loadUrl(activeUrl).catch(() => {});
+    }
+    await media.scanMedia?.().catch(() => {});
+    const command = playbackCommandFromState(state, "manual-room-resync");
+    if (command) media.applyPlayback?.(command);
+    socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
+    window.setTimeout(() => {
+      media.scanMedia?.().catch(() => {});
+      socket.emit("playback-sync-request", { roomId: room.roomId, userId: user.id });
+    }, 1100);
+  }, [media, room.playbackState, room.roomId, socket, user.id]);
 
   const inviteLink = `havyn://room/${room.roomId}`;
   const copyRoomCode = async () => {
@@ -488,6 +584,49 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     }
   ];
 
+  const roomMenu = roomMenuOpen ? createPortal(
+    <div ref={roomMenuRef} className="profile-popover account-popover room-account-popover glass" role="menu" aria-label="Room account menu">
+      <div className="profile-popover-head">
+        <div>
+          <strong>{user.displayName}</strong>
+          <span>{user.username ? `@${user.username}` : "Havyn account"}</span>
+        </div>
+        <VersionNotice compact />
+      </div>
+      <div className="account-menu-actions">
+        <button
+          className="account-menu-row"
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setRoomMenuOpen(false);
+            setGuideOpen(true);
+          }}
+        >
+          <HelpCircle size={17} />
+          <span>Room guide</span>
+        </button>
+        {social && <NotificationBell embedded user={user} social={social} onJoinRoom={roomState.joinRoom} />}
+        {diagnosticsEnabled && (
+          <button
+            className="account-menu-row"
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setRoomMenuOpen(false);
+              window.havyn?.diagnostics?.openFolder?.();
+            }}
+          >
+            <FolderOpen size={17} />
+            <span>Diagnostics</span>
+          </button>
+        )}
+      </div>
+      <button className="danger-button account-signout" type="button" role="menuitem" onClick={onSignOut}><LogOut size={16} /> Sign out</button>
+    </div>,
+    document.body
+  ) : null;
+
   return (
     <main className={`watch-room ${focusMode ? "is-focus-mode" : ""} ${focusMode && !cinemaChatCollapsed ? "is-cinema-chat-open" : ""}`}>
       <header className="room-header">
@@ -497,11 +636,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           <span>Host: {room.participants.find((p) => p.userId === room.hostUserId)?.displayName || "Host"} - {room.playbackMode}</span>
         </div>
         <div className="header-actions">
-          <button className="icon-button" onClick={() => setGuideOpen(true)} title="Room guide"><HelpCircle size={18} /></button>
           <button className="icon-button" onClick={toggleFocusMode} title={focusMode ? "Exit focus mode" : "Focus mode"}>
             {focusMode ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
           </button>
-          {social && <NotificationBell user={user} social={social} onJoinRoom={roomState.joinRoom} />}
           <select className="mode-select" value={room.playbackMode} onChange={(event) => roomState.setPlaybackMode(event.target.value)}>
             <option value="host-only">host-only</option>
             <option value="host-and-cohosts">host-and-cohosts</option>
@@ -509,11 +646,22 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           </select>
           <button className="icon-text" onClick={copyRoomCode} title="Copy room code"><Copy size={17} /> {room.roomId}</button>
           {copyNote && <span className="header-note">{copyNote}</span>}
-          <VersionNotice compact />
           <button className="icon-button" onClick={roomState.leaveRoom} title="Leave room"><LogOut size={18} /></button>
-          <button className="ghost-button" onClick={onSignOut}>Sign out</button>
+          <button
+            ref={roomMenuButtonRef}
+            className={`account-menu-button room-account-button ${roomMenuOpen ? "is-open" : ""}`}
+            type="button"
+            onClick={() => setRoomMenuOpen((value) => !value)}
+            aria-haspopup="menu"
+            aria-expanded={roomMenuOpen}
+            title="Account menu"
+          >
+            <UserCircle2 size={18} />
+            <Menu size={17} />
+          </button>
         </div>
       </header>
+      {roomMenu}
 
       {roomState.permissionNotice && <div className="toast">{roomState.permissionNotice}</div>}
       {social?.socialNote && <div className="toast social-toast">{social.socialNote}</div>}
@@ -562,6 +710,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
             browser={media.browser}
             currentUrl={media.currentUrl}
             onLoadUrl={media.loadUrl}
+            onUserNavigate={beginManualBrowsing}
             activeMediaTitle={room.playbackState?.activeMediaTitle}
             onWebMediaDetected={(items, video) => {
               webVideoRef.current = video;
@@ -588,6 +737,8 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
                 playbackState={playback.playbackState}
                 onPlay={playback.play}
                 onPause={playback.pause}
+                canResync={room.visibility === "public" && room.hostUserId !== user.id}
+                onResync={resyncToRoom}
               />
             </div>
           </div>

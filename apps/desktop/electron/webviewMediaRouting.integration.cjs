@@ -30,7 +30,7 @@ const childServer = http.createServer((_request, response) => {
   response.end(`<!doctype html><html><body style="margin:0;background:#000">
     <div id="player" style="position:relative;width:640px;height:360px">
       <video id="media" muted playsinline style="width:640px;height:360px"></video>
-      <div id="surface" role="button" style="position:absolute;inset:0"></div>
+      <a id="surface" role="button" href="https://popup.invalid/ad" target="_blank" onclick="event.preventDefault()" style="position:absolute;inset:0"></a>
       <button id="sitePlay" aria-label="Play" style="position:absolute;left:16px;top:16px;z-index:2">Play</button>
     </div>
     <script>
@@ -66,7 +66,7 @@ let window;
 
 (async () => {
   process.env.HAVYN_SKIP_APP_BOOTSTRAP = "1";
-  const { FRAME_DETECTOR_SCRIPT } = await import("./main.js");
+  const { FRAME_DETECTOR_SCRIPT, scanWebviewMedia } = await import("./main.js");
   const childPort = await listen(childServer);
   parentServer = http.createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -96,6 +96,8 @@ let window;
     view.id = 'guest';
     view.src = ${JSON.stringify(parentUrl)};
     view.preload = ${JSON.stringify(preloadUrl)};
+    view.style.width = '760px';
+    view.style.height = '480px';
     view.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no');
     document.body.appendChild(view);
     true;
@@ -116,33 +118,45 @@ let window;
   });
   await childFrame.executeJavaScript(FRAME_DETECTOR_SCRIPT, true);
 
-  const clickVideo = () => childFrame.executeJavaScript(`
-    (() => {
-      const video = document.querySelector('video');
-      const rect = video.getBoundingClientRect();
-      const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
-      video.dispatchEvent(new PointerEvent('pointerdown', init));
-      video.dispatchEvent(new MouseEvent('click', { ...init, detail: 1 }));
-      return true;
-    })();
-  `, true);
+  const clickSurface = async () => {
+    await childFrame.executeJavaScript(`
+      (() => {
+        const surface = document.querySelector('#surface');
+        const rect = surface.getBoundingClientRect();
+        const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+        surface.dispatchEvent(new PointerEvent('pointerdown', init));
+        surface.dispatchEvent(new MouseEvent('click', { ...init, detail: 1 }));
+        return true;
+      })();
+    `, true);
+  };
 
-  await clickVideo();
+  await clickSurface();
+  assert.equal(
+    await childFrame.executeJavaScript("window.siteSurfaceClickCount", true),
+    1,
+    "A physical guest click must reach the popup-wrapped player surface"
+  );
   const playEvent = await waitFor(async () => {
     const events = await window.webContents.executeJavaScript("window.__mediaEvents", true);
     return events.find((event) => event.eventName === "play");
   });
   assert.equal(playEvent.media.frameUrl, `http://127.0.0.1:${childPort}/player`);
+  const normalizedMedia = await scanWebviewMedia(guest.id);
+  assert.equal(normalizedMedia[0]?.pageUrl, parentUrl, "Detected child media must retain the exact shared parent page URL");
+  assert.equal(normalizedMedia[0]?.frameUrl, `http://127.0.0.1:${childPort}/player`);
   assert.equal(playEvent.sourceFrameUrl, `http://127.0.0.1:${childPort}/player`);
   assert.equal(playEvent.controlledByHavyn, false);
+  assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 1);
 
-  await clickVideo();
+  await clickSurface();
   const events = await waitFor(async () => {
     const current = await window.webContents.executeJavaScript("window.__mediaEvents", true);
     return current.some((event) => event.eventName === "pause") ? current : null;
   });
   assert.equal(events.filter((event) => event.eventName === "play").length, 1);
   assert.equal(events.filter((event) => event.eventName === "pause").length, 1);
+  assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 2);
 
   await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
   await childFrame.executeJavaScript(`
@@ -165,26 +179,6 @@ let window;
   await waitFor(() => childFrame.executeJavaScript("document.querySelector('video').paused", true));
 
   await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
-  await childFrame.executeJavaScript(`
-    (() => {
-      const surface = document.querySelector('#surface');
-      const rect = surface.getBoundingClientRect();
-      const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
-      surface.dispatchEvent(new PointerEvent('pointerdown', init));
-      surface.dispatchEvent(new MouseEvent('click', { ...init, detail: 1 }));
-      return true;
-    })();
-  `, true);
-  await new Promise((resolve) => setTimeout(resolve, 800));
-  const surfaceEvents = await window.webContents.executeJavaScript("window.__mediaEvents", true);
-  assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), false);
-  assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 0);
-  assert.equal(surfaceEvents.filter((event) => event.eventName === "play").length, 1);
-  assert.equal(surfaceEvents.filter((event) => event.eventName === "pause").length, 0);
-
-  await childFrame.executeJavaScript("document.querySelector('video').pause()", true);
-  await waitFor(() => childFrame.executeJavaScript("document.querySelector('video').paused", true));
-
   await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
   const remoteApplied = await childFrame.executeJavaScript(
     "window.__havynApplyPlayback({ action: 'play', currentTime: 0, playbackRate: 1 })",
@@ -202,24 +196,42 @@ let window;
   // clicks the custom player surface. The local pause must be emitted once and
   // must not be mistaken for the preceding remote action.
   await window.webContents.executeJavaScript("window.__mediaEvents = []", true);
-  await childFrame.executeJavaScript(`
-    (() => {
-      const surface = document.querySelector('#surface');
-      const rect = surface.getBoundingClientRect();
-      const init = { bubbles: true, cancelable: true, button: 0, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
-      surface.dispatchEvent(new PointerEvent('pointerdown', init));
-      surface.dispatchEvent(new MouseEvent('click', { ...init, detail: 1 }));
-      return true;
-    })();
-  `, true);
+  await clickSurface();
   const guestPause = await waitFor(async () => {
     const current = await window.webContents.executeJavaScript("window.__mediaEvents", true);
     return current.find((event) => event.eventName === "pause");
   });
   assert.equal(guestPause.controlledByHavyn, false);
   assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), true);
-  assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 0);
-  console.log("Child-frame clicks, guest-local clicks, and remote playback commands passed end to end.");
+  assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 3);
+
+  // A blocked play may schedule retries. A newer pause command must cancel
+  // those retries so an old play cannot restart the room several seconds later.
+  await childFrame.executeJavaScript(`
+    (() => {
+      const media = document.querySelector('video');
+      window.__nativeMediaPlay = media.play.bind(media);
+      media.play = () => Promise.reject(new DOMException('Blocked', 'NotAllowedError'));
+    })();
+  `, true);
+  const blockedPlay = await childFrame.executeJavaScript(
+    "window.__havynApplyPlayback({ action: 'play', currentTime: 0, playbackRate: 1 })",
+    true
+  );
+  assert.equal(blockedPlay, false);
+  await childFrame.executeJavaScript(
+    "window.__havynApplyPlayback({ action: 'pause', currentTime: 0, playbackRate: 1 })",
+    true
+  );
+  await childFrame.executeJavaScript(`
+    (() => {
+      const media = document.querySelector('video');
+      media.play = window.__nativeMediaPlay;
+    })();
+  `, true);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), true);
+  console.log("Native child-frame controls, guest-local clicks, and remote playback commands passed end to end.");
   app.exit(0);
 })().catch((error) => {
   console.error(error);

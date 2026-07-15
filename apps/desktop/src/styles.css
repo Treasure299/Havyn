@@ -797,6 +797,10 @@ label {
   position: relative;
 }
 
+.notification-menu-wrap.is-embedded {
+  width: 100%;
+}
+
 .notification-button {
   position: relative;
 }
@@ -1088,6 +1092,27 @@ label {
   min-width: 0;
 }
 
+.notification-inline {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 9px;
+  max-height: 310px;
+  margin-top: 7px;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.035);
+}
+
+.notification-inline .notification-head {
+  font-size: 12px;
+}
+
+.notification-inline .notification-list {
+  max-height: 242px;
+}
+
 .join-form-wrap {
   display: grid;
   gap: 8px;
@@ -1259,6 +1284,58 @@ label {
   right: clamp(28px, 4vw, 58px);
   top: 86px;
   width: 330px;
+}
+
+.room-account-popover {
+  top: 76px;
+  right: 18px;
+  width: min(330px, calc(100vw - 36px));
+}
+
+.account-menu-actions {
+  display: grid;
+  gap: 6px;
+  padding-block: 8px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.account-menu-row {
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.account-menu-row span {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-menu-row small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.account-menu-row:hover,
+.account-menu-row:focus-visible,
+.account-menu-row[aria-expanded="true"] {
+  border-color: rgba(239,62,58,0.26);
+  background: rgba(239,62,58,0.09);
+  color: #fff;
+}
+
+.room-account-button {
+  border-radius: 9px;
 }
 
 .account-section {
@@ -1788,6 +1865,29 @@ label {
 .first-sync-button strong {
   font-size: 11px;
   font-weight: 800;
+}
+
+.resync-room-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid rgba(239,62,58,0.34);
+  border-radius: 8px;
+  color: #fff;
+  background: rgba(239,62,58,0.1);
+}
+
+.resync-room-button:hover:not(:disabled),
+.resync-room-button:focus-visible {
+  border-color: rgba(239,62,58,0.58);
+  background: rgba(239,62,58,0.17);
+}
+
+.resync-room-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .viewer-toolbar .first-sync-button {

@@ -121,6 +121,13 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         </div>
         <VersionNotice compact />
       </div>
+      <div className="account-menu-actions">
+        <button className="account-menu-row" type="button" role="menuitem" onClick={openGuide}>
+          <HelpCircle size={17} />
+          <span>Guide</span>
+        </button>
+        <NotificationBell embedded user={user} social={social} onJoinRoom={roomState.joinRoom} />
+      </div>
       <form className="account-section" onSubmit={saveUsername}>
         <label>
           Username
@@ -155,8 +162,6 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
       <header className="app-header">
         <Logo />
         <div className="header-actions">
-          <button className="icon-text" onClick={openGuide} title="How Havyn works"><HelpCircle size={17} /> Guide</button>
-          <NotificationBell user={user} social={social} onJoinRoom={roomState.joinRoom} onOpen={() => setProfileOpen(false)} />
           <div className="profile-menu-wrap guide-profile-target">
             <button
               ref={profileButtonRef}

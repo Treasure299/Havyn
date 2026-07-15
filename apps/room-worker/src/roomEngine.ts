@@ -272,6 +272,16 @@ export class RoomEngine {
   private selectMedia(payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
     if (!this.canControl(userId)) return this.denied(userId);
     const media = (payload.media || {}) as Record<string, unknown>;
+    const pageUrl = String(media.pageUrl || media.url || media.frameUrl || "");
+    const frameUrl = String(media.frameUrl || media.url || pageUrl);
+    const normalizedMedia = {
+      ...media,
+      // Keep the compatibility URL canonical. Participants navigate to the
+      // shared page; frameUrl is used only to locate the embedded video.
+      url: pageUrl,
+      pageUrl,
+      frameUrl
+    };
     const now = Date.now();
     this.state.playbackState = {
       ...this.state.playbackState,
@@ -279,9 +289,9 @@ export class RoomEngine {
       currentTime: Math.max(0, finiteNumber(media.currentTime, 0)),
       updatedAt: now,
       playbackRate: finiteNumber(media.playbackRate, 1),
-      activeMediaUrl: String(media.url || ""),
-      activeMediaPageUrl: String(media.pageUrl || media.url || ""),
-      activeMediaFrameUrl: String(media.frameUrl || media.url || ""),
+      activeMediaUrl: pageUrl,
+      activeMediaPageUrl: pageUrl,
+      activeMediaFrameUrl: frameUrl,
       activeMediaTitle: String(media.title || "Detected media"),
       controllerUserId: userId,
       commandId,
@@ -291,7 +301,7 @@ export class RoomEngine {
     return {
       stateChanged: true,
       events: [
-        { event: "media-selected", payload: { media, playbackState: this.state.playbackState } },
+        { event: "media-selected", payload: { media: normalizedMedia, playbackState: this.state.playbackState } },
         { event: "playback-state-sync", payload: this.state.playbackState },
         { event: "room-state", payload: this.snapshot() }
       ]

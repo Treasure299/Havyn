@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { logPlaybackDiagnostic } from "../lib/playbackDiagnostics";
 
 export function usePlaybackSync({ socket, room, user, applyPlayback, localCurrentTime, onPlaybackState }) {
   const [playbackState, setPlaybackState] = useState(null);
@@ -41,6 +42,21 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     const isCorrectionForMe = state.correctedUserId === user.id;
     const isExplicitPlaybackAction = ["play", "pause", "seek", "rate-change", "ended"].includes(action);
 
+    logPlaybackDiagnostic("room-playback-received", {
+      roomId: room?.roomId,
+      action,
+      mode: room?.playbackMode,
+      role,
+      controllerIsLocal: state.controllerUserId === user.id,
+      correctedForLocal: isCorrectionForMe,
+      state: {
+        isPlaying: Boolean(state.isPlaying),
+        currentTime: Number(state.currentTime || 0),
+        playbackRate: Number(state.playbackRate || 1),
+        updatedAt: incomingUpdatedAt
+      }
+    });
+
     if (
       incomingUpdatedAt &&
       currentUpdatedAt &&
@@ -48,6 +64,7 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       !isCorrectionForMe &&
       !isExplicitPlaybackAction
     ) {
+      logPlaybackDiagnostic("room-playback-ignored-stale", { roomId: room?.roomId, action, incomingUpdatedAt, currentUpdatedAt });
       return;
     }
 
@@ -55,15 +72,20 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
     playbackStateRef.current = projectedState;
     setPlaybackState(projectedState);
     onPlaybackState?.(projectedState);
-    if (state.controllerUserId === user.id && !state.correctedUserId) return;
-    applyPlayback?.({
+    if (state.controllerUserId === user.id && !state.correctedUserId) {
+      logPlaybackDiagnostic("room-playback-skipped-own-command", { roomId: room?.roomId, action });
+      return;
+    }
+    const command = {
       action: projectedState.isPlaying ? "play" : "pause",
       currentTime: projectedState.currentTime,
       playbackRate: projectedState.playbackRate,
       activeMediaFrameUrl: projectedState.activeMediaFrameUrl,
       reason: action
-    });
-  }, [applyPlayback, onPlaybackState, user.id]);
+    };
+    logPlaybackDiagnostic("room-playback-applying", { roomId: room?.roomId, command });
+    applyPlayback?.(command);
+  }, [applyPlayback, onPlaybackState, role, room?.playbackMode, room?.roomId, user.id]);
 
   useEffect(() => {
     const sync = (state) => applyRemoteState(state, "sync");
@@ -165,19 +187,49 @@ export function usePlaybackSync({ socket, room, user, applyPlayback, localCurren
       rate: "playback-rate-change",
       ended: "media-ended"
     }[action];
-    socket.emit(eventName, { roomId: room.roomId, userId: user.id, ...data });
+    const payload = { roomId: room.roomId, userId: user.id, ...data };
+    logPlaybackDiagnostic("room-playback-sending", {
+      roomId: room.roomId,
+      action,
+      eventName,
+      mode: room.playbackMode,
+      role,
+      data
+    });
+    socket.emit(eventName, payload);
   }
 
-  async function controlPlayback(action) {
+  function controlPlayback(action) {
     const currentTime = localCurrentTimeRef.current ?? playbackState?.currentTime ?? 0;
-    await applyPlayback?.({
+    const command = {
       action,
       currentTime,
       playbackRate: playbackState?.playbackRate ?? room?.playbackState?.playbackRate ?? 1,
       activeMediaFrameUrl: playbackState?.activeMediaFrameUrl || room?.playbackState?.activeMediaFrameUrl,
       reason: "local-control"
-    });
+    };
+    logPlaybackDiagnostic("room-control-requested", { roomId: room?.roomId, action, canControl, mode: room?.playbackMode, role, command });
+    let localApply;
+    try {
+      localApply = applyPlayback?.(command);
+    } catch (error) {
+      logPlaybackDiagnostic("room-control-local-apply-failed", {
+        roomId: room?.roomId,
+        action,
+        message: error?.message || String(error)
+      });
+    }
+    // Do not wait for a provider's video.play() promise. Some embedded players
+    // leave it pending even after playback begins, which previously delayed the
+    // command sent to everyone else in the room.
     sendPlayback(action, { currentTime });
+    Promise.resolve(localApply).catch((error) => {
+      logPlaybackDiagnostic("room-control-local-apply-failed", {
+        roomId: room?.roomId,
+        action,
+        message: error?.message || String(error)
+      });
+    });
   }
 
   return {

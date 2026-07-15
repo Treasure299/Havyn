@@ -35,6 +35,8 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
   let remotePlaybackExpectation = null;
   let pendingPlayback = null;
   let playbackRetryTimer = null;
+  let playbackCommandSequence = 0;
+  let latestPlaybackAction = "";
   let scanTimer = null;
   let lastTimeUpdateAt = 0;
 
@@ -141,6 +143,7 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
   };
 
   const queuePlaybackRetry = (state) => {
+    if (Number(state.__havynCommandId) !== playbackCommandSequence) return;
     const retryCount = Number(state.__havynRetryCount || 0);
     const expiresAt = Number(state.__havynExpiresAt || (Date.now() + 7000));
     if (retryCount >= 8 || Date.now() >= expiresAt) {
@@ -155,10 +158,24 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
     schedulePlaybackRetry();
   };
 
-  window.__havynApplyPlayback = async ({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt }) => {
+  window.__havynApplyPlayback = async (state = {}) => {
+    const isRetry = Number.isFinite(Number(state.__havynCommandId));
+    if (!isRetry) {
+      playbackCommandSequence += 1;
+      latestPlaybackAction = String(state.action || "sync");
+      pendingPlayback = null;
+      if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
+      playbackRetryTimer = null;
+    }
+    const command = {
+      ...state,
+      __havynCommandId: isRetry ? Number(state.__havynCommandId) : playbackCommandSequence
+    };
+    const { action, currentTime, playbackRate } = command;
+    if (command.__havynCommandId !== playbackCommandSequence) return false;
     const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
     if (!video) {
-      queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+      queuePlaybackRetry(command);
       return false;
     }
     remotePlaybackExpectation = createRemotePlaybackExpectation({ action, currentTime, playbackRate });
@@ -170,10 +187,14 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
     if (action === "play" && video.paused) {
       try {
         await video.play();
+        if (command.__havynCommandId !== playbackCommandSequence) {
+          if (latestPlaybackAction === "pause" && !video.paused) video.pause();
+          return false;
+        }
         pendingPlayback = null;
         return !video.paused;
       } catch {
-        queuePlaybackRetry({ action, currentTime, playbackRate, __havynRetryCount, __havynExpiresAt });
+        queuePlaybackRetry(command);
         return false;
       }
     }
@@ -183,6 +204,8 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
 
   document.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
+    playbackCommandSequence += 1;
+    latestPlaybackAction = "local";
     pendingPlayback = null;
     remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
@@ -192,6 +215,8 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
     });
   }, true);
   document.addEventListener("keydown", () => {
+    playbackCommandSequence += 1;
+    latestPlaybackAction = "local";
     pendingPlayback = null;
     remotePlaybackExpectation = null;
     if (playbackRetryTimer) clearTimeout(playbackRetryTimer);
@@ -210,7 +235,7 @@ const WEBVIEW_DETECTOR_SCRIPT = String.raw`
 })();
 `;
 
-export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "", layoutSignal = "" }) {
+export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl, onUserNavigate, activeMediaTitle, onWebMediaDetected, onWebMediaEvent, webPlaybackState, className = "", layoutSignal = "" }) {
   const frameRef = useRef(null);
   const iframeRef = useRef(null);
   const webviewRef = useRef(null);
@@ -326,8 +351,19 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       window.setTimeout(scanDomMedia, 1800);
     };
     const handleNavigate = (event) => {
-      setUrl(event.url);
-      domBrowserEvents.navigation({ url: event.url });
+      // Navigation events can originate from a child player frame. The
+      // webview's URL is the authoritative top-level browser destination.
+      const activeUrl = webview.getURL?.() || event.url || "";
+      const activeTitle = webview.getTitle?.() || activeUrl || "New tab";
+      setUrl(activeUrl);
+      setTabs((currentTabs) => {
+        const nextTabs = currentTabs.map((tab) => (
+          tab.id === activeTabId ? { ...tab, title: activeTitle, url: activeUrl } : tab
+        ));
+        domBrowserEvents.tabs({ tabs: nextTabs, activeTabId });
+        return nextTabs;
+      });
+      domBrowserEvents.navigation({ url: activeUrl });
     };
     const blockPopup = (event) => {
       event.preventDefault?.();
@@ -489,6 +525,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   function submit(event) {
     event.preventDefault();
     const normalized = normalizeUrl(url);
+    onUserNavigate?.(normalized);
     setUrl(normalized);
     setPreviewBlocked(false);
     if (browser) {
@@ -506,6 +543,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   }
 
   async function newTab() {
+    onUserNavigate?.("new-tab");
     if (browser) await browser.newTab?.();
     else {
       setPreviewUrl("");
@@ -602,7 +640,10 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
               className={`browser-tab ${tab.id === activeTabId ? "is-active" : ""}`}
               type="button"
               key={tab.id}
-              onClick={() => browser.switchTab?.(tab.id)}
+              onClick={() => {
+                onUserNavigate?.(tab.url || "switch-tab");
+                browser.switchTab?.(tab.id);
+              }}
               title={tab.url || tab.title}
             >
               <span>{tab.title || "New tab"}</span>
@@ -632,8 +673,8 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       )}
       <form className={`browser-bar glass ${browser ? "electron-browser-bar" : "has-test-button"}`} onSubmit={submit}>
         <Compass size={16} />
-        {browser && <button className="icon-button" type="button" title="Back" onClick={() => browser.back?.()}><ArrowLeft size={17} /></button>}
-        {browser && <button className="icon-button" type="button" title="Forward" onClick={() => browser.forward?.()}><ArrowRight size={17} /></button>}
+        {browser && <button className="icon-button" type="button" title="Back" onClick={() => { onUserNavigate?.("history-back"); browser.back?.(); }}><ArrowLeft size={17} /></button>}
+        {browser && <button className="icon-button" type="button" title="Forward" onClick={() => { onUserNavigate?.("history-forward"); browser.forward?.(); }}><ArrowRight size={17} /></button>}
         <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Open a video page" />
         <button className="icon-button" type="submit" title="Load URL"><RefreshCw size={18} /></button>
         {browser && <button className="icon-button" type="button" title="Reload tab" onClick={() => browser.reload?.()}><RotateCw size={18} /></button>}
