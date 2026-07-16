@@ -236,35 +236,13 @@ export function useScreenShare({ socket, room, user, enabled }) {
       const armedResult = await window.havyn?.screenShare?.selectSource?.(sourceId, withAudio, browserRect);
       const armed = armedResult === true || Boolean(armedResult?.armed);
       if (!armed) throw new Error("The selected screen is no longer available.");
-      let sourceStream;
-      if (armedResult?.captureMode === "browser-tab" && armedResult.mediaSourceId) {
-        const tabConstraints = {
-          mandatory: {
-            chromeMediaSource: "tab",
-            chromeMediaSourceId: armedResult.mediaSourceId
-          }
-        };
-        try {
-          sourceStream = await navigator.mediaDevices.getUserMedia({
-            video: { mandatory: { ...tabConstraints.mandatory, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30 } },
-            audio: withAudio ? tabConstraints : false
-          });
-        } catch (captureError) {
-          if (!withAudio) throw captureError;
-          sourceStream = await navigator.mediaDevices.getUserMedia({
-            video: { mandatory: { ...tabConstraints.mandatory, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30 } },
-            audio: false
-          });
-        }
-      } else {
-        sourceStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
-          audio: Boolean(withAudio)
-        });
-      }
+      const sourceStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+        audio: Boolean(withAudio)
+      });
       let stream = sourceStream;
       let sourceVideoTrack = sourceStream.getVideoTracks()[0];
-      if (armedResult?.captureMode === "browser-region") {
+      if (["browser-region", "browser-window-region"].includes(armedResult?.captureMode)) {
         const cropped = await cropDisplayStream(sourceStream, armedResult.cropRect, armedResult.displayBounds);
         stream = cropped.stream;
         sourceVideoTrack = cropped.sourceVideoTrack;
@@ -295,7 +273,11 @@ export function useScreenShare({ socket, room, user, enabled }) {
     } catch (captureError) {
       await window.havyn?.screenShare?.cancel?.().catch(() => {});
       setError(captureError?.message || "Screen sharing was cancelled.");
-      diagnostic("capture-failed", { reason: captureError?.name || "capture-error" });
+      diagnostic("capture-failed", {
+        reason: captureError?.name || "capture-error",
+        message: captureError?.message || "Screen capture failed",
+        captureMode: armedResult?.captureMode || "unknown"
+      });
       return false;
     } finally {
       setStarting(false);

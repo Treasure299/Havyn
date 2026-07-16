@@ -19,7 +19,6 @@ const loadedExtensions = new Map();
 let adBlockDesired = true;
 let browserVisible = true;
 const registeredWebviews = new Set();
-let activeRegisteredWebviewId = null;
 const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 // Keep diagnostics available in tester builds until the watch-room behavior is
@@ -985,7 +984,7 @@ ipcMain.handle("screen-share:select-source", async (event, selection = {}) => {
   const requestedId = String(selection.sourceId || "");
   const browserRegion = requestedId === "havyn:browser-region";
   const currentSources = await desktopCapturer.getSources({
-    types: browserRegion ? ["screen"] : ["screen", "window"],
+    types: ["screen", "window"],
     thumbnailSize: { width: 0, height: 0 },
     fetchWindowIcons: false
   });
@@ -993,40 +992,40 @@ ipcMain.handle("screen-share:select-source", async (event, selection = {}) => {
   let metadata = { captureMode: "source" };
 
   if (browserRegion) {
-    const browserContents = webContents.fromId(activeRegisteredWebviewId);
-    if (browserContents && !browserContents.isDestroyed()) {
-      try {
-        const mediaSourceId = browserContents.getMediaSourceId(event.sender);
-        const virtualSource = { id: mediaSourceId };
-        screenSharePermission.registerSources(event.sender.id, [virtualSource]);
-        const armed = screenSharePermission.select(
-          event.sender.id,
-          mediaSourceId,
-          Boolean(selection.withAudio),
-          { captureMode: "browser-tab" }
-        );
-        return { armed, captureMode: "browser-tab", mediaSourceId };
-      } catch {
-        // Fall through to display-region capture on older Chromium builds.
-      }
-    }
-    const display = screen.getDisplayMatching(mainWindow.getBounds());
-    source = currentSources.find((item) => String(item.display_id) === String(display.id))
-      || currentSources.find((item) => item.id.startsWith("screen:"));
     const requestedRect = selection.browserRect || {};
+    const windowBounds = mainWindow.getBounds();
     const contentBounds = mainWindow.getContentBounds();
     const width = Math.max(1, Number(requestedRect.width) || 1);
     const height = Math.max(1, Number(requestedRect.height) || 1);
-    metadata = {
-      captureMode: "browser-region",
-      cropRect: {
-        x: contentBounds.x + (Number(requestedRect.x) || 0) - display.bounds.x,
-        y: contentBounds.y + (Number(requestedRect.y) || 0) - display.bounds.y,
-        width,
-        height
-      },
-      displayBounds: { width: display.bounds.width, height: display.bounds.height }
-    };
+    const windowSourceId = mainWindow.getMediaSourceId();
+    source = currentSources.find((item) => item.id === windowSourceId);
+
+    if (source) {
+      metadata = {
+        captureMode: "browser-window-region",
+        cropRect: {
+          x: contentBounds.x + (Number(requestedRect.x) || 0) - windowBounds.x,
+          y: contentBounds.y + (Number(requestedRect.y) || 0) - windowBounds.y,
+          width,
+          height
+        },
+        displayBounds: { width: windowBounds.width, height: windowBounds.height }
+      };
+    } else {
+      const display = screen.getDisplayMatching(windowBounds);
+      source = currentSources.find((item) => String(item.display_id) === String(display.id))
+        || currentSources.find((item) => item.id.startsWith("screen:"));
+      metadata = {
+        captureMode: "browser-region",
+        cropRect: {
+          x: contentBounds.x + (Number(requestedRect.x) || 0) - display.bounds.x,
+          y: contentBounds.y + (Number(requestedRect.y) || 0) - display.bounds.y,
+          width,
+          height
+        },
+        displayBounds: { width: display.bounds.width, height: display.bounds.height }
+      };
+    }
   }
 
   if (!source) return { armed: false };
@@ -1052,7 +1051,6 @@ ipcMain.handle("app:get-browser-partition", () => browserPartition());
 ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc) return false;
-  activeRegisteredWebviewId = wc.id;
   if (registeredWebviews.has(wc.id)) return true;
   registeredWebviews.add(wc.id);
   wc.setWindowOpenHandler(({ url }) => {
@@ -1097,7 +1095,6 @@ ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
   });
   wc.on("destroyed", () => {
     registeredWebviews.delete(wc.id);
-    if (activeRegisteredWebviewId === wc.id) activeRegisteredWebviewId = null;
   });
   return true;
 });

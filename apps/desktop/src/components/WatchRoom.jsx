@@ -325,7 +325,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     playbackRef.current = playback;
   }, [media, playback]);
 
-  const sharingBrowserRegion = screenShare.isHosting && ["browser-region", "browser-tab"].includes(screenShare.captureMode);
+  const sharingBrowserRegion = screenShare.isHosting && ["browser-region", "browser-window-region"].includes(screenShare.captureMode);
   const showingLiveShare = Boolean(screenShare.localStream || screenShare.watching) && !sharingBrowserRegion;
 
   useEffect(() => {
