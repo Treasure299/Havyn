@@ -325,7 +325,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     playbackRef.current = playback;
   }, [media, playback]);
 
-  const sharingBrowserRegion = screenShare.isHosting && screenShare.captureMode === "browser-region";
+  const sharingBrowserRegion = screenShare.isHosting && ["browser-region", "browser-tab"].includes(screenShare.captureMode);
   const showingLiveShare = Boolean(screenShare.localStream || screenShare.watching) && !sharingBrowserRegion;
 
   useEffect(() => {
@@ -766,7 +766,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
         >
           <div className="viewing-stage">
             <IntegratedBrowserPanel
-              className={`guide-browser-target ${showingLiveShare ? "is-live-share-hidden" : ""}`}
+              className={`guide-browser-target ${showingLiveShare && !sharingBrowserRegion ? "is-live-share-hidden" : ""}`}
               browser={media.browser}
               currentUrl={media.currentUrl}
               onLoadUrl={media.loadUrl}
@@ -866,7 +866,9 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
               layout={callLayout}
               focusPrimary={focusPrimary}
               floating={focusMode}
-              isPlaying={room.roomExperience === "live-share" ? false : Boolean(playback.playbackState?.isPlaying || room.playbackState?.isPlaying)}
+              isPlaying={room.roomExperience === "live-share"
+                ? Boolean(screenShare.localStream || screenShare.remoteStream)
+                : Boolean(playback.playbackState?.isPlaying || room.playbackState?.isPlaying)}
               chatOpen={focusMode && !cinemaChatCollapsed}
             />
           </section>

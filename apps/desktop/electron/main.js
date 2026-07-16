@@ -19,6 +19,7 @@ const loadedExtensions = new Map();
 let adBlockDesired = true;
 let browserVisible = true;
 const registeredWebviews = new Set();
+let activeRegisteredWebviewId = null;
 const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 // Keep diagnostics available in tester builds until the watch-room behavior is
@@ -512,6 +513,7 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
+      backgroundThrottling: false,
       sandbox: false
     }
   });
@@ -576,6 +578,7 @@ function createBrowserTab(initialUrl = "about:blank") {
       nodeIntegrationInSubFrames: true,
       javascript: true,
       webSecurity: true,
+      backgroundThrottling: false,
       additionalArguments: [`--havyn-tab-id=${id}`],
       partition: browserPartition()
     }
@@ -990,6 +993,23 @@ ipcMain.handle("screen-share:select-source", async (event, selection = {}) => {
   let metadata = { captureMode: "source" };
 
   if (browserRegion) {
+    const browserContents = webContents.fromId(activeRegisteredWebviewId);
+    if (browserContents && !browserContents.isDestroyed()) {
+      try {
+        const mediaSourceId = browserContents.getMediaSourceId(event.sender);
+        const virtualSource = { id: mediaSourceId };
+        screenSharePermission.registerSources(event.sender.id, [virtualSource]);
+        const armed = screenSharePermission.select(
+          event.sender.id,
+          mediaSourceId,
+          Boolean(selection.withAudio),
+          { captureMode: "browser-tab" }
+        );
+        return { armed, captureMode: "browser-tab", mediaSourceId };
+      } catch {
+        // Fall through to display-region capture on older Chromium builds.
+      }
+    }
     const display = screen.getDisplayMatching(mainWindow.getBounds());
     source = currentSources.find((item) => String(item.display_id) === String(display.id))
       || currentSources.find((item) => item.id.startsWith("screen:"));
@@ -1031,7 +1051,9 @@ ipcMain.handle("app:get-browser-partition", () => browserPartition());
 
 ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
   const wc = webContents.fromId(Number(webContentsId));
-  if (!wc || registeredWebviews.has(wc.id)) return Boolean(wc);
+  if (!wc) return false;
+  activeRegisteredWebviewId = wc.id;
+  if (registeredWebviews.has(wc.id)) return true;
   registeredWebviews.add(wc.id);
   wc.setWindowOpenHandler(({ url }) => {
     mainWindow?.webContents.send("browser:load-state", {
@@ -1073,7 +1095,10 @@ ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
       if (media.length) mainWindow?.webContents.send("browser:media-detected", media);
     }
   });
-  wc.on("destroyed", () => registeredWebviews.delete(wc.id));
+  wc.on("destroyed", () => {
+    registeredWebviews.delete(wc.id);
+    if (activeRegisteredWebviewId === wc.id) activeRegisteredWebviewId = null;
+  });
   return true;
 });
 

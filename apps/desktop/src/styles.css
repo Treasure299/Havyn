@@ -3405,6 +3405,46 @@ label {
   border-radius: 8px;
   background: rgba(8,8,12,0.66);
   backdrop-filter: blur(18px);
+  z-index: 8;
+  transition: opacity 180ms ease, transform 180ms ease, background-color 180ms ease;
+  will-change: opacity, transform;
+}
+
+.live-share-controls.is-idle {
+  opacity: 0;
+}
+
+.live-share-controls.is-idle:hover,
+.live-share-controls.is-idle:focus-within {
+  opacity: 1;
+}
+
+.live-share-controls.is-visible {
+  opacity: 1;
+}
+
+.live-share-drag-handle {
+  width: 32px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+.live-share-drag-handle:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.08);
+}
+
+.live-share-drag-handle:active {
+  cursor: grabbing;
 }
 
 .live-share-controls input[type="range"] {

@@ -702,7 +702,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
             src="about:blank"
             preload={preloadUrl}
             partition={webviewPartition}
-            webpreferences="contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no"
+            webpreferences="contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no,backgroundThrottling=no"
           />
         )}
         {!browser && previewUrl && (

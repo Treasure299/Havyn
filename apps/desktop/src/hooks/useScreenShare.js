@@ -81,6 +81,7 @@ export function useScreenShare({ socket, room, user, enabled }) {
   const watchingRef = useRef(false);
   const statsTimerRef = useRef(null);
   const captureCleanupRef = useRef(null);
+  const declinedShareIdRef = useRef(null);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [invitation, setInvitation] = useState(null);
@@ -235,10 +236,32 @@ export function useScreenShare({ socket, room, user, enabled }) {
       const armedResult = await window.havyn?.screenShare?.selectSource?.(sourceId, withAudio, browserRect);
       const armed = armedResult === true || Boolean(armedResult?.armed);
       if (!armed) throw new Error("The selected screen is no longer available.");
-      const sourceStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
-        audio: Boolean(withAudio)
-      });
+      let sourceStream;
+      if (armedResult?.captureMode === "browser-tab" && armedResult.mediaSourceId) {
+        const tabConstraints = {
+          mandatory: {
+            chromeMediaSource: "tab",
+            chromeMediaSourceId: armedResult.mediaSourceId
+          }
+        };
+        try {
+          sourceStream = await navigator.mediaDevices.getUserMedia({
+            video: { mandatory: { ...tabConstraints.mandatory, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30 } },
+            audio: withAudio ? tabConstraints : false
+          });
+        } catch (captureError) {
+          if (!withAudio) throw captureError;
+          sourceStream = await navigator.mediaDevices.getUserMedia({
+            video: { mandatory: { ...tabConstraints.mandatory, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 30 } },
+            audio: false
+          });
+        }
+      } else {
+        sourceStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+          audio: Boolean(withAudio)
+        });
+      }
       let stream = sourceStream;
       let sourceVideoTrack = sourceStream.getVideoTracks()[0];
       if (armedResult?.captureMode === "browser-region") {
@@ -284,6 +307,7 @@ export function useScreenShare({ socket, room, user, enabled }) {
     if (!shareId || isHost) return;
     shareIdRef.current = shareId;
     watchingRef.current = true;
+    declinedShareIdRef.current = null;
     setWatching(true);
     setInvitation(null);
     setNotice("Connecting to Live Share...");
@@ -294,6 +318,7 @@ export function useScreenShare({ socket, room, user, enabled }) {
   const declineShare = useCallback(() => {
     const shareId = liveShare?.shareId;
     if (!shareId || isHost) return;
+    declinedShareIdRef.current = shareId;
     setInvitation(null);
     socket.emit("live-share-decline", { roomId: room.roomId, shareId, userId: user.id });
     diagnostic("viewer-declined", { shareId });
@@ -312,7 +337,11 @@ export function useScreenShare({ socket, room, user, enabled }) {
     const handleAvailable = (payload) => {
       if (!payload?.shareId) return;
       shareIdRef.current = payload.shareId;
-      if (payload.hostUserId !== user.id && !watchingRef.current) setInvitation(payload);
+      if (
+        payload.hostUserId !== user.id
+        && !watchingRef.current
+        && declinedShareIdRef.current !== payload.shareId
+      ) setInvitation(payload);
     };
     const handleAccept = ({ shareId, viewerUserId }) => {
       if (shareId !== shareIdRef.current || !localStreamRef.current) return;
@@ -348,6 +377,7 @@ export function useScreenShare({ socket, room, user, enabled }) {
       stopLocalCapture();
       resetViewer();
       shareIdRef.current = null;
+      declinedShareIdRef.current = null;
       setInvitation(null);
       setNotice("Live Share ended");
       diagnostic("share-ended", { restoredPlaying: Boolean(playbackState?.isPlaying) });
@@ -358,6 +388,7 @@ export function useScreenShare({ socket, room, user, enabled }) {
       closeAllPeers();
       if (!isHost) resetViewer();
       shareIdRef.current = null;
+      declinedShareIdRef.current = null;
     };
     const handleReconnect = () => {
       if (watchingRef.current && shareIdRef.current && !isHost) {
@@ -391,9 +422,17 @@ export function useScreenShare({ socket, room, user, enabled }) {
   }, [addRemoteIce, closeAllPeers, closePeer, createPeer, emitSignal, enabled, flushRemoteIce, isHost, offerViewer, resetViewer, room?.roomId, socket, stopLocalCapture, user.id]);
 
   useEffect(() => {
-    if (!enabled || !isRoomLive) return;
+    if (!enabled || !isRoomLive) {
+      declinedShareIdRef.current = null;
+      return;
+    }
     shareIdRef.current = liveShare.shareId;
-    if (!isHost && !watchingRef.current && !invitation) {
+    if (
+      !isHost
+      && !watchingRef.current
+      && !invitation
+      && declinedShareIdRef.current !== liveShare.shareId
+    ) {
       const host = room.participants?.find((participant) => participant.userId === liveShare.hostUserId);
       setInvitation({ ...liveShare, hostDisplayName: host?.displayName || "The host" });
     }
