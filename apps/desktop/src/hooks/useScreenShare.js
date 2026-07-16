@@ -108,6 +108,14 @@ export function useScreenShare({ socket, room, user, enabled, browser, detectedM
   const isRoomLive = enabled && room?.roomExperience === "live-share" && Boolean(liveShare?.shareId);
   const isHosting = isRoomLive && liveShare?.hostUserId === user?.id && Boolean(localStream);
 
+  const exitTheatre = useCallback(async () => {
+    try {
+      return await browser?.exitTheatre?.() || false;
+    } catch {
+      return false;
+    }
+  }, [browser]);
+
   useEffect(() => {
     if (!notice) return undefined;
     const timeout = window.setTimeout(() => setNotice(""), 1800);
@@ -219,9 +227,9 @@ export function useScreenShare({ socket, room, user, enabled, browser, detectedM
     setCaptureMode("source");
     if (theatreActiveRef.current) {
       theatreActiveRef.current = false;
-      void browser?.exitTheatre?.().catch?.(() => {});
+      void exitTheatre();
     }
-  }, [browser]);
+  }, [exitTheatre]);
 
   const resetViewer = useCallback(() => {
     watchingRef.current = false;
@@ -317,7 +325,7 @@ export function useScreenShare({ socket, room, user, enabled, browser, detectedM
       await window.havyn?.screenShare?.cancel?.().catch(() => {});
       if (theatreActiveRef.current) {
         theatreActiveRef.current = false;
-        await browser?.exitTheatre?.().catch?.(() => {});
+        await exitTheatre();
       }
       setError(captureError?.message || "Screen sharing was cancelled.");
       diagnostic("capture-failed", {
@@ -329,7 +337,7 @@ export function useScreenShare({ socket, room, user, enabled, browser, detectedM
     } finally {
       setStarting(false);
     }
-  }, [browser, detectedMedia, enabled, isHost, isRoomLive, room?.roomId, socket, starting, stopShare]);
+  }, [browser, detectedMedia, enabled, exitTheatre, isHost, isRoomLive, room?.roomId, socket, starting, stopShare]);
 
   const acceptShare = useCallback(() => {
     const shareId = liveShare?.shareId;

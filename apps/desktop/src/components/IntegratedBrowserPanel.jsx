@@ -458,13 +458,21 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       enterTheatre: async (selection) => {
         const webContentsId = webviewRef.current?.getWebContentsId?.();
         if (!webContentsId) return { ok: false, reason: "browser-unavailable" };
-        return window.havyn?.browser?.enterWebviewTheatre?.(webContentsId, selection)
-          .catch(() => ({ ok: false, reason: "theatre-failed" }));
+        try {
+          return await window.havyn?.browser?.enterWebviewTheatre?.(webContentsId, selection)
+            || { ok: false, reason: "theatre-unavailable" };
+        } catch {
+          return { ok: false, reason: "theatre-failed" };
+        }
       },
       exitTheatre: async () => {
         const webContentsId = webviewRef.current?.getWebContentsId?.();
         if (!webContentsId) return false;
-        return window.havyn?.browser?.exitWebviewTheatre?.(webContentsId).catch(() => false);
+        try {
+          return await window.havyn?.browser?.exitWebviewTheatre?.(webContentsId) || false;
+        } catch {
+          return false;
+        }
       },
       toggleAdBlock: async () => {
         const result = await window.havyn?.browser?.toggleAdBlock?.();
@@ -476,7 +484,15 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
     });
     return () => {
       const webContentsId = webviewRef.current?.getWebContentsId?.();
-      if (webContentsId) window.havyn?.browser?.exitWebviewTheatre?.(webContentsId).catch(() => {});
+      if (webContentsId) {
+        void (async () => {
+          try {
+            await window.havyn?.browser?.exitWebviewTheatre?.(webContentsId);
+          } catch {
+            // The embedded page may already be gone during room cleanup.
+          }
+        })();
+      }
       unregister();
     };
   }, [activeTabId, emitTabs, scanDomMedia, tabs, useDomWebview]);

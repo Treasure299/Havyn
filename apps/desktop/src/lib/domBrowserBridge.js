@@ -35,8 +35,20 @@ export const domBrowserBridge = {
   closeTab: (tabId) => handlers.closeTab?.(tabId),
   scanMedia: () => handlers.scanMedia?.(),
   applyPlayback: (state) => handlers.applyPlayback?.(state),
-  enterTheatre: (selection) => handlers.enterTheatre?.(selection),
-  exitTheatre: () => handlers.exitTheatre?.(),
+  enterTheatre: async (selection) => {
+    try {
+      return await handlers.enterTheatre?.(selection) || { ok: false, reason: "browser-not-ready" };
+    } catch {
+      return { ok: false, reason: "theatre-failed" };
+    }
+  },
+  exitTheatre: async () => {
+    try {
+      return await handlers.exitTheatre?.() || false;
+    } catch {
+      return false;
+    }
+  },
   openWebStore: () => handlers.newTab?.("https://chromewebstore.google.com/category/extensions"),
   loadUnpackedExtension: () => ({ ok: false, canceled: true }),
   toggleAdBlock: () => handlers.toggleAdBlock?.(),
