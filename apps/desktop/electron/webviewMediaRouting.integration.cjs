@@ -66,7 +66,12 @@ let window;
 
 (async () => {
   process.env.HAVYN_SKIP_APP_BOOTSTRAP = "1";
-  const { FRAME_DETECTOR_SCRIPT, scanWebviewMedia } = await import("./main.js");
+  const {
+    FRAME_DETECTOR_SCRIPT,
+    enterWebviewTheatre,
+    exitWebviewTheatre,
+    scanWebviewMedia
+  } = await import("./main.js");
   const childPort = await listen(childServer);
   parentServer = http.createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -231,7 +236,18 @@ let window;
   `, true);
   await new Promise((resolve) => setTimeout(resolve, 1100));
   assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), true);
-  console.log("Native child-frame controls, guest-local clicks, and remote playback commands passed end to end.");
+
+  const originalPlayerStyle = await childFrame.executeJavaScript("document.querySelector('#player').getAttribute('style')", true);
+  const originalFrameStyle = await guest.mainFrame.executeJavaScript("document.querySelector('iframe').getAttribute('style')", true);
+  const theatreResult = await enterWebviewTheatre(guest.id, normalizedMedia[0]);
+  assert.equal(theatreResult.ok, true, "The selected child-frame player should enter Theatre mode");
+  assert.equal(await childFrame.executeJavaScript("getComputedStyle(document.querySelector('#player')).position", true), "fixed");
+  assert.equal(await guest.mainFrame.executeJavaScript("getComputedStyle(document.querySelector('iframe')).position", true), "fixed");
+  await exitWebviewTheatre(guest.id);
+  assert.equal(await childFrame.executeJavaScript("document.querySelector('#player').getAttribute('style')", true), originalPlayerStyle);
+  assert.equal(await guest.mainFrame.executeJavaScript("document.querySelector('iframe').getAttribute('style')", true), originalFrameStyle);
+
+  console.log("Native child-frame controls, playback commands, and Theatre restoration passed end to end.");
   app.exit(0);
 })().catch((error) => {
   console.error(error);

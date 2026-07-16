@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { selectCaptureGeometry } from "../lib/captureGeometry";
 
 const rtcConfig = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
@@ -19,7 +20,7 @@ async function tuneScreenSender(sender, maxBitrate = 2_000_000) {
   await sender.setParameters(parameters).catch(() => {});
 }
 
-async function cropDisplayStream(sourceStream, cropRect, displayBounds) {
+async function cropDisplayStream(sourceStream, cropRect, displayBounds, cropCandidates = []) {
   const sourceVideo = document.createElement("video");
   sourceVideo.srcObject = sourceStream;
   sourceVideo.muted = true;
@@ -35,12 +36,20 @@ async function cropDisplayStream(sourceStream, cropRect, displayBounds) {
     });
   }
 
-  const scaleX = sourceVideo.videoWidth / Math.max(1, Number(displayBounds?.width) || sourceVideo.videoWidth);
-  const scaleY = sourceVideo.videoHeight / Math.max(1, Number(displayBounds?.height) || sourceVideo.videoHeight);
-  const sourceX = Math.max(0, Math.round((Number(cropRect?.x) || 0) * scaleX));
-  const sourceY = Math.max(0, Math.round((Number(cropRect?.y) || 0) * scaleY));
-  const sourceWidth = Math.max(1, Math.min(sourceVideo.videoWidth - sourceX, Math.round((Number(cropRect?.width) || 1) * scaleX)));
-  const sourceHeight = Math.max(1, Math.min(sourceVideo.videoHeight - sourceY, Math.round((Number(cropRect?.height) || 1) * scaleY)));
+  const geometry = selectCaptureGeometry(
+    sourceVideo.videoWidth,
+    sourceVideo.videoHeight,
+    cropCandidates,
+    { cropRect, displayBounds }
+  ) || { cropRect, displayBounds };
+  const selectedRect = geometry.cropRect || cropRect;
+  const selectedBounds = geometry.displayBounds || displayBounds;
+  const scaleX = sourceVideo.videoWidth / Math.max(1, Number(selectedBounds?.width) || sourceVideo.videoWidth);
+  const scaleY = sourceVideo.videoHeight / Math.max(1, Number(selectedBounds?.height) || sourceVideo.videoHeight);
+  const sourceX = Math.max(0, Math.round((Number(selectedRect?.x) || 0) * scaleX));
+  const sourceY = Math.max(0, Math.round((Number(selectedRect?.y) || 0) * scaleY));
+  const sourceWidth = Math.max(1, Math.min(sourceVideo.videoWidth - sourceX, Math.round((Number(selectedRect?.width) || 1) * scaleX)));
+  const sourceHeight = Math.max(1, Math.min(sourceVideo.videoHeight - sourceY, Math.round((Number(selectedRect?.height) || 1) * scaleY)));
   const outputWidth = Math.min(1280, sourceWidth);
   const outputHeight = Math.max(1, Math.round(outputWidth * sourceHeight / sourceWidth));
   const canvas = document.createElement("canvas");
@@ -72,7 +81,7 @@ async function cropDisplayStream(sourceStream, cropRect, displayBounds) {
   return { stream, cleanup, sourceVideoTrack: sourceStream.getVideoTracks()[0] };
 }
 
-export function useScreenShare({ socket, room, user, enabled }) {
+export function useScreenShare({ socket, room, user, enabled, browser, detectedMedia = [] }) {
   const peersRef = useRef(new Map());
   const localStreamRef = useRef(null);
   const remoteIceRef = useRef(new Map());
@@ -82,6 +91,7 @@ export function useScreenShare({ socket, room, user, enabled }) {
   const statsTimerRef = useRef(null);
   const captureCleanupRef = useRef(null);
   const declinedShareIdRef = useRef(null);
+  const theatreActiveRef = useRef(false);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [invitation, setInvitation] = useState(null);
@@ -207,7 +217,11 @@ export function useScreenShare({ socket, room, user, enabled }) {
     localStreamRef.current = null;
     setLocalStream(null);
     setCaptureMode("source");
-  }, []);
+    if (theatreActiveRef.current) {
+      theatreActiveRef.current = false;
+      void browser?.exitTheatre?.().catch?.(() => {});
+    }
+  }, [browser]);
 
   const resetViewer = useCallback(() => {
     watchingRef.current = false;
@@ -228,12 +242,26 @@ export function useScreenShare({ socket, room, user, enabled }) {
     window.setTimeout(() => { stoppingRef.current = false; }, 300);
   }, [closeAllPeers, isHost, room?.roomId, socket, stopLocalCapture, user.id]);
 
-  const startShare = useCallback(async ({ sourceId, withAudio, browserRect }) => {
+  const startShare = useCallback(async ({ sourceId, withAudio, browserRect, theatreMode = true }) => {
     if (!enabled || !isHost || starting || isRoomLive) return false;
     setStarting(true);
     setError("");
+    let armedResult = null;
+    let theatreResult = null;
     try {
-      const armedResult = await window.havyn?.screenShare?.selectSource?.(sourceId, withAudio, browserRect);
+      if (sourceId === "havyn:browser-region" && theatreMode) {
+        theatreResult = detectedMedia[0]
+          ? await browser?.enterTheatre?.(detectedMedia[0])
+          : { ok: false, reason: "no-detected-player" };
+        theatreActiveRef.current = Boolean(theatreResult?.ok);
+        diagnostic("theatre-result", {
+          ok: Boolean(theatreResult?.ok),
+          reason: theatreResult?.reason || "",
+          expandedFrames: Number(theatreResult?.expandedFrames || 0)
+        });
+        if (theatreActiveRef.current) await new Promise((resolve) => window.setTimeout(resolve, 120));
+      }
+      armedResult = await window.havyn?.screenShare?.selectSource?.(sourceId, withAudio, browserRect);
       const armed = armedResult === true || Boolean(armedResult?.armed);
       if (!armed) throw new Error("The selected screen is no longer available.");
       const sourceStream = await navigator.mediaDevices.getDisplayMedia({
@@ -243,7 +271,12 @@ export function useScreenShare({ socket, room, user, enabled }) {
       let stream = sourceStream;
       let sourceVideoTrack = sourceStream.getVideoTracks()[0];
       if (["browser-region", "browser-window-region"].includes(armedResult?.captureMode)) {
-        const cropped = await cropDisplayStream(sourceStream, armedResult.cropRect, armedResult.displayBounds);
+        const cropped = await cropDisplayStream(
+          sourceStream,
+          armedResult.cropRect,
+          armedResult.displayBounds,
+          armedResult.cropCandidates
+        );
         stream = cropped.stream;
         sourceVideoTrack = cropped.sourceVideoTrack;
         captureCleanupRef.current = cropped.cleanup;
@@ -267,11 +300,25 @@ export function useScreenShare({ socket, room, user, enabled }) {
         shareId,
         hasAudio: Boolean(audioTrack)
       });
-      setNotice(audioTrack ? "Live Share started with system audio" : "Live Share started without system audio");
-      diagnostic("capture-started", { shareId, captureMode: armedResult?.captureMode || "source", hasAudio: Boolean(audioTrack), videoState: videoTrack.readyState });
+      const fallbackNote = sourceId === "havyn:browser-region" && theatreMode && !theatreResult?.ok
+        ? " Browser view fallback is active."
+        : "";
+      setNotice(`${audioTrack ? "Live Share started with system audio" : "Live Share started without system audio"}${fallbackNote}`);
+      diagnostic("capture-started", {
+        shareId,
+        captureMode: armedResult?.captureMode || "source",
+        hasAudio: Boolean(audioTrack),
+        videoState: videoTrack.readyState,
+        theatreMode: Boolean(theatreResult?.ok),
+        theatreFallback: Boolean(sourceId === "havyn:browser-region" && theatreMode && !theatreResult?.ok)
+      });
       return true;
     } catch (captureError) {
       await window.havyn?.screenShare?.cancel?.().catch(() => {});
+      if (theatreActiveRef.current) {
+        theatreActiveRef.current = false;
+        await browser?.exitTheatre?.().catch?.(() => {});
+      }
       setError(captureError?.message || "Screen sharing was cancelled.");
       diagnostic("capture-failed", {
         reason: captureError?.name || "capture-error",
@@ -282,7 +329,7 @@ export function useScreenShare({ socket, room, user, enabled }) {
     } finally {
       setStarting(false);
     }
-  }, [enabled, isHost, isRoomLive, room?.roomId, socket, starting, stopShare]);
+  }, [browser, detectedMedia, enabled, isHost, isRoomLive, room?.roomId, socket, starting, stopShare]);
 
   const acceptShare = useCallback(() => {
     const shareId = liveShare?.shareId;

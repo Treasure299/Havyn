@@ -1,4 +1,4 @@
-import { Monitor, Volume2, X } from "lucide-react";
+import { Expand, Monitor, Volume2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -6,6 +6,7 @@ export default function LiveSharePicker({ open, starting, onClose, onStart }) {
   const [sources, setSources] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [withAudio, setWithAudio] = useState(true);
+  const [theatreMode, setTheatreMode] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -13,6 +14,7 @@ export default function LiveSharePicker({ open, starting, onClose, onStart }) {
     if (!open) return;
     setLoading(true);
     setError("");
+    setTheatreMode(true);
     window.havyn?.screenShare?.getSources?.()
       .then((items = []) => {
         setSources(items);
@@ -59,7 +61,17 @@ export default function LiveSharePicker({ open, starting, onClose, onStart }) {
           <span>Include system audio when available</span>
         </label>
         {selectedId === "havyn:browser-region" && (
-          <p className="live-share-browser-note">System audio may include sound from other open apps.</p>
+          <>
+            <label className="live-share-audio-option live-share-theatre-option">
+              <input type="checkbox" checked={theatreMode} onChange={(event) => setTheatreMode(event.target.checked)} />
+              <Expand size={17} />
+              <span>
+                <strong>Theatre view</strong>
+                <small>Focus the detected player. Falls back to the browser view when needed.</small>
+              </span>
+            </label>
+            <p className="live-share-browser-note">System audio may include sound from other open apps.</p>
+          </>
         )}
         {error && <p className="live-share-error">{error}</p>}
         <footer>
@@ -69,7 +81,7 @@ export default function LiveSharePicker({ open, starting, onClose, onStart }) {
             type="button"
             disabled={!selectedId || starting}
             onClick={async () => {
-              const started = await onStart({ sourceId: selectedId, withAudio });
+              const started = await onStart({ sourceId: selectedId, withAudio, theatreMode });
               if (started) onClose();
             }}
           >

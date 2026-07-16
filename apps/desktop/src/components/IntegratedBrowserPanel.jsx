@@ -455,6 +455,17 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
         if (appliedInFrame) return true;
         return webviewRef.current?.executeJavaScript(`window.__havynApplyPlayback?.(${JSON.stringify(state)})`, true).catch(() => false);
       },
+      enterTheatre: async (selection) => {
+        const webContentsId = webviewRef.current?.getWebContentsId?.();
+        if (!webContentsId) return { ok: false, reason: "browser-unavailable" };
+        return window.havyn?.browser?.enterWebviewTheatre?.(webContentsId, selection)
+          .catch(() => ({ ok: false, reason: "theatre-failed" }));
+      },
+      exitTheatre: async () => {
+        const webContentsId = webviewRef.current?.getWebContentsId?.();
+        if (!webContentsId) return false;
+        return window.havyn?.browser?.exitWebviewTheatre?.(webContentsId).catch(() => false);
+      },
       toggleAdBlock: async () => {
         const result = await window.havyn?.browser?.toggleAdBlock?.();
         if (result) domBrowserEvents.adBlockState(result);
@@ -463,7 +474,11 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       },
       getAdBlockState: () => window.havyn?.browser?.getAdBlockState?.() || { enabled: false }
     });
-    return unregister;
+    return () => {
+      const webContentsId = webviewRef.current?.getWebContentsId?.();
+      if (webContentsId) window.havyn?.browser?.exitWebviewTheatre?.(webContentsId).catch(() => {});
+      unregister();
+    };
   }, [activeTabId, emitTabs, scanDomMedia, tabs, useDomWebview]);
 
   useEffect(() => {

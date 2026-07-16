@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld("havyn", {
     registerWebview: (webContentsId) => ipcRenderer.invoke("browser:register-webview", webContentsId),
     scanWebviewMedia: (webContentsId) => ipcRenderer.invoke("browser:scan-webview-media", webContentsId),
     applyWebviewPlayback: (webContentsId, state) => ipcRenderer.invoke("browser:apply-webview-playback", webContentsId, state),
+    enterWebviewTheatre: (webContentsId, selection) => ipcRenderer.invoke("browser:enter-webview-theatre", webContentsId, selection),
+    exitWebviewTheatre: (webContentsId) => ipcRenderer.invoke("browser:exit-webview-theatre", webContentsId),
     applyPlayback: (state) => ipcRenderer.invoke("browser:apply-playback", state),
     scanMedia: () => ipcRenderer.invoke("browser:scan-media"),
     onTabs: (callback) => {

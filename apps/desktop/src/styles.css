@@ -3272,6 +3272,29 @@ label {
   accent-color: #4da3ff;
 }
 
+.live-share-theatre-option {
+  align-items: flex-start;
+  margin-top: -8px;
+  padding: 11px 12px;
+  border: 1px solid rgba(77, 163, 255, 0.2);
+  border-radius: 7px;
+  background: rgba(77, 163, 255, 0.055);
+}
+
+.live-share-theatre-option > span {
+  display: grid;
+  gap: 2px;
+}
+
+.live-share-theatre-option strong {
+  font-size: 13px;
+}
+
+.live-share-theatre-option small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .live-share-picker > footer {
   justify-content: flex-end;
   padding-top: 16px;

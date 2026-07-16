@@ -44,7 +44,6 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
   const { room, socket } = roomState;
   const call = useWebRTC({ socket, room, user });
   const liveShareEnabled = import.meta.env.VITE_LIVE_SHARE_ENABLED === "true";
-  const screenShare = useScreenShare({ socket, room, user, enabled: liveShareEnabled });
   const playbackRef = useRef(null);
   const webVideoRef = useRef(null);
   const watchLayoutRef = useRef(null);
@@ -319,6 +318,14 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     suspended: room.roomExperience === "live-share"
   });
   const mediaRef = useRef(media);
+  const screenShare = useScreenShare({
+    socket,
+    room,
+    user,
+    enabled: liveShareEnabled,
+    browser: media.browser,
+    detectedMedia: media.detectedMedia
+  });
 
   useEffect(() => {
     mediaRef.current = media;
