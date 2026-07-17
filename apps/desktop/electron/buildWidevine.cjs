@@ -1,9 +1,9 @@
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
-const executable = process.platform === "win32" ? "electron-builder.cmd" : "electron-builder";
-const command = path.join(__dirname, "..", "..", "..", "node_modules", ".bin", executable);
-const result = spawnSync(command, [
+const command = process.execPath;
+const builderCli = path.join(__dirname, "..", "..", "..", "node_modules", "electron-builder", "cli.js");
+const result = spawnSync(command, [builderCli,
   "--win",
   "nsis",
   "--config.directories.output=release-widevine"
