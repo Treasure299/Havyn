@@ -27,6 +27,8 @@
   "build": {
     "appId": "app.havyn.desktop",
     "productName": "Havyn",
+    "electronVersion": "42.5.2",
+    "electronDist": "../../node_modules/electron/dist",
     "artifactName": "Havyn-${version}-Setup.${ext}",
     "directories": {
       "output": "release"
