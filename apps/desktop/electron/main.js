@@ -11,6 +11,8 @@ import { initializeWidevineRuntime } from "./widevineRuntime.js";
 import {
   applyNetflixPlayback,
   applyProtectedHtml5Playback,
+  classifyProtectedPlaybackTransition,
+  readNetflixPlaybackState,
   protectedPlaybackService
 } from "./protectedPlaybackAdapter.js";
 
@@ -41,6 +43,8 @@ const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.to
 const protectedPlaybackServiceSource = protectedPlaybackService.toString();
 const applyNetflixPlaybackSource = applyNetflixPlayback.toString();
 const applyProtectedHtml5PlaybackSource = applyProtectedHtml5Playback.toString();
+const classifyProtectedPlaybackTransitionSource = classifyProtectedPlaybackTransition.toString();
+const readNetflixPlaybackStateSource = readNetflixPlaybackState.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 // Keep diagnostics available in tester builds until the watch-room behavior is
 // signed off. Set HAVYN_DIAGNOSTICS=0 only when shipping a build without logs.
@@ -108,17 +112,21 @@ function appendDiagnosticRecord(record = {}) {
 
 export const FRAME_DETECTOR_SCRIPT = String.raw`
 (() => {
-  if (window.__havynFrameDetectorInstalled) {
+  const detectorVersion = "2.5.0-beta.3-protected-state";
+  if (window.__havynFrameDetectorInstalled && window.__havynFrameDetectorVersion === detectorVersion) {
     window.__havynScanMedia?.();
     return true;
   }
   window.__havynFrameDetectorInstalled = true;
+  window.__havynFrameDetectorVersion = detectorVersion;
   let lastMediaEvent = null;
   const createRemotePlaybackExpectation = ${createRemotePlaybackExpectationSource};
   const matchesRemotePlaybackEvent = ${matchesRemotePlaybackEventSource};
   const protectedPlaybackService = ${protectedPlaybackServiceSource};
   const applyNetflixPlayback = ${applyNetflixPlaybackSource};
   const applyProtectedHtml5Playback = ${applyProtectedHtml5PlaybackSource};
+  const classifyProtectedPlaybackTransition = ${classifyProtectedPlaybackTransitionSource};
+  const readNetflixPlaybackState = ${readNetflixPlaybackStateSource};
   let remotePlaybackExpectation = null;
   let pendingPlayback = null;
   let playbackRetryTimer = null;
@@ -126,6 +134,8 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   let latestPlaybackAction = "";
   let scanTimer = null;
   let lastTimeUpdateAt = 0;
+  let protectedPlaybackSnapshots = new WeakMap();
+  let protectedPlaybackPollTimer = null;
 
   const diagnostic = (event, details = {}) => {
     if (!window.__havynDiagnosticsEnabled) return;
@@ -520,6 +530,14 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
     const index = findVideos().indexOf(video);
     const media = describeVideo(video, index);
+    if (protectedPlaybackService(window.location.href)) {
+      protectedPlaybackSnapshots.set(video, {
+        currentTime: media.currentTime,
+        paused: media.paused,
+        playbackRate: media.playbackRate,
+        observedAt: Date.now()
+      });
+    }
     lastMediaEvent = {
       eventId: "frame:" + eventName + ":" + Date.now() + ":" + Math.random().toString(36).slice(2),
       eventName,
@@ -557,6 +575,43 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     videos.forEach(attach);
     return videos.map(describeVideo);
   };
+
+  const pollProtectedPlayback = () => {
+    const service = protectedPlaybackService(window.location.href);
+    if (!service) return;
+    const videos = findVideos().filter((video) => video.readyState > 0);
+    const video = videos.sort((left, right) => (
+      (right.videoWidth || right.clientWidth || 0) * (right.videoHeight || right.clientHeight || 0) -
+      (left.videoWidth || left.clientWidth || 0) * (left.videoHeight || left.clientHeight || 0)
+    ))[0] || findVideos()[0];
+    if (!video) return;
+    const now = Date.now();
+    const next = service === "netflix"
+      ? readNetflixPlaybackState(window, video, now)
+      : {
+          currentTime: Number(video.currentTime || 0),
+          paused: Boolean(video.paused),
+          playbackRate: Number(video.playbackRate || 1),
+          observedAt: now
+        };
+    if (!next) return;
+    const previous = protectedPlaybackSnapshots.get(video);
+    protectedPlaybackSnapshots.set(video, next);
+    const transition = classifyProtectedPlaybackTransition(previous, next);
+    if (!transition) return;
+    diagnostic("protected-playback-transition", {
+      service,
+      eventName: transition.eventName,
+      previous,
+      next
+    });
+    if (transition.eventName === "seeked") emitEvent("seeking", video);
+    emitEvent(transition.eventName, video);
+  };
+
+  if (window.__havynProtectedPlaybackPollTimer) clearInterval(window.__havynProtectedPlaybackPollTimer);
+  protectedPlaybackPollTimer = setInterval(pollProtectedPlayback, 250);
+  window.__havynProtectedPlaybackPollTimer = protectedPlaybackPollTimer;
 
   const scheduleScan = () => {
     if (scanTimer) return;
@@ -623,7 +678,11 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
     const protectedService = protectedPlaybackService(window.location.href);
     if (protectedService) {
-      remotePlaybackExpectation = createRemotePlaybackExpectation({ action, currentTime, playbackRate });
+      remotePlaybackExpectation = createRemotePlaybackExpectation(
+        { action, currentTime, playbackRate },
+        Date.now(),
+        4000
+      );
       const result = protectedService === "netflix"
         ? await applyNetflixPlayback(window, command, video)
         : await applyProtectedHtml5Playback(command, video);
