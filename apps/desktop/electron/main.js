@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "./playbackEventClassifier.js";
 import { createCallMediaPermissionGate } from "./callMediaPermission.js";
+import { resolveEmbeddedCaptureSource, streamsForCaptureSelection } from "./displayMediaSelection.js";
 import { createScreenSharePermissionGate } from "./screenSharePermission.js";
+import { canGrantEmbeddedBrowserPermission } from "./browserPermissionPolicy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -19,6 +21,16 @@ const loadedExtensions = new Map();
 let adBlockDesired = true;
 let browserVisible = true;
 const registeredWebviews = new Set();
+const nativeHtmlFullscreenWebviews = new Set();
+const webviewTheatreSessions = new Map();
+let theatreOverlay = null;
+
+export function setMainWindowForIntegrationTest(nextWindow) {
+  if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") {
+    throw new Error("The Havyn window can only be replaced by integration tests.");
+  }
+  mainWindow = nextWindow || null;
+}
 const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 // Keep diagnostics available in tester builds until the watch-room behavior is
@@ -171,8 +183,22 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
 
   const theatreState = window.__havynTheatreState || {
     snapshots: [],
-    elements: new WeakSet()
+    elements: new WeakSet(),
+    surfaces: new Set(),
+    ancestors: new Set(),
+    activeVideo: null,
+    activeKey: "",
+    focusTarget: null,
+    focusRect: null,
+    maintenanceTimer: null
   };
+  theatreState.surfaces ||= new Set();
+  theatreState.ancestors ||= new Set();
+  theatreState.activeVideo ||= null;
+  theatreState.activeKey ||= "";
+  theatreState.focusTarget ||= null;
+  theatreState.focusRect ||= null;
+  theatreState.maintenanceTimer ||= null;
   window.__havynTheatreState = theatreState;
 
   const rememberTheatreStyle = (element) => {
@@ -185,9 +211,17 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     });
   };
 
+  const restoreRememberedTheatreStyle = (element) => {
+    const snapshot = theatreState.snapshots.find((item) => item.element === element);
+    if (!snapshot) return;
+    if (snapshot.style == null) element.removeAttribute("style");
+    else element.setAttribute("style", snapshot.style);
+  };
+
   const applyTheatreSurface = (element, zIndex) => {
     if (!element) return;
     rememberTheatreStyle(element);
+    theatreState.surfaces.add(element);
     element.setAttribute("data-havyn-theatre", "true");
     element.style.setProperty("position", "fixed", "important");
     element.style.setProperty("inset", "0", "important");
@@ -200,8 +234,114 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     element.style.setProperty("margin", "0", "important");
     element.style.setProperty("padding", "0", "important");
     element.style.setProperty("transform", "none", "important");
+    element.style.setProperty("display", "block", "important");
+    element.style.setProperty("visibility", "visible", "important");
+    element.style.setProperty("opacity", "1", "important");
+    element.style.setProperty("border", "0", "important");
+    element.style.setProperty("clip", "auto", "important");
+    element.style.setProperty("clip-path", "none", "important");
+    element.style.setProperty("contain", "none", "important");
     element.style.setProperty("z-index", String(zIndex), "important");
     element.style.setProperty("background", "#000", "important");
+  };
+
+  const applyTheatreAncestor = (element) => {
+    if (!element) return;
+    rememberTheatreStyle(element);
+    theatreState.ancestors.add(element);
+    element.style.setProperty("transform", "none", "important");
+    element.style.setProperty("translate", "none", "important");
+    element.style.setProperty("scale", "none", "important");
+    element.style.setProperty("rotate", "none", "important");
+    element.style.setProperty("filter", "none", "important");
+    element.style.setProperty("backdrop-filter", "none", "important");
+    element.style.setProperty("perspective", "none", "important");
+    element.style.setProperty("contain", "none", "important");
+    element.style.setProperty("content-visibility", "visible", "important");
+    element.style.setProperty("will-change", "auto", "important");
+    element.style.setProperty("isolation", "auto", "important");
+    element.style.setProperty("clip", "auto", "important");
+    element.style.setProperty("clip-path", "none", "important");
+    element.style.setProperty("overflow", "visible", "important");
+  };
+
+  const freeTheatreSurfaceFromAncestors = (surface) => {
+    let ancestor = surface?.parentElement;
+    while (ancestor) {
+      applyTheatreAncestor(ancestor);
+      if (ancestor === document.documentElement) break;
+      ancestor = ancestor.parentElement;
+    }
+  };
+
+  const applyTheatreVideo = (video) => {
+    if (!video) return;
+    rememberTheatreStyle(video);
+    video.style.setProperty("width", "100%", "important");
+    video.style.setProperty("height", "100%", "important");
+    video.style.setProperty("max-width", "none", "important");
+    video.style.setProperty("max-height", "none", "important");
+    video.style.setProperty("object-fit", "contain", "important");
+    video.style.setProperty("background", "#000", "important");
+  };
+
+  const applyTheatreViewportFocus = (target, rect = null) => {
+    if (!target || !document.body || !document.documentElement) return false;
+    const sourceRect = rect || target.getBoundingClientRect();
+    if (!sourceRect || sourceRect.width < 2 || sourceRect.height < 2) return false;
+    rememberTheatreStyle(document.documentElement);
+    rememberTheatreStyle(document.body);
+    theatreState.focusTarget = target;
+    theatreState.focusRect = {
+      x: sourceRect.x,
+      y: sourceRect.y,
+      width: sourceRect.width,
+      height: sourceRect.height
+    };
+    const scale = Math.min(innerWidth / sourceRect.width, innerHeight / sourceRect.height);
+    const offsetX = (innerWidth - sourceRect.width * scale) / 2 - sourceRect.x * scale;
+    const offsetY = (innerHeight - sourceRect.height * scale) / 2 - sourceRect.y * scale;
+    document.documentElement.style.setProperty("overflow", "hidden", "important");
+    document.documentElement.style.setProperty("background", "#000", "important");
+    document.body.style.setProperty("transform-origin", "0 0", "important");
+    document.body.style.setProperty(
+      "transform",
+      "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")",
+      "important"
+    );
+    document.body.style.setProperty("overflow", "visible", "important");
+    document.body.style.setProperty("background", "#000", "important");
+    return true;
+  };
+
+  const maintainTheatre = () => {
+    for (const ancestor of theatreState.ancestors) {
+      if (!ancestor?.isConnected) {
+        theatreState.ancestors.delete(ancestor);
+        continue;
+      }
+      applyTheatreAncestor(ancestor);
+    }
+    for (const surface of theatreState.surfaces) {
+      if (!surface?.isConnected) {
+        theatreState.surfaces.delete(surface);
+        continue;
+      }
+      const zIndex = surface.tagName === "IFRAME" || surface.tagName === "FRAME"
+        ? 2147483644
+        : 2147483645;
+      applyTheatreSurface(surface, zIndex);
+    }
+    if (theatreState.activeVideo?.isConnected) applyTheatreVideo(theatreState.activeVideo);
+    if (theatreState.focusTarget?.isConnected && theatreState.focusRect) {
+      applyTheatreViewportFocus(theatreState.focusTarget, theatreState.focusRect);
+    }
+  };
+
+  const startTheatreMaintenance = () => {
+    if (theatreState.maintenanceTimer) clearInterval(theatreState.maintenanceTimer);
+    maintainTheatre();
+    theatreState.maintenanceTimer = setInterval(maintainTheatre, 350);
   };
 
   const visibleArea = (element) => {
@@ -236,6 +376,8 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   };
 
   window.__havynExitTheatre = () => {
+    if (theatreState.maintenanceTimer) clearInterval(theatreState.maintenanceTimer);
+    theatreState.maintenanceTimer = null;
     for (let index = theatreState.snapshots.length - 1; index >= 0; index -= 1) {
       const snapshot = theatreState.snapshots[index];
       if (!snapshot.element?.isConnected) continue;
@@ -246,10 +388,30 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     }
     theatreState.snapshots = [];
     theatreState.elements = new WeakSet();
+    theatreState.surfaces = new Set();
+    theatreState.ancestors = new Set();
+    theatreState.activeVideo = null;
+    theatreState.activeKey = "";
+    theatreState.focusTarget = null;
+    theatreState.focusRect = null;
     return true;
   };
 
   window.__havynEnterTheatre = (selection = {}) => {
+    const selectionKey = JSON.stringify({
+      id: String(selection.id || ""),
+      src: String(selection.src || ""),
+      index: Number.isInteger(Number(selection.index)) ? Number(selection.index) : -1
+    });
+    if (theatreState.activeKey === selectionKey && theatreState.activeVideo?.isConnected) {
+      maintainTheatre();
+      return {
+        ok: true,
+        frameUrl: window.location.href,
+        mediaId: theatreState.activeVideo.dataset.havynMediaId || "",
+        maintained: true
+      };
+    }
     window.__havynExitTheatre();
     const videos = findVideos();
     if (!videos.length) return { ok: false, reason: "no-video" };
@@ -263,18 +425,16 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     if (!video || visibleArea(video) < 1) return { ok: false, reason: "target-not-confirmed" };
 
     const container = chooseTheatreContainer(video);
+    freeTheatreSurfaceFromAncestors(container);
     applyTheatreSurface(container, 2147483645);
-    rememberTheatreStyle(video);
-    video.style.setProperty("width", "100%", "important");
-    video.style.setProperty("height", "100%", "important");
-    video.style.setProperty("max-width", "none", "important");
-    video.style.setProperty("max-height", "none", "important");
-    video.style.setProperty("object-fit", "contain", "important");
-    video.style.setProperty("background", "#000", "important");
+    theatreState.activeVideo = video;
+    theatreState.activeKey = selectionKey;
+    applyTheatreVideo(video);
     rememberTheatreStyle(document.documentElement);
     rememberTheatreStyle(document.body);
     document.documentElement.style.setProperty("overflow", "hidden", "important");
     document.body.style.setProperty("overflow", "hidden", "important");
+    startTheatreMaintenance();
     return {
       ok: true,
       frameUrl: window.location.href,
@@ -284,7 +444,9 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   };
 
   window.__havynExpandTheatreFrame = (childUrl = "") => {
-    const frames = Array.from(document.querySelectorAll("iframe,frame"));
+    const frames = [...new Set(allRoots(document).flatMap((root) => (
+      Array.from(root.querySelectorAll?.("iframe,frame") || [])
+    )))];
     const normalizedChildUrl = String(childUrl || "");
     let target = frames.find((frame) => {
       try {
@@ -295,12 +457,23 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     });
     if (!target) target = frames.sort((left, right) => visibleArea(right) - visibleArea(left))[0];
     if (!target || visibleArea(target) < 1) return false;
-    applyTheatreSurface(target, 2147483644);
-    rememberTheatreStyle(document.documentElement);
-    rememberTheatreStyle(document.body);
-    document.documentElement.style.setProperty("overflow", "hidden", "important");
-    document.body.style.setProperty("overflow", "hidden", "important");
-    return true;
+    if (theatreState.focusTarget && target !== theatreState.focusTarget) {
+      restoreRememberedTheatreStyle(document.body);
+      restoreRememberedTheatreStyle(document.documentElement);
+    }
+    const sourceRect = target === theatreState.focusTarget && theatreState.focusRect
+      ? theatreState.focusRect
+      : target.getBoundingClientRect();
+    if (!applyTheatreViewportFocus(target, sourceRect)) return false;
+    startTheatreMaintenance();
+    const rect = target.getBoundingClientRect();
+    return {
+      ok: true,
+      width: rect.width,
+      height: rect.height,
+      viewportWidth: innerWidth,
+      viewportHeight: innerHeight
+    };
   };
 
   const describeVideo = (video, index) => {
@@ -646,15 +819,49 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
+      disableHtmlFullscreenWindowResize: true,
       backgroundThrottling: false,
       sandbox: false
     }
   });
 
   mainWindow.loadURL(isDev ? "http://127.0.0.1:5173" : `file://${path.join(__dirname, "../dist/index.html")}`);
+  mainWindow.webContents.on("console-message", (event, detailsOrLevel, legacyMessage, legacyLine, legacySourceId) => {
+    const details = typeof detailsOrLevel === "object" && detailsOrLevel
+      ? detailsOrLevel
+      : {
+          level: detailsOrLevel,
+          message: legacyMessage,
+          lineNumber: legacyLine,
+          sourceId: legacySourceId
+        };
+    const level = String(details.level || "").toLowerCase();
+    const message = String(details.message || "");
+    if (!["error", "warning", "3", "2"].includes(level) && !/uncaught|error|failed/i.test(message)) return;
+    appendDiagnosticRecord({
+      scope: "renderer-console",
+      event: "console-message",
+      level,
+      message,
+      lineNumber: Number(details.lineNumber || 0),
+      sourceId: details.sourceId || ""
+    });
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    appendDiagnosticRecord({
+      scope: "renderer-process",
+      event: "render-process-gone",
+      reason: details?.reason || "unknown",
+      exitCode: Number(details?.exitCode || 0)
+    });
+  });
+  mainWindow.webContents.on("unresponsive", () => {
+    appendDiagnosticRecord({ scope: "renderer-process", event: "unresponsive" });
+  });
   mainWindow.setMenuBarVisibility(false);
   mainWindow.on("closed", () => {
     if (mediaEventTimer) clearInterval(mediaEventTimer);
+    destroyTheatreOverlay();
     mainWindow = null;
     tabs.clear();
     activeTabId = null;
@@ -695,6 +902,15 @@ function showActiveTab() {
   if (!tab) return;
   contentView.addChildView(tab.view);
   if (currentBounds) tab.view.setBounds(currentBounds);
+  if (theatreOverlay?.view && !theatreOverlay.view.webContents.isDestroyed()) {
+    try {
+      contentView.removeChildView(theatreOverlay.view);
+    } catch {
+      // The overlay may not have been attached yet.
+    }
+    contentView.addChildView(theatreOverlay.view);
+    if (currentBounds) theatreOverlay.view.setBounds(currentBounds);
+  }
   tab.view.webContents.focus();
   emitTabs();
 }
@@ -905,7 +1121,14 @@ async function applyWebviewPlayback(webContentsId, state) {
   return false;
 }
 
-export async function exitWebviewTheatre(webContentsId) {
+function stopWebviewTheatreMaintenance(webContentsId) {
+  const id = Number(webContentsId);
+  const sessionState = webviewTheatreSessions.get(id);
+  if (sessionState?.timer) clearInterval(sessionState.timer);
+  webviewTheatreSessions.delete(id);
+}
+
+async function clearWebviewTheatreStyles(webContentsId) {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc || wc.isDestroyed()) return false;
   const frames = webviewFrames(wc);
@@ -915,7 +1138,213 @@ export async function exitWebviewTheatre(webContentsId) {
   return true;
 }
 
-export async function enterWebviewTheatre(webContentsId, selection = {}) {
+function destroyTheatreOverlay() {
+  const overlay = theatreOverlay;
+  theatreOverlay = null;
+  if (!overlay) return false;
+  stopWebviewTheatreMaintenance(overlay.view?.webContents?.id);
+  try {
+    mainWindow?.contentView.removeChildView(overlay.view);
+  } catch {
+    // The window may already be closing.
+  }
+  try {
+    if (!overlay.view?.webContents?.isDestroyed()) overlay.view.webContents.destroy();
+  } catch {
+    // Ignore teardown races during app shutdown.
+  }
+  try {
+    if (overlay.source && !overlay.source.isDestroyed()) {
+      overlay.source.setAudioMuted(Boolean(overlay.sourceWasMuted));
+    }
+  } catch {
+    // Ignore a source tab that closed while Theatre mode was active.
+  }
+  appendDiagnosticRecord({
+    scope: "live-share",
+    event: "theatre-overlay-destroyed",
+    sourceWebContentsId: overlay.sourceWebContentsId
+  });
+  return true;
+}
+
+async function waitForWebContentsLoad(wc, url, referrer = "") {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      wc.removeListener("did-finish-load", handleFinish);
+      wc.removeListener("did-fail-load", handleFail);
+      callback(value);
+    };
+    const handleFinish = () => finish(resolve, true);
+    const handleFail = (_event, code, description, failedUrl, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      finish(reject, new Error(`Theatre player load failed (${code}): ${description || failedUrl}`));
+    };
+    const timeout = setTimeout(() => finish(reject, new Error("Theatre player timed out while loading.")), 12_000);
+    wc.once("did-finish-load", handleFinish);
+    wc.on("did-fail-load", handleFail);
+    wc.loadURL(url, referrer ? { httpReferrer: referrer } : undefined).catch((error) => finish(reject, error));
+  });
+}
+
+async function createTheatreOverlay(webContentsId, selection = {}) {
+  const source = webContents.fromId(Number(webContentsId));
+  if (!mainWindow || !source || source.isDestroyed()) {
+    appendDiagnosticRecord({
+      scope: "live-share",
+      event: "theatre-overlay-skipped",
+      sourceWebContentsId: Number(webContentsId) || 0,
+      reason: !mainWindow ? "main-window-unavailable" : "source-webview-unavailable"
+    });
+    return { ok: false, attempted: false, reason: "source-webview-unavailable" };
+  }
+  const playerUrl = String(selection.frameUrl || selection.url || "");
+  const sourcePageUrl = String(source.getURL?.() || "");
+  const selectedPageUrl = String(selection.pageUrl || "");
+  const pageUrl = selectedPageUrl && selectedPageUrl !== playerUrl
+    ? selectedPageUrl
+    : sourcePageUrl;
+  if (!/^https?:\/\//i.test(playerUrl)) {
+    appendDiagnosticRecord({
+      scope: "live-share",
+      event: "theatre-overlay-skipped",
+      sourceWebContentsId: source.id,
+      playerUrl,
+      pageUrl,
+      reason: "invalid-player-url"
+    });
+    return { ok: false, attempted: false, reason: "invalid-player-url" };
+  }
+  if (playerUrl === sourcePageUrl) {
+    appendDiagnosticRecord({
+      scope: "live-share",
+      event: "theatre-overlay-skipped",
+      sourceWebContentsId: source.id,
+      playerUrl,
+      pageUrl,
+      reason: "player-is-top-level"
+    });
+    return { ok: false, attempted: false, reason: "player-is-top-level" };
+  }
+
+  const contentBounds = mainWindow.getContentBounds();
+  const requestedBounds = selection.browserBounds || {};
+  const overlayBounds = {
+    x: Math.max(0, Math.round(Number(requestedBounds.x) || 0)),
+    y: Math.max(0, Math.round(Number(requestedBounds.y) || 0)),
+    width: Math.max(1, Math.round(Number(requestedBounds.width) || contentBounds.width)),
+    height: Math.max(1, Math.round(Number(requestedBounds.height) || contentBounds.height))
+  };
+  overlayBounds.width = Math.min(overlayBounds.width, Math.max(1, contentBounds.width - overlayBounds.x));
+  overlayBounds.height = Math.min(overlayBounds.height, Math.max(1, contentBounds.height - overlayBounds.y));
+
+  destroyTheatreOverlay();
+  const view = new WebContentsView({
+    webPreferences: {
+      preload: path.join(__dirname, "browserPreload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      nodeIntegrationInSubFrames: true,
+      javascript: true,
+      webSecurity: true,
+      backgroundThrottling: false,
+      additionalArguments: ["--havyn-theatre-overlay"],
+      partition: browserPartition()
+    }
+  });
+  const overlayWc = view.webContents;
+  overlayWc.setUserAgent(app.userAgentFallback);
+  overlayWc.setWindowOpenHandler(() => ({ action: "deny" }));
+  view.setBackgroundColor?.("#000000");
+  const sourceWasMuted = source.isAudioMuted();
+  theatreOverlay = {
+    view,
+    source,
+    sourceWasMuted,
+    sourceWebContentsId: source.id,
+    playerUrl,
+    pageUrl,
+    bounds: overlayBounds
+  };
+  source.setAudioMuted(true);
+  mainWindow.contentView.addChildView(view);
+  view.setBounds(overlayBounds);
+
+  try {
+    await waitForWebContentsLoad(overlayWc, playerUrl, pageUrl);
+    let result = null;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      result = await applyWebviewTheatre(overlayWc.id, {
+        ...selection,
+        frameUrl: overlayWc.getURL(),
+        url: overlayWc.getURL()
+      }, { diagnostic: false });
+      if (result?.ok) break;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (!result?.ok) throw new Error("The detected Theatre player did not become ready.");
+    startWebviewTheatreMaintenance(overlayWc.id, selection, result);
+    appendDiagnosticRecord({
+      scope: "live-share",
+      event: "theatre-overlay-ready",
+      sourceWebContentsId: source.id,
+      overlayWebContentsId: overlayWc.id,
+      playerUrl,
+      pageUrl,
+      bounds: overlayBounds,
+      attached: mainWindow.contentView.children?.includes?.(view) ?? true
+    });
+    return {
+      ...result,
+      overlay: true,
+      attempted: true,
+      playerUrl,
+      bounds: overlayBounds,
+      overlayWebContentsId: overlayWc.id
+    };
+  } catch (error) {
+    appendDiagnosticRecord({
+      scope: "live-share",
+      event: "theatre-overlay-failed",
+      sourceWebContentsId: source.id,
+      playerUrl,
+      pageUrl,
+      message: error?.message || "Theatre overlay failed"
+    });
+    destroyTheatreOverlay();
+    return { ok: false, attempted: true, reason: "theatre-overlay-failed" };
+  }
+}
+
+function setTheatreOverlayBounds(webContentsId, bounds = {}) {
+  if (!theatreOverlay || theatreOverlay.sourceWebContentsId !== Number(webContentsId)) return false;
+  const contentBounds = mainWindow?.getContentBounds?.();
+  if (!contentBounds) return false;
+  const nextBounds = {
+    x: Math.max(0, Math.round(Number(bounds.x) || 0)),
+    y: Math.max(0, Math.round(Number(bounds.y) || 0)),
+    width: Math.max(1, Math.round(Number(bounds.width) || 1)),
+    height: Math.max(1, Math.round(Number(bounds.height) || 1))
+  };
+  nextBounds.width = Math.min(nextBounds.width, Math.max(1, contentBounds.width - nextBounds.x));
+  nextBounds.height = Math.min(nextBounds.height, Math.max(1, contentBounds.height - nextBounds.y));
+  theatreOverlay.bounds = nextBounds;
+  theatreOverlay.view.setBounds(nextBounds);
+  return true;
+}
+
+export async function exitWebviewTheatre(webContentsId) {
+  if (theatreOverlay?.sourceWebContentsId === Number(webContentsId)) destroyTheatreOverlay();
+  stopWebviewTheatreMaintenance(webContentsId);
+  return clearWebviewTheatreStyles(webContentsId);
+}
+
+async function applyWebviewTheatre(webContentsId, selection = {}, { diagnostic = true } = {}) {
   const wc = webContents.fromId(Number(webContentsId));
   if (!wc || wc.isDestroyed()) return { ok: false, reason: "browser-unavailable" };
   const frames = await installDetectorInWebviewFrames(wc);
@@ -933,7 +1362,6 @@ export async function enterWebviewTheatre(webContentsId, selection = {}) {
       return rightMatch - leftMatch;
     });
 
-  await exitWebviewTheatre(webContentsId);
   for (const candidate of candidates) {
     const result = await candidate.frame.executeJavaScript(
       `window.__havynEnterTheatre?.(${JSON.stringify(selection)}) || { ok: false, reason: "theatre-unavailable" }`,
@@ -944,29 +1372,100 @@ export async function enterWebviewTheatre(webContentsId, selection = {}) {
     let childFrame = candidate.frame;
     let parentFrame = childFrame.parent;
     let expandedFrames = 0;
+    const frameMetrics = [];
     while (parentFrame && !parentFrame.detached) {
       const expanded = await parentFrame.executeJavaScript(
         `window.__havynExpandTheatreFrame?.(${JSON.stringify(childFrame.url || "")}) || false`,
         true
       ).catch(() => false);
-      if (!expanded) {
-        await exitWebviewTheatre(webContentsId);
+      if (!expanded?.ok) {
         return { ok: false, reason: "containing-frame-not-found" };
       }
       expandedFrames += 1;
+      frameMetrics.push(expanded);
       childFrame = parentFrame;
       parentFrame = parentFrame.parent;
     }
-    appendDiagnosticRecord({
-      scope: "live-share",
-      event: "theatre-entered",
-      webContentsId: wc.id,
-      frameUrl: result.frameUrl || candidate.url,
-      expandedFrames
-    });
-    return { ...result, expandedFrames };
+    if (diagnostic) {
+      appendDiagnosticRecord({
+        scope: "live-share",
+        event: "theatre-entered",
+        webContentsId: wc.id,
+        frameUrl: result.frameUrl || candidate.url,
+        expandedFrames,
+        frameMetrics
+      });
+    }
+    return { ...result, expandedFrames, frameMetrics };
   }
   return { ok: false, reason: candidates.length ? "target-not-confirmed" : "no-detected-player" };
+}
+
+function startWebviewTheatreMaintenance(webContentsId, selection, initialResult) {
+  const id = Number(webContentsId);
+  stopWebviewTheatreMaintenance(id);
+  const sessionState = {
+    selection,
+    running: false,
+    lastFrameUrl: initialResult?.frameUrl || "",
+    timer: null
+  };
+  sessionState.timer = setInterval(async () => {
+    if (sessionState.running || !webviewTheatreSessions.has(id)) return;
+    const wc = webContents.fromId(id);
+    if (!wc || wc.isDestroyed()) {
+      stopWebviewTheatreMaintenance(id);
+      return;
+    }
+    sessionState.running = true;
+    try {
+      const result = await applyWebviewTheatre(id, sessionState.selection, { diagnostic: false });
+      if (result?.ok && result.frameUrl !== sessionState.lastFrameUrl) {
+        appendDiagnosticRecord({
+          scope: "live-share",
+          event: "theatre-frame-reacquired",
+          webContentsId: id,
+          previousFrameUrl: sessionState.lastFrameUrl,
+          frameUrl: result.frameUrl || "",
+          expandedFrames: result.expandedFrames
+        });
+        sessionState.lastFrameUrl = result.frameUrl || sessionState.lastFrameUrl;
+      }
+    } catch (error) {
+      appendDiagnosticRecord({
+        scope: "live-share",
+        event: "theatre-maintenance-error",
+        webContentsId: id,
+        message: error?.message || "Theatre maintenance failed"
+      });
+    } finally {
+      sessionState.running = false;
+    }
+  }, 750);
+  webviewTheatreSessions.set(id, sessionState);
+}
+
+export async function enterWebviewTheatre(webContentsId, selection = {}) {
+  const id = Number(webContentsId);
+  if (nativeHtmlFullscreenWebviews.has(id)) {
+    appendDiagnosticRecord({
+      scope: "live-share",
+      event: "theatre-native-fullscreen-reused",
+      webContentsId: id
+    });
+    return { ok: true, nativeFullscreen: true, expandedFrames: 1 };
+  }
+  stopWebviewTheatreMaintenance(webContentsId);
+  await clearWebviewTheatreStyles(webContentsId);
+  const overlayResult = await createTheatreOverlay(webContentsId, selection);
+  if (overlayResult?.ok) return overlayResult;
+  // A cross-origin child player is painted by Chromium in a separate surface.
+  // If its dedicated overlay failed, CSS transforms can report full size while
+  // the old embedded surface remains visible. Never report that false success.
+  if (overlayResult?.attempted) return overlayResult;
+  const result = await applyWebviewTheatre(webContentsId, selection);
+  if (result?.ok) startWebviewTheatreMaintenance(webContentsId, selection, result);
+  return result;
 }
 
 ipcMain.handle("browser:create", (_event, bounds) => {
@@ -978,6 +1477,7 @@ ipcMain.handle("browser:create", (_event, bounds) => {
 });
 
 ipcMain.handle("browser:destroy", () => {
+  destroyTheatreOverlay();
   const contentView = mainWindow?.contentView;
   for (const tab of tabs.values()) {
     try {
@@ -994,7 +1494,10 @@ ipcMain.handle("browser:destroy", () => {
 
 ipcMain.handle("browser:set-bounds", (_event, bounds) => {
   currentBounds = bounds;
-  if (browserVisible) activeTab()?.view.setBounds(bounds);
+  if (browserVisible) {
+    activeTab()?.view.setBounds(bounds);
+    theatreOverlay?.view?.setBounds(bounds);
+  }
   return true;
 });
 
@@ -1004,6 +1507,11 @@ ipcMain.handle("browser:set-visible", (_event, visible) => {
     showActiveTab();
   } else {
     const contentView = mainWindow?.contentView;
+    try {
+      if (theatreOverlay?.view) contentView?.removeChildView(theatreOverlay.view);
+    } catch {
+      // Ignore a detached Theatre overlay.
+    }
     for (const tab of tabs.values()) {
       try {
         contentView?.removeChildView(tab.view);
@@ -1190,52 +1698,68 @@ ipcMain.handle("screen-share:select-source", async (event, selection = {}) => {
   let metadata = { captureMode: "source" };
 
   if (browserRegion) {
-    const requestedRect = selection.browserRect || {};
-    const windowBounds = mainWindow.getBounds();
-    const contentBounds = mainWindow.getContentBounds();
-    const width = Math.max(1, Number(requestedRect.width) || 1);
-    const height = Math.max(1, Number(requestedRect.height) || 1);
-    const windowSourceId = mainWindow.getMediaSourceId();
-    source = currentSources.find((item) => item.id === windowSourceId);
+    const requestedWebContentsId = Number(selection.browserWebContentsId) || 0;
+    const embeddedSource = resolveEmbeddedCaptureSource(
+      requestedWebContentsId,
+      registeredWebviews,
+      (id) => webContents.fromId(id)
+    );
+    if (embeddedSource) {
+      source = embeddedSource;
+      metadata = {
+        captureMode: "browser-webframe",
+        browserWebContentsId: requestedWebContentsId
+      };
+    }
 
-    if (source) {
-      const outerGeometry = {
-        cropRect: {
-          x: contentBounds.x + (Number(requestedRect.x) || 0) - windowBounds.x,
-          y: contentBounds.y + (Number(requestedRect.y) || 0) - windowBounds.y,
-          width,
-          height
-        },
-        displayBounds: { width: windowBounds.width, height: windowBounds.height }
-      };
-      const contentGeometry = {
-        cropRect: {
-          x: Number(requestedRect.x) || 0,
-          y: Number(requestedRect.y) || 0,
-          width,
-          height
-        },
-        displayBounds: { width: contentBounds.width, height: contentBounds.height }
-      };
-      metadata = {
-        captureMode: "browser-window-region",
-        ...outerGeometry,
-        cropCandidates: [outerGeometry, contentGeometry]
-      };
-    } else {
-      const display = screen.getDisplayMatching(windowBounds);
-      source = currentSources.find((item) => String(item.display_id) === String(display.id))
-        || currentSources.find((item) => item.id.startsWith("screen:"));
-      metadata = {
-        captureMode: "browser-region",
-        cropRect: {
-          x: contentBounds.x + (Number(requestedRect.x) || 0) - display.bounds.x,
-          y: contentBounds.y + (Number(requestedRect.y) || 0) - display.bounds.y,
-          width,
-          height
-        },
-        displayBounds: { width: display.bounds.width, height: display.bounds.height }
-      };
+    if (!source) {
+      const requestedRect = selection.browserRect || {};
+      const windowBounds = mainWindow.getBounds();
+      const contentBounds = mainWindow.getContentBounds();
+      const width = Math.max(1, Number(requestedRect.width) || 1);
+      const height = Math.max(1, Number(requestedRect.height) || 1);
+      const windowSourceId = mainWindow.getMediaSourceId();
+      source = currentSources.find((item) => item.id === windowSourceId);
+
+      if (source) {
+        const outerGeometry = {
+          cropRect: {
+            x: contentBounds.x + (Number(requestedRect.x) || 0) - windowBounds.x,
+            y: contentBounds.y + (Number(requestedRect.y) || 0) - windowBounds.y,
+            width,
+            height
+          },
+          displayBounds: { width: windowBounds.width, height: windowBounds.height }
+        };
+        const contentGeometry = {
+          cropRect: {
+            x: Number(requestedRect.x) || 0,
+            y: Number(requestedRect.y) || 0,
+            width,
+            height
+          },
+          displayBounds: { width: contentBounds.width, height: contentBounds.height }
+        };
+        metadata = {
+          captureMode: "browser-window-region",
+          ...outerGeometry,
+          cropCandidates: [outerGeometry, contentGeometry]
+        };
+      } else {
+        const display = screen.getDisplayMatching(windowBounds);
+        source = currentSources.find((item) => String(item.display_id) === String(display.id))
+          || currentSources.find((item) => item.id.startsWith("screen:"));
+        metadata = {
+          captureMode: "browser-region",
+          cropRect: {
+            x: contentBounds.x + (Number(requestedRect.x) || 0) - display.bounds.x,
+            y: contentBounds.y + (Number(requestedRect.y) || 0) - display.bounds.y,
+            width,
+            height
+          },
+          displayBounds: { width: display.bounds.width, height: display.bounds.height }
+        };
+      }
     }
   }
 
@@ -1264,6 +1788,24 @@ ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
   if (!wc) return false;
   if (registeredWebviews.has(wc.id)) return true;
   registeredWebviews.add(wc.id);
+  wc.on("enter-html-full-screen", () => {
+    nativeHtmlFullscreenWebviews.add(wc.id);
+    appendDiagnosticRecord({
+      scope: "embedded-browser",
+      event: "enter-html-full-screen",
+      webContentsId: wc.id,
+      url: wc.getURL()
+    });
+  });
+  wc.on("leave-html-full-screen", () => {
+    nativeHtmlFullscreenWebviews.delete(wc.id);
+    appendDiagnosticRecord({
+      scope: "embedded-browser",
+      event: "leave-html-full-screen",
+      webContentsId: wc.id,
+      url: wc.getURL()
+    });
+  });
   wc.setWindowOpenHandler(({ url }) => {
     mainWindow?.webContents.send("browser:load-state", {
       type: "warning",
@@ -1305,6 +1847,8 @@ ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
     }
   });
   wc.on("destroyed", () => {
+    stopWebviewTheatreMaintenance(wc.id);
+    nativeHtmlFullscreenWebviews.delete(wc.id);
     registeredWebviews.delete(wc.id);
   });
   return true;
@@ -1323,6 +1867,11 @@ ipcMain.handle("browser:enter-webview-theatre", (event, webContentsId, selection
     return { ok: false, reason: "browser-not-registered" };
   }
   return enterWebviewTheatre(webContentsId, selection);
+});
+
+ipcMain.handle("browser:set-webview-theatre-bounds", (event, webContentsId, bounds) => {
+  if (event.sender.id !== mainWindow?.webContents?.id) return false;
+  return setTheatreOverlayBounds(webContentsId, bounds);
 });
 
 ipcMain.handle("browser:exit-webview-theatre", (event, webContentsId) => {
@@ -1392,13 +1941,23 @@ if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(() => {
     const requestingWebContents = webContents.fromFrame?.(request.frame);
     const selection = screenSharePermission.consume(requestingWebContents?.id);
     if (!selection) return callback({});
-    callback({
-      video: selection.source,
-      ...(selection.withAudio ? { audio: "loopback" } : {})
-    });
+    callback(streamsForCaptureSelection(selection));
   });
-  browserSession().setPermissionCheckHandler(() => false);
-  browserSession().setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  browserSession().setPermissionCheckHandler((_webContents, permission) => (
+    canGrantEmbeddedBrowserPermission(permission)
+  ));
+  browserSession().setPermissionRequestHandler((requestingWebContents, permission, callback, details) => {
+    const granted = canGrantEmbeddedBrowserPermission(permission);
+    appendDiagnosticRecord({
+      scope: "embedded-browser",
+      event: "permission-request",
+      webContentsId: requestingWebContents?.id || null,
+      permission,
+      granted,
+      requestingUrl: details?.requestingUrl || ""
+    });
+    callback(granted);
+  });
   installRequestGuard();
   createMainWindow();
 });

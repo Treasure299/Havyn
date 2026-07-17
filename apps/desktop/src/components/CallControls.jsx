@@ -13,6 +13,7 @@ export default function CallControls({ call, onDevicesOpenChange }) {
   function toggleDevices() {
     setDevicesOpen((value) => {
       const next = !value;
+      if (next) void call.prepareDevices?.();
       onDevicesOpenChange?.(next);
       return next;
     });
@@ -42,7 +43,7 @@ export default function CallControls({ call, onDevicesOpenChange }) {
             <option value={device.deviceId} key={device.deviceId}>
               {device.label || `Microphone ${index + 1}`}
             </option>
-          )) : <option value="">Default microphone</option>}
+          )) : <option value="">{call.preparingDevices ? "Detecting microphones..." : "Default microphone"}</option>}
         </select>
       </label>
       <label>
@@ -56,7 +57,7 @@ export default function CallControls({ call, onDevicesOpenChange }) {
             <option value={device.deviceId} key={device.deviceId}>
               {device.label || `Camera ${index + 1}`}
             </option>
-          )) : <option value="">Default camera</option>}
+          )) : <option value="">{call.preparingDevices ? "Detecting cameras..." : "Default camera"}</option>}
         </select>
       </label>
     </div>,
@@ -66,20 +67,20 @@ export default function CallControls({ call, onDevicesOpenChange }) {
   return (
     <div className="call-control-stack">
       <div className={`call-controls ${call.joined ? "is-joined" : ""}`}>
+        <button
+          ref={devicesButtonRef}
+          className={`icon-button ${devicesOpen ? "is-active" : ""}`}
+          onClick={toggleDevices}
+          title="Call devices"
+          aria-label="Choose microphone and camera"
+          aria-expanded={devicesOpen}
+        >
+          <Settings2 size={17} />
+        </button>
         {!call.joined ? (
           <button className="secondary-button compact-call-button" onClick={call.joinCall}><Phone size={16} /> Join</button>
         ) : (
-          <>
-            <button
-              ref={devicesButtonRef}
-              className={`icon-button ${devicesOpen ? "is-active" : ""}`}
-              onClick={toggleDevices}
-              title="Call devices"
-            >
-              <Settings2 size={17} />
-            </button>
-            <button className="icon-button danger-icon" onClick={call.leaveCall} title="Leave call"><PhoneOff size={17} /></button>
-          </>
+          <button className="icon-button danger-icon" onClick={call.leaveCall} title="Leave call"><PhoneOff size={17} /></button>
         )}
       </div>
       {devicePicker}

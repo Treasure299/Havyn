@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { discoverNamedCallDevices, splitCallDevices } from "../lib/callDeviceDiscovery";
 
 const rtcConfig = {
   iceServers: [
@@ -56,6 +57,7 @@ export function useWebRTC({ socket, room, user }) {
   const [streams, setStreams] = useState([]);
   const [localPreviewStream, setLocalPreviewStream] = useState(null);
   const [devices, setDevices] = useState({ audioInputs: [], videoInputs: [] });
+  const [preparingDevices, setPreparingDevices] = useState(false);
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState("");
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState("");
   const localStreamRef = useRef(null);
@@ -70,6 +72,7 @@ export function useWebRTC({ socket, room, user }) {
   const remoteIceQueuesRef = useRef(new Map());
   const createPeerRef = useRef(null);
   const joiningRef = useRef(false);
+  const deviceDiscoveryRef = useRef(null);
 
   const setCallMediaPermission = useCallback(async (active) => {
     const permissionApi = window.havyn?.callMedia?.setActive;
@@ -97,8 +100,7 @@ export function useWebRTC({ socket, room, user }) {
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     const items = await navigator.mediaDevices.enumerateDevices().catch(() => []);
-    const audioInputs = items.filter((device) => device.kind === "audioinput");
-    const videoInputs = items.filter((device) => device.kind === "videoinput");
+    const { audioInputs, videoInputs } = splitCallDevices(items);
     setDevices({ audioInputs, videoInputs });
     setSelectedAudioDeviceId((current) => current || audioInputs[0]?.deviceId || "");
     setSelectedVideoDeviceId((current) => current || videoInputs[0]?.deviceId || "");
@@ -125,6 +127,42 @@ export function useWebRTC({ socket, room, user }) {
     peersRef.current.delete(peerUserId);
     setStreams((items) => items.filter((item) => item.userId !== peerUserId));
   }, []);
+
+  const prepareDevices = useCallback(async () => {
+    if (joinedRef.current) {
+      await refreshDevices();
+      return true;
+    }
+    if (deviceDiscoveryRef.current) return deviceDiscoveryRef.current;
+
+    const discovery = (async () => {
+      setPreparingDevices(true);
+      setCallError("");
+      try {
+        const namedDevices = await discoverNamedCallDevices(
+          navigator.mediaDevices,
+          setCallMediaPermission
+        );
+        setDevices(namedDevices);
+        setSelectedAudioDeviceId((current) => current || namedDevices.audioInputs[0]?.deviceId || "");
+        setSelectedVideoDeviceId((current) => current || namedDevices.videoInputs[0]?.deviceId || "");
+        return true;
+      } catch (error) {
+        await refreshDevices();
+        setCallError(error?.message || "Device names could not be read before joining.");
+        return false;
+      } finally {
+        setPreparingDevices(false);
+      }
+    })();
+
+    deviceDiscoveryRef.current = discovery;
+    try {
+      return await discovery;
+    } finally {
+      deviceDiscoveryRef.current = null;
+    }
+  }, [refreshDevices, setCallMediaPermission]);
 
   const flushIceCandidates = useCallback((peerUserId) => {
     const candidates = iceCandidateQueuesRef.current.get(peerUserId) || [];
@@ -320,6 +358,7 @@ export function useWebRTC({ socket, room, user }) {
 
   async function joinCall() {
     if (joinedRef.current || joiningRef.current) return;
+    if (deviceDiscoveryRef.current) await deviceDiscoveryRef.current;
     joiningRef.current = true;
     setCallError("");
     notifyCall("Joining call...", 0);
@@ -575,6 +614,7 @@ export function useWebRTC({ socket, room, user }) {
     callError,
     callNotice,
     devices,
+    preparingDevices,
     selectedAudioDeviceId,
     selectedVideoDeviceId,
     localStream: localPreviewStream,
@@ -584,6 +624,8 @@ export function useWebRTC({ socket, room, user }) {
     toggleMute,
     toggleCamera,
     selectAudioDevice,
-    selectVideoDevice
+    selectVideoDevice,
+    refreshDevices,
+    prepareDevices
   };
 }

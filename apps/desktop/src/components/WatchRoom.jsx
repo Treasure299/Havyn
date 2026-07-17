@@ -332,7 +332,7 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     playbackRef.current = playback;
   }, [media, playback]);
 
-  const sharingBrowserRegion = screenShare.isHosting && ["browser-region", "browser-window-region"].includes(screenShare.captureMode);
+  const sharingBrowserRegion = screenShare.isHosting && ["browser-region", "browser-window-region", "browser-webframe"].includes(screenShare.captureMode);
   const showingLiveShare = Boolean(screenShare.localStream || screenShare.watching) && !sharingBrowserRegion;
 
   useEffect(() => {
@@ -918,9 +918,12 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           window.havyn?.screenShare?.cancel?.().catch(() => {});
         }}
         onStart={(selection) => {
-          const browserRect = document.querySelector(".viewing-stage .browser-frame")?.getBoundingClientRect();
+          const captureTarget = media.browser?.getCaptureTarget?.();
+          const browserRect = captureTarget?.bounds
+            || document.querySelector(".viewing-stage .browser-frame")?.getBoundingClientRect();
           return screenShare.startShare({
             ...selection,
+            browserWebContentsId: captureTarget?.webContentsId || null,
             browserRect: browserRect ? {
               x: browserRect.x,
               y: browserRect.y,

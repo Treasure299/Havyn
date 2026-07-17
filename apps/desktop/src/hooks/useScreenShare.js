@@ -250,7 +250,7 @@ export function useScreenShare({ socket, room, user, enabled, browser, detectedM
     window.setTimeout(() => { stoppingRef.current = false; }, 300);
   }, [closeAllPeers, isHost, room?.roomId, socket, stopLocalCapture, user.id]);
 
-  const startShare = useCallback(async ({ sourceId, withAudio, browserRect, theatreMode = true }) => {
+  const startShare = useCallback(async ({ sourceId, withAudio, browserRect, browserWebContentsId, theatreMode = true }) => {
     if (!enabled || !isHost || starting || isRoomLive) return false;
     setStarting(true);
     setError("");
@@ -269,7 +269,12 @@ export function useScreenShare({ socket, room, user, enabled, browser, detectedM
         });
         if (theatreActiveRef.current) await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
-      armedResult = await window.havyn?.screenShare?.selectSource?.(sourceId, withAudio, browserRect);
+      armedResult = await window.havyn?.screenShare?.selectSource?.(
+        sourceId,
+        withAudio,
+        browserRect,
+        browserWebContentsId
+      );
       const armed = armedResult === true || Boolean(armedResult?.armed);
       if (!armed) throw new Error("The selected screen is no longer available.");
       const sourceStream = await navigator.mediaDevices.getDisplayMedia({

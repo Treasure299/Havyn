@@ -215,6 +215,51 @@ export function useRoom(user) {
     const roomId = crypto.randomUUID().slice(0, 8).toUpperCase();
     const roomName = name || "Friday Watch";
     const visibility = options.visibility === "public" || options.isPublic ? "public" : "private";
+    const createdAt = new Date().toISOString();
+    const pendingRoom = {
+      roomId,
+      roomName,
+      hostUserId: user.id,
+      visibility,
+      playbackMode: "host-only",
+      playbackState: {
+        isPlaying: false,
+        currentTime: 0,
+        updatedAt: Date.now(),
+        playbackRate: 1,
+        activeMediaUrl: "",
+        activeMediaTitle: "",
+        controllerUserId: user.id,
+        sequence: 0
+      },
+      roomExperience: "synced-media",
+      liveShare: {
+        status: "idle",
+        shareId: null,
+        hostUserId: null,
+        hasAudio: false,
+        startedAt: null,
+        viewerUserIds: []
+      },
+      participants: [{
+        sessionId: `creating-${user.id}`,
+        userId: user.id,
+        displayName: user.displayName,
+        role: "host",
+        online: true,
+        mediaReady: false,
+        callStatus: "idle",
+        muted: false,
+        cameraOff: true,
+        joinedAt: createdAt,
+        lastSeenAt: createdAt
+      }],
+      createdAt,
+      revision: 0,
+      connectionState: "creating"
+    };
+    roomRef.current = pendingRoom;
+    setRoom(pendingRoom);
     socket.emit("room-create", {
       roomId,
       roomName,

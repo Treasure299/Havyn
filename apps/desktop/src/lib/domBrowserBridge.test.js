@@ -8,6 +8,14 @@ test("theatre bridge is safe before the embedded browser registers", async () =>
     reason: "browser-not-ready"
   });
   assert.equal(await domBrowserBridge.exitTheatre(), false);
+  assert.equal(domBrowserBridge.getCaptureTarget(), undefined);
+});
+
+test("exposes the embedded browser capture target", () => {
+  const target = { webContentsId: 42, bounds: { x: 8, y: 12, width: 900, height: 500 } };
+  const unregister = registerDomBrowser({ getCaptureTarget: () => target });
+  assert.deepEqual(domBrowserBridge.getCaptureTarget(), target);
+  unregister();
 });
 
 test("theatre bridge contains synchronous and asynchronous cleanup failures", async () => {

@@ -63,6 +63,7 @@ const childServer = http.createServer((_request, response) => {
 
 let parentServer;
 let window;
+let captureWindow;
 
 (async () => {
   process.env.HAVYN_SKIP_APP_BOOTSTRAP = "1";
@@ -70,19 +71,32 @@ let window;
     FRAME_DETECTOR_SCRIPT,
     enterWebviewTheatre,
     exitWebviewTheatre,
-    scanWebviewMedia
+    scanWebviewMedia,
+    setMainWindowForIntegrationTest
   } = await import("./main.js");
   const childPort = await listen(childServer);
   parentServer = http.createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(`<!doctype html><html><body><iframe src="http://127.0.0.1:${childPort}/player" style="width:700px;height:420px"></iframe></body></html>`);
+    response.end(`<!doctype html><html><body style="margin:24px">
+      <main id="page-shell" style="position:relative;width:920px;height:520px;overflow:hidden;transform:translateZ(0);contain:paint">
+        <section id="player-shell" style="position:relative;width:760px;height:460px;overflow:hidden;transform:scale(1)">
+          <iframe src="http://127.0.0.1:${childPort}/player" allow="fullscreen" style="width:700px;height:420px"></iframe>
+        </section>
+      </main>
+    </body></html>`);
   });
   const parentPort = await listen(parentServer);
+  const parentUrl = `http://127.0.0.1:${parentPort}/host`;
 
   await app.whenReady();
   window = new BrowserWindow({
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, webviewTag: true }
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: true,
+      disableHtmlFullscreenWindowResize: true
+    }
   });
   await window.loadURL("data:text/html,<html><body></body></html>");
 
@@ -94,7 +108,6 @@ let window;
   });
 
   const preloadUrl = pathToFileURL(path.join(__dirname, "browserPreload.js")).href;
-  const parentUrl = `http://127.0.0.1:${parentPort}/host`;
   await window.webContents.executeJavaScript(`
     window.__mediaEvents = [];
     const view = document.createElement('webview');
@@ -103,14 +116,46 @@ let window;
     view.preload = ${JSON.stringify(preloadUrl)};
     view.style.width = '760px';
     view.style.height = '480px';
-    view.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no');
+    view.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no,disableHtmlFullscreenWindowResize=yes');
     document.body.appendChild(view);
     true;
   `);
 
-  const guest = await waitFor(() => webContents.getAllWebContents().find((item) => item.getURL() === parentUrl));
+  const guest = await waitFor(() => webContents.getAllWebContents().find((item) => (
+    item.id !== window.webContents.id && item.getURL() === parentUrl
+  )));
   const childFrame = await waitFor(() => guest.mainFrame.frames.find((frame) => frame.url.includes(`:${childPort}/player`)));
   await waitFor(() => childFrame.executeJavaScript("Boolean(document.querySelector('video')?.srcObject)", true));
+
+  captureWindow = new BrowserWindow({
+    show: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false }
+  });
+  await captureWindow.loadURL(parentUrl);
+  captureWindow.webContents.session.setPermissionCheckHandler((requestingWebContents, permission) => (
+    requestingWebContents?.id === captureWindow.webContents.id && ["display-capture", "media"].includes(permission)
+  ));
+  captureWindow.webContents.session.setPermissionRequestHandler((requestingWebContents, permission, callback) => {
+    callback(requestingWebContents?.id === captureWindow.webContents.id && ["display-capture", "media"].includes(permission));
+  });
+  captureWindow.webContents.session.setDisplayMediaRequestHandler((_request, callback) => {
+    callback({ video: guest.mainFrame });
+  });
+  const embeddedCapture = await captureWindow.webContents.executeJavaScript(`
+    (async () => {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const track = stream.getVideoTracks()[0];
+      const result = { kind: track?.kind, readyState: track?.readyState };
+      stream.getTracks().forEach((item) => item.stop());
+      return result;
+    })()
+  `, true);
+  assert.deepEqual(embeddedCapture, { kind: "video", readyState: "live" }, "The embedded browser frame must be directly capturable");
+  captureWindow.destroy();
+  captureWindow = null;
+
+  guest.session.setPermissionCheckHandler((_contents, permission) => permission === "fullscreen");
+  guest.session.setPermissionRequestHandler((_contents, permission, callback) => callback(permission === "fullscreen"));
 
   guest.on("console-message", async (details) => {
     const message = details?.message || "";
@@ -153,6 +198,28 @@ let window;
   assert.equal(playEvent.sourceFrameUrl, `http://127.0.0.1:${childPort}/player`);
   assert.equal(playEvent.controlledByHavyn, false);
   assert.equal(await childFrame.executeJavaScript("window.siteSurfaceClickCount", true), 1);
+
+  const windowBoundsBeforeNativeFullscreen = window.getBounds();
+  let nativeFullscreenEntered = false;
+  guest.once("enter-html-full-screen", () => { nativeFullscreenEntered = true; });
+  const nativeFullscreenResult = await childFrame.executeJavaScript(
+    "document.querySelector('#player').requestFullscreen().then(() => true)",
+    true
+  );
+  assert.equal(nativeFullscreenResult, true, "A child player should be allowed to request native HTML fullscreen");
+  await waitFor(() => nativeFullscreenEntered);
+  assert.equal(
+    await childFrame.executeJavaScript("document.fullscreenElement?.id", true),
+    "player",
+    "Native HTML fullscreen should retain the embedded player"
+  );
+  assert.deepEqual(
+    window.getBounds(),
+    windowBoundsBeforeNativeFullscreen,
+    "HTML fullscreen must stay inside Havyn instead of resizing the desktop window"
+  );
+  await childFrame.executeJavaScript("document.exitFullscreen()", true);
+  await waitFor(() => childFrame.executeJavaScript("!document.fullscreenElement", true));
 
   await clickSurface();
   const events = await waitFor(async () => {
@@ -239,21 +306,88 @@ let window;
 
   const originalPlayerStyle = await childFrame.executeJavaScript("document.querySelector('#player').getAttribute('style')", true);
   const originalFrameStyle = await guest.mainFrame.executeJavaScript("document.querySelector('iframe').getAttribute('style')", true);
+  const originalBodyStyle = await guest.mainFrame.executeJavaScript("document.body.getAttribute('style')", true);
   const theatreResult = await enterWebviewTheatre(guest.id, normalizedMedia[0]);
   assert.equal(theatreResult.ok, true, "The selected child-frame player should enter Theatre mode");
   assert.equal(await childFrame.executeJavaScript("getComputedStyle(document.querySelector('#player')).position", true), "fixed");
-  assert.equal(await guest.mainFrame.executeJavaScript("getComputedStyle(document.querySelector('iframe')).position", true), "fixed");
+  assert.notEqual(await guest.mainFrame.executeJavaScript("getComputedStyle(document.body).transform", true), "none");
+  const expandedFrameRect = await guest.mainFrame.executeJavaScript(`
+    (() => {
+      const rect = document.querySelector('iframe').getBoundingClientRect();
+      return { width: rect.width, height: rect.height, viewportWidth: innerWidth, viewportHeight: innerHeight };
+    })()
+  `, true);
+  assert.ok(expandedFrameRect.width >= expandedFrameRect.viewportWidth * 0.95, "Theatre frame must fill the transformed host page width");
+  assert.ok(expandedFrameRect.height >= expandedFrameRect.viewportHeight * 0.95, "Theatre frame must fill the transformed host page height");
+  await childFrame.executeJavaScript("document.querySelector('#player').style.setProperty('position', 'absolute', 'important')", true);
+  await guest.mainFrame.executeJavaScript("document.body.style.setProperty('transform', 'none', 'important')", true);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(
+    await childFrame.executeJavaScript("getComputedStyle(document.querySelector('#player')).position", true),
+    "fixed",
+    "Theatre mode should survive player scripts that overwrite the expanded layout"
+  );
+  assert.equal(
+    await guest.mainFrame.executeJavaScript("getComputedStyle(document.body).transform === 'none'", true),
+    false,
+    "Theatre mode should keep the selected player viewport focused"
+  );
+  await guest.mainFrame.executeJavaScript(`
+    (() => {
+      const current = document.querySelector('iframe');
+      const replacement = document.createElement('iframe');
+      replacement.src = current.src;
+      replacement.setAttribute('style', ${JSON.stringify(originalFrameStyle)});
+      current.replaceWith(replacement);
+      return true;
+    })();
+  `, true);
+  const replacementChildFrame = await waitFor(() => (
+    guest.mainFrame.frames.find((frame) => !frame.detached && frame.url.includes(`:${childPort}/player`))
+  ));
+  await waitFor(() => replacementChildFrame.executeJavaScript("Boolean(document.querySelector('video')?.srcObject)", true));
+  await waitFor(async () => (
+    await guest.mainFrame.executeJavaScript("getComputedStyle(document.body).transform !== 'none'", true)
+    && await replacementChildFrame.executeJavaScript("getComputedStyle(document.querySelector('#player')).position", true) === "fixed"
+  ));
   await exitWebviewTheatre(guest.id);
-  assert.equal(await childFrame.executeJavaScript("document.querySelector('#player').getAttribute('style')", true), originalPlayerStyle);
+  assert.equal(await replacementChildFrame.executeJavaScript("document.querySelector('#player').getAttribute('style')", true), originalPlayerStyle);
   assert.equal(await guest.mainFrame.executeJavaScript("document.querySelector('iframe').getAttribute('style')", true), originalFrameStyle);
+  assert.equal(await guest.mainFrame.executeJavaScript("document.body.getAttribute('style')", true), originalBodyStyle);
 
-  console.log("Native child-frame controls, playback commands, and Theatre restoration passed end to end.");
+  setMainWindowForIntegrationTest(window);
+  const overlayResult = await enterWebviewTheatre(guest.id, {
+    ...normalizedMedia[0],
+    browserBounds: { x: 12, y: 18, width: 760, height: 480 }
+  });
+  assert.equal(overlayResult.ok, true, "The real webview path should create a player-only Theatre overlay");
+  assert.equal(overlayResult.overlay, true, "Cross-origin players must use the compositor-safe overlay path");
+  const overlayContents = webContents.fromId(overlayResult.overlayWebContentsId);
+  assert.ok(overlayContents && !overlayContents.isDestroyed(), "The Theatre overlay must remain attached while sharing");
+  assert.equal(overlayContents.getURL(), normalizedMedia[0].frameUrl, "The overlay should load only the detected player URL");
+  assert.equal(guest.isAudioMuted(), true, "The source page must be muted while the player-only overlay owns audio");
+  const overlayMedia = await waitFor(async () => {
+    const detected = await scanWebviewMedia(overlayContents.id);
+    return detected.length ? detected : null;
+  });
+  assert.ok(overlayMedia.length > 0, "The player-only overlay must retain media detection");
+  await exitWebviewTheatre(guest.id);
+  assert.equal(Boolean(webContents.fromId(overlayResult.overlayWebContentsId)), false, "The overlay should be destroyed on Theatre exit");
+  assert.equal(guest.isAudioMuted(), false, "The source page audio state must be restored on Theatre exit");
+  setMainWindowForIntegrationTest(null);
+
+  console.log("Native child-frame controls, playback commands, Theatre overlay, and restoration passed end to end.");
   app.exit(0);
 })().catch((error) => {
   console.error(error);
   app.exit(1);
 }).finally(() => {
+  try {
+    // The integration-only window hook must not retain a destroyed window.
+    process.env.HAVYN_SKIP_APP_BOOTSTRAP = "1";
+  } catch {}
   window?.destroy();
+  captureWindow?.destroy();
   parentServer?.close();
   childServer.close();
 });

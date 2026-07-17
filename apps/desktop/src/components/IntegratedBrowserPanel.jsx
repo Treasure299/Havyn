@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Compass, ExternalLink, Film, FolderPlus, Plus, Puzzle, Radar, RefreshCw, RotateCw, Shield, X } from "lucide-react";
 import { domBrowserEvents, registerDomBrowser } from "../lib/domBrowserBridge";
+import { getAttachedWebContentsId } from "../lib/webviewLifecycle";
 import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "../../electron/playbackEventClassifier.js";
 
 function normalizeUrl(value) {
@@ -239,6 +240,22 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   const frameRef = useRef(null);
   const iframeRef = useRef(null);
   const webviewRef = useRef(null);
+  const theatreActiveRef = useRef(false);
+
+  const getDomWebContentsId = useCallback(() => {
+    return getAttachedWebContentsId(webviewRef.current);
+  }, []);
+
+  const getDomBrowserBounds = useCallback(() => {
+    const rect = webviewRef.current?.getBoundingClientRect?.();
+    if (!rect) return null;
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  }, []);
   const [url, setUrl] = useState("https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html");
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewBlocked, setPreviewBlocked] = useState(false);
@@ -303,7 +320,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
   const scanDomMedia = useCallback(async () => {
     const webview = webviewRef.current;
     if (!webview) return [];
-    const webContentsId = webview.getWebContentsId?.();
+    const webContentsId = getDomWebContentsId();
     const frameMedia = webContentsId
       ? await window.havyn?.browser?.scanWebviewMedia?.(webContentsId).catch(() => [])
       : [];
@@ -319,14 +336,14 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       domBrowserEvents.mediaDetected(normalized);
     }
     return normalized;
-  }, [onWebMediaDetected]);
+  }, [getDomWebContentsId, onWebMediaDetected]);
 
   useEffect(() => {
     if (!useDomWebview) return undefined;
     const webview = webviewRef.current;
     if (!webview) return undefined;
     const registerWebview = () => {
-      const webContentsId = webview.getWebContentsId?.();
+      const webContentsId = getDomWebContentsId();
       if (webContentsId) window.havyn?.browser?.registerWebview?.(webContentsId).catch(() => {});
     };
     const installDetector = () => {
@@ -384,7 +401,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       webview.removeEventListener("new-window", blockPopup);
       webview.removeEventListener("did-create-window", blockPopup);
     };
-  }, [activeTabId, onWebMediaDetected, onWebMediaEvent, preloadUrl, scanDomMedia, url, useDomWebview]);
+  }, [activeTabId, getDomWebContentsId, onWebMediaDetected, onWebMediaEvent, preloadUrl, scanDomMedia, url, useDomWebview]);
 
   useEffect(() => {
     if (!useDomWebview) return undefined;
@@ -402,6 +419,25 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       removeEvent?.();
     };
   }, [onWebMediaDetected, onWebMediaEvent, useDomWebview]);
+
+  useLayoutEffect(() => {
+    if (!useDomWebview || !webviewRef.current) return undefined;
+    const updateTheatreBounds = () => {
+      if (!theatreActiveRef.current) return;
+      const webContentsId = getDomWebContentsId();
+      const bounds = getDomBrowserBounds();
+      if (webContentsId && bounds) {
+        window.havyn?.browser?.setWebviewTheatreBounds?.(webContentsId, bounds).catch(() => false);
+      }
+    };
+    const observer = new ResizeObserver(updateTheatreBounds);
+    observer.observe(webviewRef.current);
+    window.addEventListener("resize", updateTheatreBounds);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateTheatreBounds);
+    };
+  }, [getDomBrowserBounds, getDomWebContentsId, useDomWebview]);
 
   useEffect(() => {
     if (!useDomWebview) return undefined;
@@ -447,8 +483,12 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
         return { activeTabId: nextActive, tabs: nextTabs };
       },
       scanMedia: scanDomMedia,
+      getCaptureTarget: () => ({
+        webContentsId: getDomWebContentsId(),
+        bounds: getDomBrowserBounds()
+      }),
       applyPlayback: async (state) => {
-        const webContentsId = webviewRef.current?.getWebContentsId?.();
+        const webContentsId = getDomWebContentsId();
         const appliedInFrame = webContentsId
           ? await window.havyn?.browser?.applyWebviewPlayback?.(webContentsId, state).catch(() => false)
           : false;
@@ -456,18 +496,24 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
         return webviewRef.current?.executeJavaScript(`window.__havynApplyPlayback?.(${JSON.stringify(state)})`, true).catch(() => false);
       },
       enterTheatre: async (selection) => {
-        const webContentsId = webviewRef.current?.getWebContentsId?.();
+        const webContentsId = getDomWebContentsId();
         if (!webContentsId) return { ok: false, reason: "browser-unavailable" };
         try {
-          return await window.havyn?.browser?.enterWebviewTheatre?.(webContentsId, selection)
-            || { ok: false, reason: "theatre-unavailable" };
+          const result = await window.havyn?.browser?.enterWebviewTheatre?.(webContentsId, {
+            ...selection,
+            browserBounds: getDomBrowserBounds()
+          }) || { ok: false, reason: "theatre-unavailable" };
+          theatreActiveRef.current = Boolean(result?.ok);
+          return result;
         } catch {
+          theatreActiveRef.current = false;
           return { ok: false, reason: "theatre-failed" };
         }
       },
       exitTheatre: async () => {
-        const webContentsId = webviewRef.current?.getWebContentsId?.();
+        const webContentsId = getDomWebContentsId();
         if (!webContentsId) return false;
+        theatreActiveRef.current = false;
         try {
           return await window.havyn?.browser?.exitWebviewTheatre?.(webContentsId) || false;
         } catch {
@@ -483,7 +529,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       getAdBlockState: () => window.havyn?.browser?.getAdBlockState?.() || { enabled: false }
     });
     return () => {
-      const webContentsId = webviewRef.current?.getWebContentsId?.();
+      const webContentsId = getDomWebContentsId();
       if (webContentsId) {
         void (async () => {
           try {
@@ -495,7 +541,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
       }
       unregister();
     };
-  }, [activeTabId, emitTabs, scanDomMedia, tabs, useDomWebview]);
+  }, [activeTabId, emitTabs, getDomBrowserBounds, getDomWebContentsId, scanDomMedia, tabs, useDomWebview]);
 
   useEffect(() => {
     if (currentUrl) setUrl(currentUrl);
@@ -733,7 +779,7 @@ export default function IntegratedBrowserPanel({ browser, currentUrl, onLoadUrl,
             src="about:blank"
             preload={preloadUrl}
             partition={webviewPartition}
-            webpreferences="contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no,backgroundThrottling=no"
+            webpreferences="contextIsolation=yes,nodeIntegration=no,nodeIntegrationInSubFrames=yes,sandbox=no,backgroundThrottling=no,disableHtmlFullscreenWindowResize=yes"
           />
         )}
         {!browser && previewUrl && (

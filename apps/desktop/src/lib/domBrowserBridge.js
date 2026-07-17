@@ -34,6 +34,7 @@ export const domBrowserBridge = {
   switchTab: (tabId) => handlers.switchTab?.(tabId),
   closeTab: (tabId) => handlers.closeTab?.(tabId),
   scanMedia: () => handlers.scanMedia?.(),
+  getCaptureTarget: () => handlers.getCaptureTarget?.(),
   applyPlayback: (state) => handlers.applyPlayback?.(state),
   enterTheatre: async (selection) => {
     try {

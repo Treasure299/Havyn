@@ -6,7 +6,12 @@ contextBridge.exposeInMainWorld("havyn", {
   },
   screenShare: {
     getSources: () => ipcRenderer.invoke("screen-share:get-sources"),
-    selectSource: (sourceId, withAudio, browserRect) => ipcRenderer.invoke("screen-share:select-source", { sourceId, withAudio, browserRect }),
+    selectSource: (sourceId, withAudio, browserRect, browserWebContentsId) => ipcRenderer.invoke("screen-share:select-source", {
+      sourceId,
+      withAudio,
+      browserRect,
+      browserWebContentsId
+    }),
     cancel: () => ipcRenderer.invoke("screen-share:cancel")
   },
   diagnostics: {
@@ -42,6 +47,7 @@ contextBridge.exposeInMainWorld("havyn", {
     scanWebviewMedia: (webContentsId) => ipcRenderer.invoke("browser:scan-webview-media", webContentsId),
     applyWebviewPlayback: (webContentsId, state) => ipcRenderer.invoke("browser:apply-webview-playback", webContentsId, state),
     enterWebviewTheatre: (webContentsId, selection) => ipcRenderer.invoke("browser:enter-webview-theatre", webContentsId, selection),
+    setWebviewTheatreBounds: (webContentsId, bounds) => ipcRenderer.invoke("browser:set-webview-theatre-bounds", webContentsId, bounds),
     exitWebviewTheatre: (webContentsId) => ipcRenderer.invoke("browser:exit-webview-theatre", webContentsId),
     applyPlayback: (state) => ipcRenderer.invoke("browser:apply-playback", state),
     scanMedia: () => ipcRenderer.invoke("browser:scan-media"),
