@@ -1,5 +1,6 @@
 import { ipcRenderer } from "electron";
 import { createRemotePlaybackExpectation, matchesRemotePlaybackEvent } from "./playbackEventClassifier.js";
+import { protectedPlaybackService } from "./protectedPlaybackAdapter.js";
 
 const tabIdArg = globalThis.process?.argv?.find((arg) => arg.startsWith("--havyn-tab-id="));
 const tabId = tabIdArg?.split("=")[1] || "unknown";
@@ -310,6 +311,16 @@ async function applyPlayback(state = {}) {
   };
   const { action, currentTime, playbackRate } = command;
   if (command.__havynCommandId !== playbackCommandSequence) return false;
+  const protectedService = protectedPlaybackService(window.location.href);
+  if (protectedService) {
+    // The main-world detector owns protected playback. The isolated preload
+    // must never duplicate its command by mutating the DRM video element.
+    diagnostic("protected-playback-delegated", {
+      service: protectedService,
+      action: action || "sync"
+    });
+    return false;
+  }
   const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
   if (!video) {
     diagnostic("playback-command-no-video", { action: command.action || "sync" });

@@ -8,6 +8,11 @@ import { resolveEmbeddedCaptureSource, streamsForCaptureSelection } from "./disp
 import { createScreenSharePermissionGate } from "./screenSharePermission.js";
 import { canGrantEmbeddedBrowserPermission } from "./browserPermissionPolicy.js";
 import { initializeWidevineRuntime } from "./widevineRuntime.js";
+import {
+  applyNetflixPlayback,
+  applyProtectedHtml5Playback,
+  protectedPlaybackService
+} from "./protectedPlaybackAdapter.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -33,6 +38,9 @@ export function setMainWindowForIntegrationTest(nextWindow) {
   mainWindow = nextWindow || null;
 }
 const createRemotePlaybackExpectationSource = createRemotePlaybackExpectation.toString();
+const protectedPlaybackServiceSource = protectedPlaybackService.toString();
+const applyNetflixPlaybackSource = applyNetflixPlayback.toString();
+const applyProtectedHtml5PlaybackSource = applyProtectedHtml5Playback.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 // Keep diagnostics available in tester builds until the watch-room behavior is
 // signed off. Set HAVYN_DIAGNOSTICS=0 only when shipping a build without logs.
@@ -108,6 +116,9 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   let lastMediaEvent = null;
   const createRemotePlaybackExpectation = ${createRemotePlaybackExpectationSource};
   const matchesRemotePlaybackEvent = ${matchesRemotePlaybackEventSource};
+  const protectedPlaybackService = ${protectedPlaybackServiceSource};
+  const applyNetflixPlayback = ${applyNetflixPlaybackSource};
+  const applyProtectedHtml5Playback = ${applyProtectedHtml5PlaybackSource};
   let remotePlaybackExpectation = null;
   let pendingPlayback = null;
   let playbackRetryTimer = null;
@@ -610,6 +621,24 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     const { action, currentTime, playbackRate } = command;
     if (command.__havynCommandId !== playbackCommandSequence) return false;
     const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
+    const protectedService = protectedPlaybackService(window.location.href);
+    if (protectedService) {
+      remotePlaybackExpectation = createRemotePlaybackExpectation({ action, currentTime, playbackRate });
+      const result = protectedService === "netflix"
+        ? await applyNetflixPlayback(window, command, video)
+        : await applyProtectedHtml5Playback(command, video);
+      diagnostic("protected-playback-command", {
+        service: protectedService,
+        action: action || "sync",
+        applied: Boolean(result?.applied),
+        reason: result?.reason || "",
+        sought: Boolean(result?.sought),
+        currentTime: result?.currentTime
+      });
+      if (!result?.applied && !["seek", "rate-change"].includes(action)) queuePlaybackRetry(command);
+      else pendingPlayback = null;
+      return Boolean(result?.applied);
+    }
     if (!video) {
       diagnostic("playback-command-no-video", { action: command.action || "sync" });
       queuePlaybackRetry(command);
