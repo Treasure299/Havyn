@@ -5,6 +5,7 @@ apps/desktop/dist/
 apps/desktop/release/
 apps/desktop/release-*/
 apps/desktop/release-cloudflare/
+apps/desktop/release-widevine/
 apps/windows/bin/
 apps/windows/obj/
 .env

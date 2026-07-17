@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, desktopCapturer, dialog, ipcMain, screen, session, shell, webContents } from "electron";
+import { app, BrowserWindow, WebContentsView, components, desktopCapturer, dialog, ipcMain, screen, session, shell, webContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { createCallMediaPermissionGate } from "./callMediaPermission.js";
 import { resolveEmbeddedCaptureSource, streamsForCaptureSelection } from "./displayMediaSelection.js";
 import { createScreenSharePermissionGate } from "./screenSharePermission.js";
 import { canGrantEmbeddedBrowserPermission } from "./browserPermissionPolicy.js";
+import { initializeWidevineRuntime } from "./widevineRuntime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -1922,8 +1923,11 @@ ipcMain.on("browser:media-event-from-page", (event, payload) => {
   }
 });
 
-if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(() => {
+if (process.env.HAVYN_SKIP_APP_BOOTSTRAP !== "1") app.whenReady().then(async () => {
   initializeDiagnosticLog();
+  await initializeWidevineRuntime(components, (result) => {
+    appendDiagnosticRecord({ scope: "widevine", event: "component-status", ...result });
+  });
   const canUseAppMedia = (requestingWebContents, permission) => {
     if (["display-capture", "screen-capture"].includes(permission)) {
       return requestingWebContents?.id === mainWindow?.webContents?.id;

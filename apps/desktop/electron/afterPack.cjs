@@ -16,9 +16,7 @@ function findRcedit(root) {
   return "";
 }
 
-exports.default = async function afterPack(context) {
-  if (context.electronPlatformName !== "win32") return;
-
+async function stampWindowsIcon(context) {
   const exePath = path.join(context.appOutDir, "Havyn.exe");
   const iconPath = path.join(context.packager.projectDir, "public", "brand", "havyn-icon.ico");
   const cacheRoot = path.join(process.env.LOCALAPPDATA || "", "electron-builder", "Cache", "winCodeSign");
@@ -38,4 +36,22 @@ exports.default = async function afterPack(context) {
       await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
     }
   }
+}
+
+function signAndVerifyWidevinePackage(context) {
+  if (process.env.HAVYN_VMP_SIGN !== "1") return;
+
+  const commonArgs = ["-3", "-m", "castlabs_evs.vmp", "--no-ask"];
+  console.log("[Havyn] Applying castLabs production VMP streaming signature...");
+  execFileSync("py", [...commonArgs, "sign-pkg", context.appOutDir], { stdio: "inherit" });
+  console.log("[Havyn] Verifying castLabs VMP signature...");
+  execFileSync("py", [...commonArgs, "verify-pkg", context.appOutDir], { stdio: "inherit" });
+}
+
+exports.default = async function afterPack(context) {
+  if (context.electronPlatformName !== "win32") return;
+
+  await stampWindowsIcon(context);
+  // VMP must be the final executable mutation on Windows.
+  signAndVerifyWidevinePackage(context);
 };
