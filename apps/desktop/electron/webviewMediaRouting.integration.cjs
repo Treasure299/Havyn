@@ -304,6 +304,22 @@ let captureWindow;
   await new Promise((resolve) => setTimeout(resolve, 1100));
   assert.equal(await childFrame.executeJavaScript("document.querySelector('video').paused", true), true);
 
+  // Ordinary HTML5 sites must remain stable across repeated room commands and
+  // must not inherit a stale retry or protected-player state.
+  const repeatedPlayback = await childFrame.executeJavaScript(`
+    (async () => {
+      const media = document.querySelector('video');
+      for (let index = 0; index < 10; index += 1) {
+        if (!await window.__havynApplyPlayback({ action: 'play', currentTime: 0, playbackRate: 1 })) return false;
+        if (media.paused) return false;
+        if (!await window.__havynApplyPlayback({ action: 'pause', currentTime: 0, playbackRate: 1 })) return false;
+        if (!media.paused) return false;
+      }
+      return true;
+    })()
+  `, true);
+  assert.equal(repeatedPlayback, true);
+
   const originalPlayerStyle = await childFrame.executeJavaScript("document.querySelector('#player').getAttribute('style')", true);
   const originalFrameStyle = await guest.mainFrame.executeJavaScript("document.querySelector('iframe').getAttribute('style')", true);
   const originalBodyStyle = await guest.mainFrame.executeJavaScript("document.body.getAttribute('style')", true);

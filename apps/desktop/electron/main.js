@@ -12,7 +12,11 @@ import {
   applyNetflixPlayback,
   applyProtectedHtml5Playback,
   classifyProtectedPlaybackTransition,
+  isProtectedPlaybackDiscontinuity,
   readNetflixPlaybackState,
+  selectNetflixPlaybackSession,
+  selectProtectedPlaybackVideo,
+  shouldDeduplicateProtectedTransition,
   protectedPlaybackService
 } from "./protectedPlaybackAdapter.js";
 
@@ -44,7 +48,11 @@ const protectedPlaybackServiceSource = protectedPlaybackService.toString();
 const applyNetflixPlaybackSource = applyNetflixPlayback.toString();
 const applyProtectedHtml5PlaybackSource = applyProtectedHtml5Playback.toString();
 const classifyProtectedPlaybackTransitionSource = classifyProtectedPlaybackTransition.toString();
+const isProtectedPlaybackDiscontinuitySource = isProtectedPlaybackDiscontinuity.toString();
 const readNetflixPlaybackStateSource = readNetflixPlaybackState.toString();
+const selectNetflixPlaybackSessionSource = selectNetflixPlaybackSession.toString();
+const selectProtectedPlaybackVideoSource = selectProtectedPlaybackVideo.toString();
+const shouldDeduplicateProtectedTransitionSource = shouldDeduplicateProtectedTransition.toString();
 const matchesRemotePlaybackEventSource = matchesRemotePlaybackEvent.toString();
 // Keep diagnostics available in tester builds until the watch-room behavior is
 // signed off. Set HAVYN_DIAGNOSTICS=0 only when shipping a build without logs.
@@ -112,7 +120,7 @@ function appendDiagnosticRecord(record = {}) {
 
 export const FRAME_DETECTOR_SCRIPT = String.raw`
 (() => {
-  const detectorVersion = "2.5.0-beta.3-protected-state";
+  const detectorVersion = "2.5.0-beta.4-protected-state-stable-session";
   if (window.__havynFrameDetectorInstalled && window.__havynFrameDetectorVersion === detectorVersion) {
     window.__havynScanMedia?.();
     return true;
@@ -123,10 +131,14 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   const createRemotePlaybackExpectation = ${createRemotePlaybackExpectationSource};
   const matchesRemotePlaybackEvent = ${matchesRemotePlaybackEventSource};
   const protectedPlaybackService = ${protectedPlaybackServiceSource};
+  const selectNetflixPlaybackSession = ${selectNetflixPlaybackSessionSource};
   const applyNetflixPlayback = ${applyNetflixPlaybackSource};
   const applyProtectedHtml5Playback = ${applyProtectedHtml5PlaybackSource};
   const classifyProtectedPlaybackTransition = ${classifyProtectedPlaybackTransitionSource};
+  const isProtectedPlaybackDiscontinuity = ${isProtectedPlaybackDiscontinuitySource};
   const readNetflixPlaybackState = ${readNetflixPlaybackStateSource};
+  const selectProtectedPlaybackVideo = ${selectProtectedPlaybackVideoSource};
+  const shouldDeduplicateProtectedTransition = ${shouldDeduplicateProtectedTransitionSource};
   let remotePlaybackExpectation = null;
   let pendingPlayback = null;
   let playbackRetryTimer = null;
@@ -136,6 +148,10 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   let lastTimeUpdateAt = 0;
   let protectedPlaybackSnapshots = new WeakMap();
   let protectedPlaybackPollTimer = null;
+  let protectedPlaybackSessionId = "";
+  let protectedPlaybackVideo = null;
+  let protectedPlaybackDocumentKey = window.location.origin + window.location.pathname;
+  let lastNativeProtectedEvent = null;
 
   const diagnostic = (event, details = {}) => {
     if (!window.__havynDiagnosticsEnabled) return;
@@ -525,18 +541,40 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     };
   };
 
-  const emitEvent = (eventName, video) => {
+  const emitEvent = (eventName, video, options = {}) => {
     if (eventName === "timeupdate" && Date.now() - lastTimeUpdateAt < 1000) return;
     if (eventName === "timeupdate") lastTimeUpdateAt = Date.now();
     const index = findVideos().indexOf(video);
     const media = describeVideo(video, index);
-    if (protectedPlaybackService(window.location.href)) {
-      protectedPlaybackSnapshots.set(video, {
-        currentTime: media.currentTime,
-        paused: media.paused,
-        playbackRate: media.playbackRate,
-        observedAt: Date.now()
-      });
+    const protectedService = protectedPlaybackService(window.location.href);
+    const playbackState = options.playbackState || null;
+    if (playbackState) {
+      media.currentTime = Number(playbackState.currentTime || 0);
+      media.paused = Boolean(playbackState.paused);
+      media.playbackRate = Number(playbackState.playbackRate || 1);
+    }
+    if (protectedService && options.source !== "poll") {
+      const snapshot = protectedService === "netflix"
+        ? readNetflixPlaybackState(window, video, Date.now(), protectedPlaybackSessionId)
+        : null;
+      if (snapshot) {
+        protectedPlaybackSessionId = snapshot.sessionId || protectedPlaybackSessionId;
+        protectedPlaybackSnapshots.set(video, snapshot);
+      } else {
+        protectedPlaybackSnapshots.set(video, {
+          currentTime: media.currentTime,
+          paused: media.paused,
+          playbackRate: media.playbackRate,
+          observedAt: Date.now()
+        });
+      }
+      if (["play", "pause", "seeking", "seeked"].includes(eventName)) {
+        lastNativeProtectedEvent = {
+          eventName,
+          currentTime: media.currentTime,
+          at: Date.now()
+        };
+      }
     }
     lastMediaEvent = {
       eventId: "frame:" + eventName + ":" + Date.now() + ":" + Math.random().toString(36).slice(2),
@@ -579,15 +617,21 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
   const pollProtectedPlayback = () => {
     const service = protectedPlaybackService(window.location.href);
     if (!service) return;
-    const videos = findVideos().filter((video) => video.readyState > 0);
-    const video = videos.sort((left, right) => (
-      (right.videoWidth || right.clientWidth || 0) * (right.videoHeight || right.clientHeight || 0) -
-      (left.videoWidth || left.clientWidth || 0) * (left.videoHeight || left.clientHeight || 0)
-    ))[0] || findVideos()[0];
+    const documentKey = window.location.origin + window.location.pathname;
+    if (documentKey !== protectedPlaybackDocumentKey) {
+      protectedPlaybackDocumentKey = documentKey;
+      protectedPlaybackSessionId = "";
+      protectedPlaybackVideo = null;
+      protectedPlaybackSnapshots = new WeakMap();
+      lastNativeProtectedEvent = null;
+    }
+    const videos = findVideos();
+    const video = selectProtectedPlaybackVideo(videos, protectedPlaybackVideo);
     if (!video) return;
+    protectedPlaybackVideo = video;
     const now = Date.now();
     const next = service === "netflix"
-      ? readNetflixPlaybackState(window, video, now)
+      ? readNetflixPlaybackState(window, video, now, protectedPlaybackSessionId)
       : {
           currentTime: Number(video.currentTime || 0),
           paused: Boolean(video.paused),
@@ -595,18 +639,37 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
           observedAt: now
         };
     if (!next) return;
+    if (service === "netflix") protectedPlaybackSessionId = next.sessionId || protectedPlaybackSessionId;
     const previous = protectedPlaybackSnapshots.get(video);
-    protectedPlaybackSnapshots.set(video, next);
     const transition = classifyProtectedPlaybackTransition(previous, next);
+    if (isProtectedPlaybackDiscontinuity(previous, next)) {
+      diagnostic("protected-playback-discontinuity-ignored", {
+        service,
+        sessionId: next.sessionId || "",
+        previous,
+        next
+      });
+      return;
+    }
+    protectedPlaybackSnapshots.set(video, next);
     if (!transition) return;
+    if (shouldDeduplicateProtectedTransition(transition, lastNativeProtectedEvent, now)) {
+      diagnostic("protected-playback-transition-deduplicated", {
+        service,
+        eventName: transition.eventName,
+        sessionId: next.sessionId || ""
+      });
+      return;
+    }
     diagnostic("protected-playback-transition", {
       service,
       eventName: transition.eventName,
+      sessionId: next.sessionId || "",
       previous,
       next
     });
-    if (transition.eventName === "seeked") emitEvent("seeking", video);
-    emitEvent(transition.eventName, video);
+    if (transition.eventName === "seeked") emitEvent("seeking", video, { source: "poll", playbackState: next });
+    emitEvent(transition.eventName, video, { source: "poll", playbackState: next });
   };
 
   if (window.__havynProtectedPlaybackPollTimer) clearInterval(window.__havynProtectedPlaybackPollTimer);
@@ -675,8 +738,12 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
     };
     const { action, currentTime, playbackRate } = command;
     if (command.__havynCommandId !== playbackCommandSequence) return false;
-    const video = findVideos().find((item) => item.readyState > 0) || findVideos()[0];
     const protectedService = protectedPlaybackService(window.location.href);
+    const detectedVideos = findVideos();
+    const video = protectedService
+      ? selectProtectedPlaybackVideo(detectedVideos, protectedPlaybackVideo)
+      : detectedVideos.find((item) => item.readyState > 0) || detectedVideos[0];
+    if (protectedService && video) protectedPlaybackVideo = video;
     if (protectedService) {
       remotePlaybackExpectation = createRemotePlaybackExpectation(
         { action, currentTime, playbackRate },
@@ -684,15 +751,19 @@ export const FRAME_DETECTOR_SCRIPT = String.raw`
         4000
       );
       const result = protectedService === "netflix"
-        ? await applyNetflixPlayback(window, command, video)
+        ? await applyNetflixPlayback(window, command, video, protectedPlaybackSessionId)
         : await applyProtectedHtml5Playback(command, video);
+      if (protectedService === "netflix" && result?.sessionId) {
+        protectedPlaybackSessionId = result.sessionId;
+      }
       diagnostic("protected-playback-command", {
         service: protectedService,
         action: action || "sync",
         applied: Boolean(result?.applied),
         reason: result?.reason || "",
         sought: Boolean(result?.sought),
-        currentTime: result?.currentTime
+        currentTime: result?.currentTime,
+        sessionId: result?.sessionId || ""
       });
       if (!result?.applied && !["seek", "rate-change"].includes(action)) queuePlaybackRetry(command);
       else pendingPlayback = null;
