@@ -559,6 +559,13 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
     });
   }, [room.roomId]);
 
+  useEffect(() => {
+    const initialUrl = room.initialBrowserUrl;
+    if (!initialUrl || room.roomExperience === "live-share") return;
+    beginManualBrowsing(initialUrl);
+    media.loadUrl(initialUrl).finally(() => roomState.clearInitialBrowserUrl?.());
+  }, [beginManualBrowsing, media, room.initialBrowserUrl, room.roomExperience, roomState]);
+
   const resyncToRoom = useCallback(async () => {
     if (room.roomExperience === "live-share") return;
     const state = playbackRef.current?.playbackState || room.playbackState;

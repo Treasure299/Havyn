@@ -11,6 +11,8 @@
     "room:dev": "npm --workspace apps/room-worker run dev",
     "room:test": "npm --workspace apps/room-worker run test",
     "room:check": "npm --workspace apps/room-worker run check",
+    "content:dev": "npm --workspace apps/content-worker run dev",
+    "content:check": "npm --workspace apps/content-worker run check",
     "dev": "concurrently \"npm:server\" \"npm:desktop\""
   },
   "workspaces": [

@@ -15,6 +15,7 @@
     "test:media-source": "node --test src/lib/mediaSource.test.js src/lib/playbackDelivery.test.js src/lib/callDeviceDiscovery.test.js src/lib/captureGeometry.test.js src/lib/domBrowserBridge.test.js src/lib/webviewLifecycle.test.js",
     "test:permissions": "node --test electron/browserPermissionPolicy.test.js electron/callMediaPermission.test.js electron/displayMediaSelection.test.js electron/screenSharePermission.test.js electron/widevineRuntime.test.js",
     "test:realtime": "node --test src/lib/cloudflareRealtimeSocket.test.js src/lib/playbackMaintenance.test.js",
+    "test:content": "node --test src/lib/contentCatalog.test.js",
     "test:webview-routing": "electron electron/webviewMediaRouting.integration.cjs",
     "test:widevine": "electron electron/widevineSmoke.cjs",
     "build": "vite build",

@@ -126,8 +126,16 @@ export function useRoom(user) {
           .update({ playback_mode: nextRoom.playbackMode, updated_at: new Date().toISOString() })
           .eq("id", nextRoom.roomId);
       }
-      roomRef.current = nextRoom;
-      setRoom(nextRoom);
+      const mergedRoom = nextRoom?.roomId && previousRoom?.roomId === nextRoom.roomId
+        ? {
+            ...nextRoom,
+            initialBrowserUrl: previousRoom.initialBrowserUrl || "",
+            discoveryMovie: previousRoom.discoveryMovie || null,
+            discoveryProvider: previousRoom.discoveryProvider || null
+          }
+        : nextRoom;
+      roomRef.current = mergedRoom;
+      setRoom(mergedRoom);
     };
     const handleMessage = (message) => {
       const messageKey = message?.id || `${message?.displayName || ""}:${message?.message || ""}:${message?.createdAt || ""}`;
@@ -258,6 +266,9 @@ export function useRoom(user) {
       revision: 0,
       connectionState: "creating"
     };
+    pendingRoom.initialBrowserUrl = String(options.initialUrl || "");
+    pendingRoom.discoveryMovie = options.discoveryMovie || null;
+    pendingRoom.discoveryProvider = options.provider || null;
     roomRef.current = pendingRoom;
     setRoom(pendingRoom);
     socket.emit("room-create", {
@@ -368,6 +379,15 @@ export function useRoom(user) {
     });
   }
 
+  function clearInitialBrowserUrl() {
+    setRoom((currentRoom) => {
+      if (!currentRoom?.initialBrowserUrl) return currentRoom;
+      const nextRoom = { ...currentRoom, initialBrowserUrl: "" };
+      roomRef.current = nextRoom;
+      return nextRoom;
+    });
+  }
+
   return {
     socket,
     room,
@@ -380,6 +400,7 @@ export function useRoom(user) {
     sendMessage,
     setPlaybackMode,
     setParticipantRole,
-    updatePlaybackSnapshot
+    updatePlaybackSnapshot,
+    clearInitialBrowserUrl
   };
 }

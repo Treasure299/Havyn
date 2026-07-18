@@ -1,4 +1,4 @@
-import { Check, Clock3, Globe2, HelpCircle, LogOut, Menu, Plus, Save, Send, Ticket, UserCircle2, UserPlus, Users, X } from "lucide-react";
+import { ArrowRight, Check, Clock3, Film, Globe2, HelpCircle, LogOut, Menu, Newspaper, Plus, Save, Send, Sparkles, UserCircle2, UserPlus, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDismissableLayer } from "../hooks/useDismissableLayer";
@@ -9,6 +9,9 @@ import JoinRoomForm from "./JoinRoomForm";
 import Logo from "./Logo";
 import NotificationBell from "./NotificationBell";
 import VersionNotice from "./VersionNotice";
+import MovieDiscoveryPage from "./MovieDiscoveryPage";
+import RecentNewsPage from "./RecentNewsPage";
+import { getRecentNews, getTrendingMovies } from "../lib/contentCatalog";
 
 function relativeTime(value) {
   if (!value) return "No recent activity";
@@ -27,12 +30,28 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   const [username, setUsername] = useState(user.username || "");
   const [usernameNote, setUsernameNote] = useState("");
   const [friendUsername, setFriendUsername] = useState("");
+  const [view, setView] = useState("home");
+  const [news, setNews] = useState([]);
+  const [trending, setTrending] = useState([]);
   const profileButtonRef = useRef(null);
   const profileMenuRef = useRef(null);
 
   useEffect(() => {
     setUsername(user.username || "");
   }, [user.username]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      getRecentNews({ limit: 6 }).catch(() => []),
+      getTrendingMovies({ limit: 6 }).catch(() => [])
+    ]).then(([newsItems, movieItems]) => {
+      if (!active) return;
+      setNews(newsItems);
+      setTrending(movieItems);
+    });
+    return () => { active = false; };
+  }, []);
 
   async function saveUsername(event) {
     event.preventDefault();
@@ -156,109 +175,127 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
     document.body
   ) : null;
 
+  const header = (
+    <header className="app-header dashboard-header">
+      <button className="dashboard-brand-button" type="button" onClick={() => setView("home")} title="Havyn home"><Logo /></button>
+      <div className="header-actions">
+        {view !== "home" && <button className="ghost-button dashboard-home-button" type="button" onClick={() => setView("home")}>Home</button>}
+        <div className="profile-menu-wrap guide-profile-target">
+          <button
+            ref={profileButtonRef}
+            className={`account-menu-button ${profileOpen ? "is-open" : ""}`}
+            type="button"
+            onClick={toggleProfile}
+            aria-haspopup="menu"
+            aria-expanded={profileOpen}
+            title="Account menu"
+          >
+            <UserCircle2 size={18} />
+            <Menu size={17} />
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+
+  if (view !== "home") {
+    return (
+      <main className="dashboard public-screen content-dashboard">
+        <BackgroundVideo />
+        {header}
+        {view === "news"
+          ? <RecentNewsPage onBack={() => setView("home")} />
+          : <MovieDiscoveryPage roomState={roomState} onBack={() => setView("home")} />}
+        {profileMenu}
+      </main>
+    );
+  }
+
   return (
     <main className="dashboard public-screen">
       <BackgroundVideo />
-      <header className="app-header">
-        <Logo />
-        <div className="header-actions">
-          <div className="profile-menu-wrap guide-profile-target">
-            <button
-              ref={profileButtonRef}
-              className={`account-menu-button ${profileOpen ? "is-open" : ""}`}
-              type="button"
-              onClick={toggleProfile}
-              aria-haspopup="menu"
-              aria-expanded={profileOpen}
-              title="Account menu"
-            >
-              <UserCircle2 size={18} />
-              <Menu size={17} />
-            </button>
-          </div>
-        </div>
-      </header>
+      {header}
 
-      <section className="dashboard-grid">
-        <div className="dashboard-copy">
+      <section className="dashboard-home">
+        <div className="dashboard-hero">
+          <span className="section-eyebrow">WATCH TOGETHER. ANYTIME. ANYWHERE.</span>
           <h1>Start a room.</h1>
-          <p>Create a room, join a code, or drop into a public watch already in motion.</p>
-          <button className="primary-button guide-create-target" onClick={() => setCreating(true)}><Plus size={18} /> Create room</button>
+          <p>Create a room, invite your friends, and enjoy movies, shows, and more together in real time.</p>
+          <div className="dashboard-hero-actions">
+            <button className="primary-button guide-create-target" onClick={() => setCreating(true)}><Plus size={18} /> Create room</button>
+            <span>or</span>
+            <div className="hero-join guide-join-target"><JoinRoomForm onJoin={roomState.joinRoom} /></div>
+          </div>
           {social.socialNote && <div className="social-note">{social.socialNote}</div>}
         </div>
 
-        <div className="glass dashboard-panel guide-join-target">
-          <Ticket size={24} />
-          <h2>Join by code</h2>
-          <JoinRoomForm onJoin={roomState.joinRoom} />
-        </div>
-
-        <div className="glass recent-panel friends-panel guide-friends-target">
-          <div className="panel-title-row">
-            <Users size={22} />
-            <h2>Friends</h2>
+        <section className="dashboard-section news-home-section">
+          <div className="dashboard-section-head">
+            <div><span className="section-eyebrow">WHAT'S HAPPENING</span><h2>Recent News</h2></div>
+            <button className="text-action" type="button" onClick={() => setView("news")}>View all <ArrowRight size={15} /></button>
           </div>
+          <div className="home-news-rail">
+            {news.length ? news.slice(0, 4).map((article, index) => (
+              <a className={`home-news-card ${index === 0 ? "featured" : ""}`} href={article.url} target="_blank" rel="noreferrer" key={article.id || article.url}>
+                {article.imageUrl ? <img src={article.imageUrl} alt="" /> : <span className="news-placeholder"><Newspaper size={26} /></span>}
+                <span className="home-news-shade" />
+                <span className="home-news-copy"><small>{article.category || "Entertainment"}</small><strong>{article.title}</strong><span>{article.source || "Havyn News"}</span></span>
+              </a>
+            )) : (
+              <button className="home-news-empty glass" type="button" onClick={() => setView("news")}><Newspaper size={24} /><span><strong>Recent entertainment news</strong><small>Connect the Havyn Content API to bring current releases, casting, and trailers here.</small></span><ArrowRight size={17} /></button>
+            )}
+          </div>
+        </section>
+
+        <section className="discovery-promo glass">
+          <div>
+            <span className="section-eyebrow">NEED A PICK?</span>
+            <h2>Don't know what to watch?</h2>
+            <p>Browse by genre, mood, rating, or runtime and start a room from the title you choose.</p>
+            <button className="primary-button" type="button" onClick={() => setView("discover")}><Sparkles size={17} /> Explore movies</button>
+          </div>
+          <div className="discovery-poster-stack" aria-hidden="true">
+            {trending.slice(0, 3).map((movie) => movie.posterUrl && <img src={movie.posterUrl} alt="" key={movie.id} />)}
+            {!trending.some((movie) => movie.posterUrl) && <span><Film size={38} /></span>}
+          </div>
+        </section>
+
+        <section className="dashboard-section guide-friends-target">
+          <div className="dashboard-section-head">
+            <div><span className="section-eyebrow">YOUR CIRCLE</span><h2>Friends online</h2></div>
+          </div>
+          <div className="friend-rail">
+            {social.friends.length ? social.friends.map((friend) => (
+              <article className="friend-rail-card glass" key={friend.userId}>
+                <span className="friend-avatar">{friend.avatarUrl ? <img src={friend.avatarUrl} alt="" /> : friend.displayName.slice(0, 1).toUpperCase()}<i className={friend.online ? "presence-dot online" : "presence-dot"} /></span>
+                <span><strong>{friend.displayName}</strong><small>{friend.online ? `@${friend.username} - online` : `@${friend.username} - ${relativeTime(friend.lastActiveAt)}`}</small></span>
+                <button className="icon-button" type="button" title="Invite to a room" onClick={() => inviteFriend(friend)}><Send size={16} /></button>
+              </article>
+            )) : <div className="friend-rail-empty glass"><Users size={20} /><span><strong>Your watch circle starts here</strong><small>Add friends from your account menu, then invite them into a room.</small></span></div>}
+          </div>
+        </section>
+
+        <section className="dashboard-section public-home-section guide-public-target">
+          <div className="dashboard-section-head"><div><span className="section-eyebrow">OPEN WATCHES</span><h2>Public rooms</h2></div></div>
+          <div className="public-room-rail">
+            {social.publicRooms.length ? social.publicRooms.map((room) => (
+              <article className="public-room-card glass" key={room.roomId}>
+                <span className="public-room-icon"><Globe2 size={21} /></span>
+                <span><strong>{room.roomName}</strong><small>{room.hostName} - {room.activeMediaTitle}</small><small><Clock3 size={12} /> {room.participantCount} watching</small></span>
+                <button className="secondary-button" type="button" onClick={() => roomState.joinRoom(room.roomId)}>Join</button>
+              </article>
+            )) : <div className="public-room-empty glass"><Globe2 size={28} /><strong>No public rooms are live yet.</strong><span>Check back later or invite some friends!</span></div>}
+          </div>
+        </section>
+
+        <details className="friend-tools glass">
+          <summary><UserPlus size={16} /> Add a friend</summary>
           <form className="friend-request-form" onSubmit={sendFriendRequest}>
             <UserPlus size={16} />
             <input value={friendUsername} onChange={(event) => setFriendUsername(event.target.value.toLowerCase())} placeholder="friend_username" />
             <button className="icon-button" type="submit" title="Send friend request"><Send size={15} /></button>
           </form>
-          {social.friendRequests.length > 0 && (
-            <div className="friend-requests">
-              {social.friendRequests.map((request) => (
-                <div className="friend-request-row" key={request.id}>
-                  <div>
-                    <strong>{request.displayName}</strong>
-                    <span>@{request.username}</span>
-                  </div>
-                  <button className="icon-button" type="button" title="Accept" onClick={() => social.acceptFriendRequest(request.id)}><Check size={15} /></button>
-                  <button className="icon-button" type="button" title="Decline" onClick={() => social.declineFriendRequest(request.id)}><X size={15} /></button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="friend-list-head">
-            <strong>Friends list</strong>
-            <span>{social.friends.length} friend{social.friends.length === 1 ? "" : "s"}</span>
-          </div>
-          <div className="social-list">
-            {social.friends.length ? social.friends.map((friend) => (
-              <div className="social-row" key={friend.userId}>
-                <i className={friend.online ? "presence-dot online" : "presence-dot"} />
-                <div>
-                  <strong>{friend.displayName}</strong>
-                  <span>{friend.online ? `@${friend.username} - online` : `@${friend.username} - ${relativeTime(friend.lastActiveAt)}`}</span>
-                </div>
-                <button className="icon-button" type="button" title="Invite to a room" onClick={() => inviteFriend(friend)}><Send size={16} /></button>
-              </div>
-            )) : (
-              <div className="empty-state compact-empty">
-                <Users size={22} />
-                <strong>No friends yet</strong>
-                <span>Send a request by username. Once accepted, their online status and last active time will show here.</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="glass recent-panel public-rooms-panel guide-public-target">
-          <div className="panel-title-row">
-            <Globe2 size={22} />
-            <h2>Public rooms</h2>
-          </div>
-          <div className="social-list">
-            {social.publicRooms.length ? social.publicRooms.map((room) => (
-              <div className="public-room-row" key={room.roomId}>
-                <div>
-                  <strong>{room.roomName}</strong>
-                  <span>{room.hostName} - {room.activeMediaTitle}</span>
-                  <small><Clock3 size={13} /> {relativeTime(room.lastSeenAt)} - {room.participantCount} watching</small>
-                </div>
-                <button className="secondary-button" type="button" onClick={() => roomState.joinRoom(room.roomId)}>Join</button>
-              </div>
-            )) : <p>No public rooms are live yet.</p>}
-          </div>
-        </div>
+        </details>
       </section>
 
       <InteractiveGuide
