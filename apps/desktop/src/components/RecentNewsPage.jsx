@@ -2,11 +2,11 @@ import { ArrowLeft, ArrowRight, Clock3, Newspaper } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { getRecentNews } from "../lib/contentCatalog";
 
-const categories = ["All", "Releases", "Casting", "Trailers", "Industry"];
+const categories = ["Releases", "Casting", "Trailers", "Industry"];
 
-function NewsCard({ article, featured = false }) {
+function NewsCard({ article, featured = false, onOpen }) {
   return (
-    <a className={`news-card ${featured ? "featured-news-card" : ""}`} href={article.url} target="_blank" rel="noreferrer">
+    <button className={`news-card ${featured ? "featured-news-card" : ""}`} type="button" onClick={() => onOpen(article)}>
       {article.imageUrl && <img src={article.imageUrl} alt="" />}
       <span className="news-card-shade" />
       <span className="news-card-copy">
@@ -16,11 +16,11 @@ function NewsCard({ article, featured = false }) {
         <span>{article.source} · {article.publishedLabel || "Recently"}</span>
       </span>
       <ArrowRight size={17} />
-    </a>
+    </button>
   );
 }
 
-export default function RecentNewsPage({ onBack }) {
+export default function RecentNewsPage({ onBack, onOpenArticle }) {
   const [articles, setArticles] = useState([]);
   const [category, setCategory] = useState("All");
   const [loading, setLoading] = useState(true);
@@ -38,6 +38,10 @@ export default function RecentNewsPage({ onBack }) {
   const visible = useMemo(() => category === "All"
     ? articles
     : articles.filter((item) => String(item.category || "").toLowerCase() === category.toLowerCase()), [articles, category]);
+  const availableCategories = useMemo(() => [
+    "All",
+    ...categories.filter((item) => articles.some((article) => String(article.category || "").toLowerCase() === item.toLowerCase()))
+  ], [articles]);
 
   return (
     <section className="content-page news-page">
@@ -50,15 +54,15 @@ export default function RecentNewsPage({ onBack }) {
         </div>
       </div>
       <div className="content-filter-tabs" role="tablist" aria-label="News categories">
-        {categories.map((item) => (
+        {availableCategories.map((item) => (
           <button className={category === item ? "active" : ""} type="button" role="tab" aria-selected={category === item} onClick={() => setCategory(item)} key={item}>{item}</button>
         ))}
       </div>
       {loading ? <div className="content-loading">Loading recent stories…</div> : visible.length ? (
         <div className="news-page-grid">
-          <NewsCard article={visible[0]} featured />
-          <div className="news-side-stack">{visible.slice(1, 3).map((item) => <NewsCard article={item} key={item.id || item.url} />)}</div>
-          <div className="news-card-grid">{visible.slice(3).map((item) => <NewsCard article={item} key={item.id || item.url} />)}</div>
+          <NewsCard article={visible[0]} featured onOpen={onOpenArticle} />
+          <div className="news-side-stack">{visible.slice(1, 3).map((item) => <NewsCard article={item} onOpen={onOpenArticle} key={item.id || item.url} />)}</div>
+          <div className="news-card-grid">{visible.slice(3).map((item) => <NewsCard article={item} onOpen={onOpenArticle} key={item.id || item.url} />)}</div>
         </div>
       ) : (
         <div className="content-empty glass">
@@ -67,8 +71,7 @@ export default function RecentNewsPage({ onBack }) {
           <span>Havyn will refresh this feed as new stories are published.</span>
         </div>
       )}
-      <div className="content-source-note"><Clock3 size={14} /> Headlines open on the original publisher’s website.</div>
+      <div className="content-source-note"><Clock3 size={14} /> Headlines open inside Havyn on the original publisher's website.</div>
     </section>
   );
 }
-

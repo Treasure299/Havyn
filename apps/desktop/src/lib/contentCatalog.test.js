@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { providerDestination } from "./contentCatalog.js";
+import { decodeContentText, providerDestination } from "./contentCatalog.js";
 
 test("uses a provider deep link when one is available", () => {
   assert.equal(providerDestination({ name: "Example", url: "https://example.com/watch/42" }, "Movie"), "https://example.com/watch/42");
@@ -13,4 +13,11 @@ test("builds safe provider search destinations for supported services", () => {
 
 test("returns no destination for unsupported providers", () => {
   assert.equal(providerDestination({ name: "Local cinema" }, "Arrival"), "");
+});
+
+test("decodes numeric and named entities in entertainment headlines", () => {
+  assert.equal(
+    decodeContentText("Nolan&#8217;s &#8220;Odyssey&#8221; &amp; more"),
+    "Nolan’s “Odyssey” & more"
+  );
 });

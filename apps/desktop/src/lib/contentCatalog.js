@@ -1,4 +1,6 @@
-const CONTENT_API_URL = String(import.meta.env?.VITE_CONTENT_API_URL || "").replace(/\/$/, "");
+const CONTENT_API_URL = String(
+  import.meta.env?.VITE_CONTENT_API_URL || "https://havyn-content.chijiokekosisochukwu.workers.dev"
+).replace(/\/$/, "");
 const TMDB_TOKEN = String(import.meta.env?.VITE_TMDB_API_TOKEN || "");
 const TMDB_API_URL = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_URL = "https://image.tmdb.org/t/p";
@@ -9,6 +11,18 @@ function buildQuery(params = {}) {
     if (value !== "" && value != null) query.set(key, String(value));
   });
   return query.toString();
+}
+
+export function decodeContentText(value = "") {
+  const named = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " " };
+  return String(value)
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_match, code) => {
+      const point = code.toLowerCase().startsWith("x")
+        ? Number.parseInt(code.slice(1), 16)
+        : Number.parseInt(code, 10);
+      return Number.isFinite(point) ? String.fromCodePoint(point) : "";
+    })
+    .replace(/&([a-z]+);/gi, (match, name) => named[name.toLowerCase()] ?? match);
 }
 
 async function fetchJson(url, options = {}) {
@@ -86,7 +100,13 @@ export function detectContentRegion() {
 
 export async function getRecentNews({ limit = 12 } = {}) {
   const payload = await contentFetch("/api/news", { limit }).catch(() => null);
-  return Array.isArray(payload?.items) ? payload.items : [];
+  return Array.isArray(payload?.items)
+    ? payload.items.map((article) => ({
+      ...article,
+      title: decodeContentText(article.title),
+      summary: decodeContentText(article.summary)
+    }))
+    : [];
 }
 
 export async function discoverMovies(filters = {}) {
@@ -186,4 +206,3 @@ export async function getGenres() {
 }
 
 export const contentCatalogConfigured = Boolean(CONTENT_API_URL || TMDB_TOKEN);
-

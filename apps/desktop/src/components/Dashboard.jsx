@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Clock3, Film, Globe2, HelpCircle, LogOut, Menu, Newspaper, Plus, Save, Send, Sparkles, UserCircle2, UserPlus, Users, X } from "lucide-react";
+import { ArrowRight, Check, Clock3, Film, Globe2, HelpCircle, LogOut, Menu, Newspaper, Plus, Save, Send, Sparkles, UserPlus, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDismissableLayer } from "../hooks/useDismissableLayer";
@@ -11,6 +11,7 @@ import NotificationBell from "./NotificationBell";
 import VersionNotice from "./VersionNotice";
 import MovieDiscoveryPage from "./MovieDiscoveryPage";
 import RecentNewsPage from "./RecentNewsPage";
+import NewsBrowserPage from "./NewsBrowserPage";
 import { getRecentNews, getTrendingMovies } from "../lib/contentCatalog";
 
 function relativeTime(value) {
@@ -33,6 +34,8 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   const [view, setView] = useState("home");
   const [news, setNews] = useState([]);
   const [trending, setTrending] = useState([]);
+  const [activeArticle, setActiveArticle] = useState(null);
+  const [profileMenuPosition, setProfileMenuPosition] = useState(null);
   const profileButtonRef = useRef(null);
   const profileMenuRef = useRef(null);
 
@@ -93,8 +96,32 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
 
   useDismissableLayer(profileOpen, [profileButtonRef, profileMenuRef], closeProfile);
 
+  const positionProfileMenu = useCallback(() => {
+    const rect = profileButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = 330;
+    setProfileMenuPosition({
+      top: Math.round(rect.bottom + 8),
+      left: Math.round(Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12)))
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!profileOpen) return undefined;
+    positionProfileMenu();
+    window.addEventListener("resize", positionProfileMenu);
+    return () => window.removeEventListener("resize", positionProfileMenu);
+  }, [profileOpen, positionProfileMenu]);
+
   function toggleProfile() {
+    if (!profileOpen) positionProfileMenu();
     setProfileOpen((value) => !value);
+  }
+
+  function openArticle(article) {
+    if (!article?.url) return;
+    setActiveArticle(article);
+    setView("article");
   }
 
   const dashboardGuideSteps = [
@@ -132,7 +159,7 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   ];
 
   const profileMenu = profileOpen ? createPortal(
-    <div ref={profileMenuRef} className="profile-popover account-popover glass" role="menu" aria-label="Account menu">
+    <div ref={profileMenuRef} className="profile-popover account-popover glass" style={profileMenuPosition ? { top: profileMenuPosition.top, left: profileMenuPosition.left, right: "auto" } : undefined} role="menu" aria-label="Account menu">
       <div className="profile-popover-head">
         <div>
           <strong>{user.displayName}</strong>
@@ -183,14 +210,13 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
         <div className="profile-menu-wrap guide-profile-target">
           <button
             ref={profileButtonRef}
-            className={`account-menu-button ${profileOpen ? "is-open" : ""}`}
+            className={`account-icon-button ${profileOpen ? "is-open" : ""}`}
             type="button"
             onClick={toggleProfile}
             aria-haspopup="menu"
             aria-expanded={profileOpen}
             title="Account menu"
           >
-            <UserCircle2 size={18} />
             <Menu size={17} />
           </button>
         </div>
@@ -203,9 +229,9 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
       <main className="dashboard public-screen content-dashboard">
         <BackgroundVideo />
         {header}
-        {view === "news"
-          ? <RecentNewsPage onBack={() => setView("home")} />
-          : <MovieDiscoveryPage roomState={roomState} onBack={() => setView("home")} />}
+        {view === "news" && <RecentNewsPage onBack={() => setView("home")} onOpenArticle={openArticle} />}
+        {view === "discover" && <MovieDiscoveryPage roomState={roomState} userId={user.id} onBack={() => setView("home")} />}
+        {view === "article" && <NewsBrowserPage article={activeArticle} onClose={() => setView("news")} />}
         {profileMenu}
       </main>
     );
@@ -236,11 +262,11 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
           </div>
           <div className="home-news-rail">
             {news.length ? news.slice(0, 4).map((article, index) => (
-              <a className={`home-news-card ${index === 0 ? "featured" : ""}`} href={article.url} target="_blank" rel="noreferrer" key={article.id || article.url}>
+              <button className={`home-news-card ${index === 0 ? "featured" : ""}`} type="button" onClick={() => openArticle(article)} key={article.id || article.url}>
                 {article.imageUrl ? <img src={article.imageUrl} alt="" /> : <span className="news-placeholder"><Newspaper size={26} /></span>}
                 <span className="home-news-shade" />
                 <span className="home-news-copy"><small>{article.category || "Entertainment"}</small><strong>{article.title}</strong><span>{article.source || "Havyn News"}</span></span>
-              </a>
+              </button>
             )) : (
               <button className="home-news-empty glass" type="button" onClick={() => setView("news")}><Newspaper size={24} /><span><strong>Recent entertainment news</strong><small>Connect the Havyn Content API to bring current releases, casting, and trailers here.</small></span><ArrowRight size={17} /></button>
             )}
@@ -273,6 +299,14 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
               </article>
             )) : <div className="friend-rail-empty glass"><Users size={20} /><span><strong>Your watch circle starts here</strong><small>Add friends from your account menu, then invite them into a room.</small></span></div>}
           </div>
+          <details className="friend-tools">
+            <summary><UserPlus size={14} /> Add a friend</summary>
+            <form className="friend-request-form glass" onSubmit={sendFriendRequest}>
+              <UserPlus size={16} />
+              <input value={friendUsername} onChange={(event) => setFriendUsername(event.target.value.toLowerCase())} placeholder="friend_username" />
+              <button className="icon-button" type="submit" title="Send friend request"><Send size={15} /></button>
+            </form>
+          </details>
         </section>
 
         <section className="dashboard-section public-home-section guide-public-target">
@@ -288,14 +322,6 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
           </div>
         </section>
 
-        <details className="friend-tools glass">
-          <summary><UserPlus size={16} /> Add a friend</summary>
-          <form className="friend-request-form" onSubmit={sendFriendRequest}>
-            <UserPlus size={16} />
-            <input value={friendUsername} onChange={(event) => setFriendUsername(event.target.value.toLowerCase())} placeholder="friend_username" />
-            <button className="icon-button" type="submit" title="Send friend request"><Send size={15} /></button>
-          </form>
-        </details>
       </section>
 
       <InteractiveGuide

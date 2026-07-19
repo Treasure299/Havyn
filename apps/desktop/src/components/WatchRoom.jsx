@@ -1,4 +1,4 @@
-import { Copy, FolderOpen, HelpCircle, LogOut, Maximize2, Menu, Minimize2, MonitorUp, UserCircle2 } from "lucide-react";
+import { Copy, FolderOpen, HelpCircle, LogOut, Maximize2, Menu, Minimize2, MonitorUp } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMediaDetection } from "../hooks/useMediaDetection";
@@ -716,14 +716,13 @@ export default function WatchRoom({ user, roomState, social, onSignOut }) {
           <button className="icon-button" onClick={roomState.leaveRoom} title="Leave room"><LogOut size={18} /></button>
           <button
             ref={roomMenuButtonRef}
-            className={`account-menu-button room-account-button ${roomMenuOpen ? "is-open" : ""}`}
+            className={`account-icon-button room-account-button ${roomMenuOpen ? "is-open" : ""}`}
             type="button"
             onClick={() => setRoomMenuOpen((value) => !value)}
             aria-haspopup="menu"
             aria-expanded={roomMenuOpen}
             title="Account menu"
           >
-            <UserCircle2 size={18} />
             <Menu size={17} />
           </button>
         </div>

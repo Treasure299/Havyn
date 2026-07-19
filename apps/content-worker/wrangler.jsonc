@@ -17,6 +17,9 @@
   "env": {
     "production": {
       "name": "havyn-content",
+      "secrets": {
+        "required": ["TMDB_API_TOKEN"]
+      },
       "vars": {
         "CLIENT_ORIGIN": "*",
         "NEWS_FEEDS": "https://variety.com/v/film/news/feed/,https://deadline.com/v/film/feed/"
