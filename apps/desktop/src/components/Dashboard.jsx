@@ -12,7 +12,7 @@ import VersionNotice from "./VersionNotice";
 import MovieDiscoveryPage from "./MovieDiscoveryPage";
 import RecentNewsPage from "./RecentNewsPage";
 import NewsBrowserPage from "./NewsBrowserPage";
-import { getRecentNews, getTrendingMovies } from "../lib/contentCatalog";
+import { getCachedHomeContent, refreshHomeContent } from "../lib/contentCatalog";
 
 function relativeTime(value) {
   if (!value) return "No recent activity";
@@ -25,6 +25,7 @@ function relativeTime(value) {
 }
 
 export default function Dashboard({ user, auth, roomState, social, onSignOut }) {
+  const cachedHomeContent = getCachedHomeContent();
   const [creating, setCreating] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(() => localStorage.getItem("havyn:guide:dashboard:v1") !== "done");
@@ -32,8 +33,8 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
   const [usernameNote, setUsernameNote] = useState("");
   const [friendUsername, setFriendUsername] = useState("");
   const [view, setView] = useState("home");
-  const [news, setNews] = useState([]);
-  const [trending, setTrending] = useState([]);
+  const [news, setNews] = useState(() => cachedHomeContent?.news || []);
+  const [trending, setTrending] = useState(() => cachedHomeContent?.trending || []);
   const [activeArticle, setActiveArticle] = useState(null);
   const [profileMenuPosition, setProfileMenuPosition] = useState(null);
   const profileButtonRef = useRef(null);
@@ -45,14 +46,11 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      getRecentNews({ limit: 6 }).catch(() => []),
-      getTrendingMovies({ limit: 6 }).catch(() => [])
-    ]).then(([newsItems, movieItems]) => {
+    refreshHomeContent({ newsLimit: 6, movieLimit: 6 }).then(({ news: newsItems, trending: movieItems }) => {
       if (!active) return;
       setNews(newsItems);
       setTrending(movieItems);
-    });
+    }).catch(() => {});
     return () => { active = false; };
   }, []);
 
@@ -263,7 +261,7 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
           <div className="home-news-rail">
             {news.length ? news.slice(0, 4).map((article, index) => (
               <button className={`home-news-card ${index === 0 ? "featured" : ""}`} type="button" onClick={() => openArticle(article)} key={article.id || article.url}>
-                {article.imageUrl ? <img src={article.imageUrl} alt="" /> : <span className="news-placeholder"><Newspaper size={26} /></span>}
+                {article.imageUrl ? <img src={article.imageUrl} alt="" decoding="async" fetchPriority={index === 0 ? "high" : "auto"} /> : <span className="news-placeholder"><Newspaper size={26} /></span>}
                 <span className="home-news-shade" />
                 <span className="home-news-copy"><small>{article.category || "Entertainment"}</small><strong>{article.title}</strong><span>{article.source || "Havyn News"}</span></span>
               </button>
@@ -281,7 +279,7 @@ export default function Dashboard({ user, auth, roomState, social, onSignOut }) 
             <button className="primary-button" type="button" onClick={() => setView("discover")}><Sparkles size={17} /> Explore movies</button>
           </div>
           <div className="discovery-poster-stack" aria-hidden="true">
-            {trending.slice(0, 3).map((movie) => movie.posterUrl && <img src={movie.posterUrl} alt="" key={movie.id} />)}
+            {trending.slice(0, 3).map((movie) => movie.posterUrl && <img src={movie.posterUrl} alt="" loading="lazy" decoding="async" key={movie.id} />)}
             {!trending.some((movie) => movie.posterUrl) && <span><Film size={38} /></span>}
           </div>
         </section>

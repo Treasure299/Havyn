@@ -4,6 +4,7 @@ const CONTENT_API_URL = String(
 const TMDB_TOKEN = String(import.meta.env?.VITE_TMDB_API_TOKEN || "");
 const TMDB_API_URL = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_URL = "https://image.tmdb.org/t/p";
+const HOME_CONTENT_CACHE_KEY = "havyn:content:home:v1";
 
 function buildQuery(params = {}) {
   const query = new URLSearchParams();
@@ -35,6 +36,26 @@ async function contentFetch(path, params = {}) {
   if (!CONTENT_API_URL) return null;
   const query = buildQuery(params);
   return fetchJson(`${CONTENT_API_URL}${path}${query ? `?${query}` : ""}`);
+}
+
+function readHomeContentCache() {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const cached = JSON.parse(localStorage.getItem(HOME_CONTENT_CACHE_KEY) || "null");
+    if (!cached || !Array.isArray(cached.news) || !Array.isArray(cached.trending)) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function writeHomeContentCache(payload) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(HOME_CONTENT_CACHE_KEY, JSON.stringify({ ...payload, cachedAt: Date.now() }));
+  } catch {
+    // A full or unavailable local cache should never block the dashboard.
+  }
 }
 
 async function tmdbFetch(path, params = {}) {
@@ -158,6 +179,34 @@ export async function getTrendingMovies({ region = detectContentRegion(), limit 
   if (payload?.items) return payload.items.map(normalizeMovie);
   const direct = await tmdbFetch("/trending/movie/week", { language: "en-US" });
   return (direct?.results || []).slice(0, limit).map(normalizeMovie);
+}
+
+export function getCachedHomeContent() {
+  return readHomeContentCache();
+}
+
+export async function refreshHomeContent({ newsLimit = 6, movieLimit = 6, region = detectContentRegion() } = {}) {
+  const combined = await contentFetch("/api/home", { newsLimit, movieLimit, region }).catch(() => null);
+  let newsItems;
+  let movieItems;
+
+  if (Array.isArray(combined?.news) && Array.isArray(combined?.trending)) {
+    newsItems = combined.news.map((article) => ({
+      ...article,
+      title: decodeContentText(article.title),
+      summary: decodeContentText(article.summary)
+    }));
+    movieItems = combined.trending.map(normalizeMovie);
+  } else {
+    [newsItems, movieItems] = await Promise.all([
+      getRecentNews({ limit: newsLimit }).catch(() => []),
+      getTrendingMovies({ region, limit: movieLimit }).catch(() => [])
+    ]);
+  }
+
+  const payload = { news: newsItems, trending: movieItems };
+  writeHomeContentCache(payload);
+  return payload;
 }
 
 export async function getMovieDetails(movieId, mediaType = "movie") {

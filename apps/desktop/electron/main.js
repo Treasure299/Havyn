@@ -33,6 +33,7 @@ const loadedExtensions = new Map();
 let adBlockDesired = true;
 let browserVisible = true;
 const registeredWebviews = new Set();
+const adBlockBypassedWebContents = new Set();
 const nativeHtmlFullscreenWebviews = new Set();
 const webviewTheatreSessions = new Map();
 let theatreOverlay = null;
@@ -895,7 +896,8 @@ function emitAdBlockState(url) {
   mainWindow?.webContents.send("browser:adblock-state", adBlockStateForUrl(url));
 }
 
-function shouldBlockRequest(url = "", resourceType = "") {
+function shouldBlockRequest(url = "", resourceType = "", webContentsId = 0) {
+  if (adBlockBypassedWebContents.has(Number(webContentsId))) return false;
   if (!adBlockDesired || isAdBlockBypassUrl(url)) return false;
   const adPatterns = [
     /(^|\.)doubleclick\.net\//i,
@@ -950,7 +952,7 @@ function shouldBlockRequest(url = "", resourceType = "") {
 
 function installRequestGuard() {
   browserSession().webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
-    callback({ cancel: shouldBlockRequest(details.url, details.resourceType) });
+    callback({ cancel: shouldBlockRequest(details.url, details.resourceType, details.webContentsId) });
   });
 }
 
@@ -1808,6 +1810,20 @@ ipcMain.handle("browser:toggle-adblock", async () => {
 
 ipcMain.handle("browser:get-adblock-state", () => adBlockStateForUrl());
 
+ipcMain.handle("browser:set-webview-adblock-bypass", (event, webContentsId, bypassed) => {
+  if (event.sender.id !== mainWindow?.webContents?.id) return false;
+  const id = Number(webContentsId);
+  const wc = webContents.fromId(id);
+  if (!wc || wc.session !== browserSession()) return false;
+  if (bypassed) {
+    adBlockBypassedWebContents.add(id);
+    wc.once("destroyed", () => adBlockBypassedWebContents.delete(id));
+  } else {
+    adBlockBypassedWebContents.delete(id);
+  }
+  return adBlockBypassedWebContents.has(id);
+});
+
 ipcMain.handle("diagnostics:is-enabled", () => diagnosticsEnabled);
 ipcMain.handle("diagnostics:get-path", () => diagnosticLogPath);
 ipcMain.handle("diagnostics:open-folder", () => {
@@ -2008,6 +2024,7 @@ ipcMain.handle("browser:register-webview", (_event, webContentsId) => {
   });
   wc.on("destroyed", () => {
     stopWebviewTheatreMaintenance(wc.id);
+    adBlockBypassedWebContents.delete(wc.id);
     nativeHtmlFullscreenWebviews.delete(wc.id);
     registeredWebviews.delete(wc.id);
   });

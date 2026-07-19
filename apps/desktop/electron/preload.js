@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("havyn", {
     loadUnpackedExtension: () => ipcRenderer.invoke("browser:load-unpacked-extension"),
     toggleAdBlock: () => ipcRenderer.invoke("browser:toggle-adblock"),
     getAdBlockState: () => ipcRenderer.invoke("browser:get-adblock-state"),
+    setWebviewAdBlockBypass: (webContentsId, bypassed) => ipcRenderer.invoke("browser:set-webview-adblock-bypass", webContentsId, Boolean(bypassed)),
     getPreloadUrl: () => ipcRenderer.invoke("app:get-browser-preload-url"),
     getPartition: () => ipcRenderer.invoke("app:get-browser-partition"),
     registerWebview: (webContentsId) => ipcRenderer.invoke("browser:register-webview", webContentsId),

@@ -872,6 +872,22 @@ label {
 .news-browser-address strong, .news-browser-address span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .news-browser-address strong { font-size: 12px; }
 .news-browser-address span { color: var(--muted); font-size: 10px; }
+.article-adblock-toggle {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  color: #d8d8de;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 7px;
+  background: rgba(255,255,255,.055);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.article-adblock-toggle:hover { border-color: rgba(255,77,90,.38); color: #fff; }
+.article-adblock-toggle.is-off { color: #ff858a; border-color: rgba(255,77,90,.35); background: rgba(255,77,90,.09); }
 .news-browser-frame { position: relative; min-height: 520px; overflow: hidden; }
 .news-browser-webview { width: 100%; height: 100%; min-height: calc(100vh - 150px); border: 0; background: #fff; }
 .news-browser-preview { min-height: calc(100vh - 150px); display: grid; place-items: center; align-content: center; gap: 10px; padding: 32px; text-align: center; }

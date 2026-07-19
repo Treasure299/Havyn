@@ -102,13 +102,17 @@ async function readFeed(feedUrl: string) {
   }).filter((item) => item.title && item.url);
 }
 
-async function news(request: Request, env: Env, url: URL) {
+async function collectNews(env: Env, limit: number) {
   const feeds = String(env.NEWS_FEEDS || "").split(",").map((item) => item.trim()).filter(Boolean);
   const settled = await Promise.allSettled(feeds.map(readFeed));
-  const limit = Math.min(30, Math.max(1, Number(url.searchParams.get("limit") || 12)));
-  const items = settled.flatMap((result) => result.status === "fulfilled" ? result.value : [])
+  return settled.flatMap((result) => result.status === "fulfilled" ? result.value : [])
     .sort((a, b) => new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime())
     .slice(0, limit);
+}
+
+async function news(request: Request, env: Env, url: URL) {
+  const limit = Math.min(30, Math.max(1, Number(url.searchParams.get("limit") || 12)));
+  const items = await collectNews(env, limit);
   return json(request, env, { items }, 200, 600);
 }
 
@@ -143,6 +147,18 @@ async function handle(request: Request, env: Env) {
   if (request.method !== "GET") return json(request, env, { error: "Method not allowed" }, 405, 0);
   if (url.pathname === "/health") return json(request, env, { ok: true }, 200, 30);
   if (url.pathname === "/api/news") return news(request, env, url);
+  if (url.pathname === "/api/home") {
+    const newsLimit = Math.min(12, Math.max(1, Number(url.searchParams.get("newsLimit") || 6)));
+    const movieLimit = Math.min(12, Math.max(1, Number(url.searchParams.get("movieLimit") || 6)));
+    const [newsItems, moviePayload] = await Promise.all([
+      collectNews(env, newsLimit),
+      tmdb("/trending/movie/week", new URLSearchParams({ language: "en-US" }), env)
+    ]);
+    return json(request, env, {
+      news: newsItems,
+      trending: ((moviePayload.results as unknown[]) || []).slice(0, movieLimit)
+    }, 200, 1800);
+  }
   if (url.pathname === "/api/genres") {
     const payload = await tmdb("/genre/movie/list", new URLSearchParams({ language: "en-US" }), env);
     return json(request, env, { items: payload.genres || [] }, 200, 86400);
@@ -179,9 +195,17 @@ async function handle(request: Request, env: Env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
-      return await handle(request, env);
+      const url = new URL(request.url);
+      const cacheableHome = request.method === "GET" && url.pathname === "/api/home";
+      if (cacheableHome) {
+        const cached = await caches.default.match(request);
+        if (cached) return cached;
+      }
+      const response = await handle(request, env);
+      if (cacheableHome && response.ok) ctx.waitUntil(caches.default.put(request, response.clone()));
+      return response;
     } catch (error) {
       console.error(JSON.stringify({ event: "content-request-failed", path: new URL(request.url).pathname, message: error instanceof Error ? error.message : String(error) }));
       return json(request, env, { error: "Content is temporarily unavailable" }, 502, 30);
