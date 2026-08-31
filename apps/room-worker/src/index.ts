@@ -9,6 +9,9 @@ interface Env {
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   CLIENT_ORIGIN?: string;
+  TURN_URLS?: string;
+  TURN_SHARED_SECRET?: string;
+  TURN_TTL_SECONDS?: string;
 }
 
 interface ConnectionAttachment extends Participant {
@@ -38,6 +41,9 @@ export default {
     if (ticketMatch && request.method === "POST") {
       return issueRoomTicket(request, env, ticketMatch[1].toUpperCase());
     }
+
+    const iceMatch = url.pathname.match(/^\/v2\/rooms\/([A-Z0-9-]{4,64})\/ice$/i);
+    if (iceMatch && request.method === "GET") return issueIceConfig(request, env);
 
     const connectMatch = url.pathname.match(/^\/v2\/rooms\/([A-Z0-9-]{4,64})\/connect$/i);
     if (connectMatch && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
@@ -81,6 +87,9 @@ export class HavynRoom {
       stored = { state: engine.state, preLiveSharePlayback: null, recentCommandIds: [], pendingDisconnects: {} };
       await this.persist(stored);
     }
+    if (claims.guest && stored.state.blockedGuestIds?.includes(claims.userId)) {
+      return new Response("This guest no longer has access to the room", { status: 403 });
+    }
 
     for (const existing of this.ctx.getWebSockets()) {
       const attachment = existing.deserializeAttachment() as ConnectionAttachment | null;
@@ -105,6 +114,7 @@ export class HavynRoom {
       userId: claims.userId,
       displayName: claims.displayName || previous?.displayName || "Havyn user",
       role: stored.state.hostUserId === claims.userId ? "host" : previous?.role || "viewer",
+      guest: claims.guest === true,
       online: true,
       mediaReady: previous?.mediaReady || false,
       callStatus: previous?.callStatus || "idle",
@@ -318,7 +328,13 @@ async function issueRoomTicket(request: Request, env: Env, roomId: string): Prom
   } catch {
     body = {};
   }
-  const user = await authenticateUser(request, env, body);
+  const requestedGuest = body.guest && typeof body.guest === "object" ? body.guest as Record<string, unknown> : null;
+  const guestId = String(requestedGuest?.userId || "");
+  const guestName = String(requestedGuest?.displayName || "").trim().slice(0, 80);
+  const guest = guestId.startsWith("guest_") && /^[a-zA-Z0-9_-]{12,96}$/.test(guestId) && guestName
+    ? { id: guestId, displayName: guestName, guest: true }
+    : null;
+  const user = guest || await authenticateUser(request, env, body);
   if (!user) return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
   const requestedRoom = (body.room || {}) as Partial<RoomState>;
   const capabilities = Array.isArray(body.capabilities)
@@ -338,13 +354,29 @@ async function issueRoomTicket(request: Request, env: Env, roomId: string): Prom
       visibility: requestedRoom.visibility === "public" || body.visibility === "public" ? "public" : "private",
       playbackMode: requestedRoom.playbackMode,
       playbackState: requestedRoom.playbackState,
+      selectedContent: requestedRoom.selectedContent,
       createdAt: requestedRoom.createdAt
     },
     exp: Date.now() + 60_000,
     jti: crypto.randomUUID(),
-    capabilities
+    capabilities,
+    guest: Boolean(guest)
   };
   return corsResponse(JSON.stringify({ ticket: await signTicket(claims, secret), expiresAt: claims.exp, protocol: PROTOCOL_VERSION }), env);
+}
+
+async function issueIceConfig(request: Request, env: Env): Promise<Response> {
+  const user = await authenticateUser(request, env, {});
+  if (!user) return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
+  const stun = { urls: "stun:stun.l.google.com:19302" };
+  const urls = String(env.TURN_URLS || "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (!urls.length || !env.TURN_SHARED_SECRET) return corsResponse(JSON.stringify({ iceServers: [stun], relayConfigured: false }), env, 200);
+  const expiry = Math.floor(Date.now() / 1000) + Math.max(300, Math.min(3600, Number(env.TURN_TTL_SECONDS || 900)));
+  const username = `${expiry}:${user.id}`;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.TURN_SHARED_SECRET), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(username));
+  const credential = btoa(String.fromCharCode(...new Uint8Array(signature)));
+  return corsResponse(JSON.stringify({ iceServers: [stun, { urls, username, credential }], relayConfigured: true }), env, 200);
 }
 
 async function authenticateUser(request: Request, env: Env, body: Record<string, unknown>): Promise<{ id: string; displayName?: string } | null> {

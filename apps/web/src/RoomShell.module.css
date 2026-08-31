@@ -1,0 +1,797 @@
+.roomPage {
+  --room-bottom-gutter: max(64px, env(safe-area-inset-bottom));
+  width: 100%;
+  max-width: none;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  /* The app shell already assigns this grid row its remaining viewport height.
+     Explicitly taking 100% here adds the navigation row a second time. */
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-8) var(--space-12) var(--room-bottom-gutter);
+}
+
+.roomPage :global(.room-header) { margin: 0 !important; }
+.roomPage :global(.room-header h1) { margin: 0; font-size: clamp(22px, 2vw, 28px); }
+.roomPage :global(.room-header) { min-height: 42px; }
+
+/* The legacy global theater class used a full viewport minimum. Inside the
+   app shell that sits below the navigation and makes the call rail overflow. */
+.roomPage.theater { min-height: 0; }
+
+/* A room is a fixed workspace. Only contained surfaces, such as messages,
+   may scroll; the page itself must never grow below the browser viewport. */
+:global(.web-app.room-app) {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.roomLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px minmax(280px, var(--room-rail-width, 320px));
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  gap: 0;
+}
+
+.providerStage {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border-color: var(--border-subtle) !important;
+  border-radius: var(--radius-lg) !important;
+}
+
+.providerStage :global(.provider-stage-content) {
+  min-height: 0 !important;
+  height: 100% !important;
+}
+
+.resizeRail {
+  width: 8px !important;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resizeRail::after {
+  inset: 40% 2px !important;
+  width: 3px;
+  height: 20%;
+  background: rgba(255, 255, 255, .09);
+}
+
+.resizeRail:hover::after { background: var(--border-active) !important; }
+
+.roomSidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-8);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  margin-left: var(--space-8) !important;
+}
+
+.roomSidebar > .chatPanel {
+  grid-row: 2;
+  align-self: stretch;
+  min-height: 0;
+  height: 100% !important;
+}
+
+.callPanel,
+.chatPanel {
+  border-color: var(--border-subtle) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--bg-surface) !important;
+}
+
+.callPanel { padding: var(--space-8) !important; overflow: hidden; }
+.callPanel :global(.section-heading) { margin-bottom: var(--space-8) !important; }
+.callPanel :global(.section-heading h2) { font-size: 16px; }
+.callPanel :global(.section-heading span) { font-size: 11px; }
+.callPanel :global(.call-actions) { margin-top: var(--space-4); }
+.callPanel :global(.call-actions button) { min-height: 28px; }
+
+.callMediaSurface {
+  position: relative;
+  min-height: 152px;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: var(--radius-md);
+  background: #07070a;
+}
+
+.callMediaSurface .callGrid { min-height: 152px; height: 100%; padding: 3px; }
+.callMediaSurface .callGrid :global(.call-tile) { height: 100%; border-color: rgba(255, 255, 255, .08) !important; }
+
+.callActionsOverlay {
+  position: absolute;
+  z-index: 6;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  width: auto;
+  gap: var(--space-4);
+  margin: 0 !important;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: var(--radius-md);
+  background: rgba(5, 5, 8, .76);
+  backdrop-filter: blur(10px);
+}
+
+.callActionsOverlay :global(button) { width: 30px; min-width: 30px; min-height: 28px !important; flex: 0 0 30px; border: 0 !important; background: transparent !important; }
+.callActionsOverlay :global(button:last-child) { width: 48px; flex-basis: 48px; }
+
+.chatPanel { gap: var(--space-8) !important; padding: var(--space-12) !important; }
+.chatPanel :global(.messages) { gap: var(--space-4); }
+.chatPanel :global(.messages p) { padding: 8px 9px; }
+.chatBody { display: contents; }
+.chatToggle { display: none; }
+
+/* Call remains compact; Chat is the continuous lower half of the room rail. */
+.roomPage .roomSidebar { grid-template-rows: auto minmax(0, 1fr) !important; }
+.roomPage .roomSidebar > .callPanel { align-self: start; }
+.roomSidebar > .chatPanel {
+  grid-row: 2;
+  align-self: stretch;
+  height: 100% !important;
+  min-height: 0;
+}
+
+.callGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.callMediaSurface .callGrid:not(.hasSpotlight) { grid-auto-rows: 1fr; }
+
+.callTile {
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  border-color: var(--border-subtle) !important;
+  border-radius: 6px !important;
+}
+
+.tileIdentity {
+  position: absolute;
+  z-index: 3;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: calc(100% - 12px);
+  border-radius: 5px;
+  padding: 3px 5px;
+  color: var(--text-primary);
+  background: rgba(5, 5, 8, .72);
+}
+
+.tileIdentity > span:first-child {
+  position: static !important;
+  display: block;
+  min-width: 0;
+  max-width: none !important;
+  overflow: hidden;
+  padding: 0 !important;
+  color: inherit !important;
+  background: transparent !important;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tileIdentity :global(.connection-indicator) {
+  position: static !important;
+  flex: 0 0 14px;
+  width: 14px !important;
+  height: 14px !important;
+  padding: 0 !important;
+  color: inherit;
+  background: transparent !important;
+}
+
+.tileIdentity :global(.connection-indicator svg) { width: 12px; height: 12px; }
+
+.callTile :global(.tile-volume) {
+  top: 6px !important;
+  right: 6px !important;
+  left: auto !important;
+  gap: 3px;
+  max-width: calc(100% - 12px);
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(5, 5, 8, .64);
+}
+
+.callTile :global(.tile-volume > button) {
+  width: 24px !important;
+  height: 24px !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  opacity: .82;
+}
+
+.callTile :global(.tile-volume input) { min-width: 0; height: 3px; }
+.callTile :global(.tile-volume.open input) { width: 42px !important; opacity: 1; }
+
+.spotlightButton {
+  position: absolute;
+  z-index: 4;
+  top: 6px;
+  left: 6px;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: rgba(5, 5, 8, .76);
+  opacity: 0;
+}
+
+.callTile:hover .spotlightButton,
+.callTile:focus-within .spotlightButton,
+.spotlighted .spotlightButton { opacity: 1; }
+
+.hasSpotlight {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+}
+
+.hasSpotlight .spotlighted {
+  grid-column: 1 / -1;
+  aspect-ratio: 16 / 7;
+}
+
+.theater {
+  min-height: 0;
+  padding: 0 0 var(--room-bottom-gutter);
+  background: #000;
+}
+
+.isTheater {
+  --theater-chat-width: 42px;
+  --theater-call-height: 210px;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) var(--theater-chat-width);
+  grid-template-rows: minmax(0, 1fr) 4px min(var(--theater-call-height), 38dvh);
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  background: #000;
+}
+
+/* Match the legacy theatre selector's specificity during the migration. */
+.theater .isTheater {
+  grid-template-columns: minmax(0, 1fr) var(--theater-chat-width);
+  grid-template-rows: minmax(0, 1fr) 4px min(var(--theater-call-height), 38dvh);
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+}
+
+.isTheater.chatOpen { --theater-chat-width: min(340px, 30vw); }
+.isTheater .providerStage { grid-column: 1; grid-row: 1; border: 0 !important; border-radius: 0 !important; }
+.isTheater .resizeRail { display: block; grid-column: 1; grid-row: 2; width: auto !important; height: 4px !important; cursor: row-resize; }
+.isTheater .resizeRail::after { inset: 1px 40% !important; width: 20%; height: 2px; }
+.isTheater .resizeRail:hover::after { background: var(--border-active) !important; }
+.isTheater .roomSidebar { display: contents; height: auto; margin: 0 !important; }
+
+.theaterChat {
+  position: relative;
+  z-index: 20;
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  width: auto;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 0 !important;
+  border-left: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  background: var(--bg-overlay) !important;
+  backdrop-filter: var(--glass-blur);
+  transition: width var(--duration-base), background var(--duration-base);
+}
+
+.theaterChat:hover,
+.theaterChat:focus-within { background: var(--bg-surface) !important; }
+
+.theaterChat .chatBody { display: none; }
+.chatOpen .theaterChat .chatBody {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-8);
+  height: 100%;
+  padding: var(--space-12) var(--space-12) var(--space-12) 54px;
+}
+
+.chatToggle {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-12);
+  left: 0;
+  display: grid;
+  place-items: center;
+  gap: var(--space-4);
+  width: 42px;
+  height: 46px;
+  border: 0;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  background: var(--bg-surface-elevated);
+}
+
+.chatOpen .chatToggle { color: #ff9aa1; border-color: var(--border-active); }
+
+.theaterFilmstrip {
+  position: relative !important;
+  z-index: 5;
+  grid-column: 1;
+  grid-row: 3;
+  width: auto;
+  max-height: none;
+  height: 100%;
+  min-height: 0;
+  display: grid !important;
+  grid-template-rows: 22px minmax(0, 1fr);
+  overflow: hidden;
+  transform: none;
+  border: 0 !important;
+  border-top: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  background: #050507 !important;
+  box-shadow: none;
+  cursor: default;
+  opacity: 1;
+  transition: background var(--duration-base);
+}
+
+.theaterFilmstrip.idle { opacity: 1; }
+.theaterFilmstrip .callGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+}
+.theaterFilmstrip .callGrid.callCount1,
+.theaterFilmstrip .callGrid.callCount2 {
+  grid-template-columns: repeat(var(--theater-call-count, 2), minmax(0, min(42%, 420px)));
+  justify-content: center;
+}
+.theaterFilmstrip .callGrid.callCount1 { --theater-call-count: 1; }
+.theaterFilmstrip .hasSpotlight { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.theaterFilmstrip .callMediaSurface,
+.theaterFilmstrip .callMediaSurface .callGrid { min-height: 0; height: 100%; }
+.theaterFilmstrip .callMediaSurface { height: 100%; }
+.theaterFilmstrip .callMediaSurface :global(.call-tile) {
+  min-height: 0 !important;
+  height: 100% !important;
+  aspect-ratio: auto !important;
+}
+.theaterFilmstrip :global(.section-heading) { min-height: 22px; margin: 0 !important; align-items: center; }
+.theaterFilmstrip .callActionsOverlay { opacity: 1; }
+
+@media (max-width: 960px) {
+  /* Mobile browsers need document flow for the provider, call and chat to stay
+     reachable when their combined height exceeds the visible viewport. */
+  :global(.web-app.room-app) {
+    display: block;
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .roomPage {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .roomPage .roomLayout,
+  .roomPage .isTheater {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .providerStage,
+  .providerStage :global(.provider-stage-content) {
+    min-height: min(68svh, 620px) !important;
+  }
+
+  .isTheater {
+    grid-template-rows: minmax(360px, 68svh) 4px auto;
+  }
+
+  /* In document-flow mode the theater rail must size from its own call content.
+     A percentage height here resolves through the former desktop grid and is what
+     allowed the final tile row to be clipped on tablets. */
+  .theater .isTheater .theaterFilmstrip {
+    height: auto !important;
+    min-height: 156px;
+  }
+
+  .theater .isTheater .theaterFilmstrip .callMediaSurface,
+  .theater .isTheater .theaterFilmstrip .callMediaSurface .callGrid {
+    height: auto !important;
+    min-height: 128px;
+  }
+
+  .theater .isTheater .theaterFilmstrip .callGrid {
+    grid-auto-rows: minmax(128px, 1fr) !important;
+  }
+
+  .roomLayout { grid-template-columns: minmax(0, 1fr) 0; height: 100%; min-height: 0; }
+  .resizeRail { display: none; }
+  .roomSidebar { grid-template-columns: minmax(230px, .8fr) minmax(0, 1.2fr); grid-template-rows: none; height: auto; margin: var(--space-8) 0 0 !important; }
+  .isTheater.chatOpen { --theater-chat-width: min(300px, 45vw); }
+}
+
+@media (max-width: 620px) {
+  .roomPage { height: 100%; padding: var(--space-8) var(--space-8) max(var(--space-8), env(safe-area-inset-bottom)); }
+  .roomPage.theater { padding: 0 0 max(var(--space-8), env(safe-area-inset-bottom)); }
+  .roomSidebar { grid-template-columns: 1fr; }
+  .isTheater { --theater-chat-width: 42px; }
+  .isTheater.chatOpen { --theater-chat-width: min(270px, 78vw); }
+  .isTheater { --theater-call-height: 156px; }
+  .theaterFilmstrip { width: auto; max-height: none; }
+  .theaterFilmstrip :global(.section-heading),
+  .theaterFilmstrip :global(.call-actions) { display: none; }
+  .theaterFilmstrip .hasSpotlight { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theaterFilmstrip,
+  .theaterChat { transition: none; }
+}
+
+/* These selectors deliberately match the legacy theatre rules while the room
+   surface is migrated out of the old global stylesheet. */
+.theater .isTheater .providerStage {
+  margin-right: 0 !important;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.theater .isTheater .roomSidebar {
+  position: static !important;
+  display: contents !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 1 !important;
+  transform: none !important;
+  pointer-events: auto !important;
+}
+
+.theater .isTheater .theaterChat {
+  position: relative !important;
+  z-index: 20;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0;
+  border-radius: 0 !important;
+}
+
+.theater .isTheater .theaterChat .chatToggle {
+  display: grid !important;
+  width: 42px;
+  height: 46px;
+}
+
+.theater .isTheater .theaterChat .chatBody { display: none; }
+.theater .isTheater.chatOpen .theaterChat .chatBody {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-8);
+  height: 100%;
+  padding: var(--space-12) var(--space-12) var(--space-12) 54px;
+}
+
+.theater .isTheater .theaterFilmstrip {
+  position: relative !important;
+  z-index: 5;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  grid-column: 1;
+  grid-row: 3;
+  width: auto !important;
+  max-height: none !important;
+  height: 100% !important;
+  min-height: 0;
+  padding: 2px var(--space-8) 6px !important;
+  overflow: hidden;
+  transform: none !important;
+  opacity: 1 !important;
+  border: 0 !important;
+  border-top: 1px solid var(--border-subtle) !important;
+  border-radius: 0 !important;
+  background: #050507 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  cursor: default !important;
+}
+
+.theater .isTheater .theaterFilmstrip .callGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  grid-auto-rows: minmax(0, 1fr) !important;
+  height: 100%;
+}
+.theater .isTheater .theaterFilmstrip .callGrid.callCount1,
+.theater .isTheater .theaterFilmstrip .callGrid.callCount2 {
+  grid-template-columns: repeat(var(--theater-call-count, 2), minmax(0, min(42%, 420px))) !important;
+  justify-content: center;
+}
+
+.theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+.theater .isTheater .theaterFilmstrip .callMediaSurface { height: 100%; min-height: 0; }
+.theater .isTheater .theaterFilmstrip .callActionsOverlay { opacity: 1 !important; }
+.theater .isTheater .resizeRail { display: block !important; grid-column: 1; grid-row: 2; }
+
+/* Defeat legacy responsive heights that otherwise turn the room back into a
+   vertically scrolling document at intermediate viewport widths. */
+.roomPage .roomLayout,
+.roomPage .isTheater {
+  min-height: 0 !important;
+  height: 100% !important;
+}
+
+.roomPage:fullscreen {
+  height: 100dvh;
+  padding: 0 0 var(--room-bottom-gutter);
+}
+
+/* These rules deliberately come after the desktop theatre overrides above.
+   On a phone or tablet the room is a scrollable document, so every part of
+   the call rail (including the video tiles' lower padding) remains reachable. */
+@media (max-width: 960px) {
+  .roomPage,
+  .roomPage.theater {
+    height: auto !important;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .roomPage .roomLayout,
+  .roomPage .isTheater {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .roomPage .isTheater {
+    grid-template-rows: minmax(360px, 68svh) 4px auto;
+  }
+
+  .theater .isTheater .theaterFilmstrip,
+  .theater .isTheater .theaterFilmstrip .callMediaSurface,
+  .theater .isTheater .theaterFilmstrip .callMediaSurface .callGrid,
+  .theater .isTheater .theaterFilmstrip .callGrid {
+    height: auto !important;
+  }
+
+  .theater .isTheater .theaterFilmstrip {
+    min-height: 156px;
+  }
+
+  .theater .isTheater .theaterFilmstrip .callMediaSurface,
+  .theater .isTheater .theaterFilmstrip .callMediaSurface .callGrid {
+    min-height: 128px;
+  }
+
+  .theater .isTheater .theaterFilmstrip .callGrid {
+    grid-auto-rows: minmax(128px, 1fr) !important;
+  }
+}
+
+/* Theater is a media strip, not a compressed dashboard grid. These final
+   overrides intentionally sit after the legacy migration selectors above. */
+.theater .isTheater.chatOpen { --theater-chat-width: min(var(--theater-chat-width-open), 42vw); }
+.theater .isTheater { grid-template-columns: minmax(0, 1fr) var(--theater-chat-width) !important; }
+
+.theater .isTheater .theaterFilmstrip {
+  display: block !important;
+  padding: 4px var(--space-8) 6px !important;
+}
+
+.theater .isTheater :global(.theater-call) :global(.section-heading) { display: none !important; }
+.theater .isTheater .theaterFilmstrip .callMediaSurface {
+  display: flex;
+  align-items: center;
+  height: 100% !important;
+  min-height: 0;
+  overflow: hidden;
+}
+.theater .isTheater :global(.theater-call) :global(.join-call) {
+  display: flex;
+  height: 100% !important;
+  min-height: 0;
+}
+
+.theater .isTheater .theaterFilmstrip .callGrid {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  width: max-content;
+  min-width: 100%;
+  height: 100% !important;
+  padding: 3px;
+  transform: translateX(var(--theater-track-offset, 0px));
+  transition: transform var(--duration-base);
+  touch-action: pan-y;
+  will-change: transform;
+}
+
+.theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight { display: grid !important; width: 100%; transform: none; }
+.theater .isTheater .theaterFilmstrip .callGrid :global(.call-tile) {
+  flex: 0 0 auto;
+  width: auto !important;
+  height: min(100%, 190px) !important;
+  aspect-ratio: 16 / 9 !important;
+}
+
+.theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight :global(.call-tile) { height: 100% !important; }
+
+.theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+.theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight :global(.call-tile.spotlighted) {
+  width: min(78%, 720px) !important;
+  height: min(100%, 190px) !important;
+  aspect-ratio: 16 / 9 !important;
+  transform: translate(var(--spotlight-offset-x, 0px), var(--spotlight-offset-y, 0px));
+  cursor: grab;
+  touch-action: none;
+}
+.theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight :global(.call-tile.spotlighted):active { cursor: grabbing; }
+
+.chatResize { display: none; }
+.theater .isTheater .theaterChat .chatResize.visible {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: block;
+  width: 7px;
+  padding: 0;
+  border: 0;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+.theater .isTheater .theaterChat .chatResize.visible::after {
+  position: absolute;
+  top: 40%;
+  bottom: 40%;
+  left: 2px;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .18);
+  content: "";
+}
+.theater .isTheater .theaterChat .chatResize.visible:hover::after { background: var(--border-active); }
+
+.chatUnread .chatToggle { animation: chat-attention 1.2s ease-in-out infinite; }
+@keyframes chat-attention { 0%, 100% { color: var(--text-primary); border-right-color: rgba(255,255,255,.1); background: var(--bg-surface-elevated); } 50% { color: #fff; border-right-color: rgba(234,39,54,.9); background: rgba(234,39,54,.22); } }
+.chatAttention { border-color: rgba(234,39,54,.58) !important; }
+.freshMessage { border: 1px solid rgba(234,39,54,.72) !important; background: rgba(234,39,54,.1) !important; animation: message-arrival .72s ease-out 2; }
+@keyframes message-arrival { 50% { border-color: rgba(255,130,139,.95); background: rgba(234,39,54,.17); } }
+
+@media (max-width: 960px) {
+  .theater .isTheater.chatOpen { --theater-chat-width: min(var(--theater-chat-width-open), 72vw); }
+  .theater .isTheater .theaterFilmstrip .callMediaSurface,
+  .theater .isTheater .theaterFilmstrip .callGrid { height: 128px !important; min-height: 128px !important; }
+  .theater .isTheater .theaterFilmstrip .callGrid :global(.call-tile) { height: 120px !important; }
+}
+
+@media (prefers-reduced-motion: reduce) { .chatUnread .chatToggle,.freshMessage { animation: none; } }
+
+/* Normal room: Chat owns the entire companion rail, while the call is a
+   compact dock within that same surface instead of consuming a separate row. */
+@media (min-width: 961px) {
+  .roomPage:not(.theater) .roomSidebar { position: relative; display: block; height: 100%; min-height: 0; }
+  .roomPage:not(.theater) .roomSidebar > .chatPanel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; position: absolute; inset: 0; grid-row: auto; height: 100% !important; min-height: 0; padding-top: 174px !important; }
+  .roomPage:not(.theater) .roomSidebar > .callPanel { position: absolute; z-index: 4; top: var(--space-8); right: var(--space-8); left: var(--space-8); max-height: 150px; padding: var(--space-8) !important; background: rgba(18, 18, 23, .94) !important; backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-float); }
+  .roomPage:not(.theater) .roomSidebar > .callPanel .callMediaSurface, .roomPage:not(.theater) .roomSidebar > .callPanel .callMediaSurface .callGrid { min-height: 104px; }
+  .roomPage:not(.theater) .roomSidebar.callDockActive > .chatPanel { padding-top: calc(var(--normal-call-height) + 12px) !important; }
+  .roomPage:not(.theater) .roomSidebar > .callPanel.callActive { height: var(--normal-call-height); max-height: none; overflow: visible; }
+  .roomPage:not(.theater) .roomSidebar > .callPanel.callActive .callMediaSurface { height: calc(100% - 30px); min-height: 0; }
+  .roomPage:not(.theater) .roomSidebar > .callPanel.callActive .callMediaSurface .callGrid { height: 100%; min-height: 0; }
+}
+
+.callDockResize { display: none; }
+@media (min-width: 961px) {
+  .callActive .callDockResize { position: absolute; z-index: 8; bottom: 3px; left: 50%; display: block; width: 34px; height: 7px; padding: 0; border: 0; border-radius: 999px; background: rgba(255, 255, 255, .28); cursor: row-resize; transform: translateX(-50%); touch-action: none; }
+  .callActive .callDockResize:hover { background: var(--border-active); }
+}
+
+/* A spotlight remains deliberately large. Translation changes its local
+   placement only; it must not change the media's aspect ratio or scale. */
+/* Spotlight is allowed to claim a larger rail. Its size is determined by its
+   preserved 16:7 frame, never by a stretched grid track. */
+.theater .isTheater:has(.callGrid.hasSpotlight) { grid-template-rows: minmax(0, 1fr) 4px min(46dvh, 500px) !important; }
+.theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight :global(.call-tile.spotlighted) { flex: 0 0 auto; width: auto !important; height: min(calc(100% - 10px), 420px) !important; max-width: 94%; max-height: calc(100% - 10px); aspect-ratio: 16 / 7 !important; transform: translate(var(--spotlight-offset-x, 0px), var(--spotlight-offset-y, 0px)); }
+
+/* Browser fullscreen has one small command cluster. Keeping these controls in
+   normal flow prevents their hit targets from stacking on narrow heights. */
+.roomPage:fullscreen :global(.room-header) { display: flex; align-items: center; max-width: calc(100vw - 24px); }
+.roomPage:fullscreen :global(.room-header) { right: auto !important; left: 14px !important; }
+.roomPage:fullscreen :global(.room-command-bar) { display: flex; flex-wrap: nowrap; gap: 6px; min-width: 0; }
+.roomPage:fullscreen :global(.room-command-bar > *) { flex: 0 0 auto; }
+.roomPage:fullscreen :global(.icon-command) { height: 36px; }
+
+@media (max-width: 620px) {
+  .theater .isTheater:has(.callGrid.hasSpotlight) { grid-template-rows: minmax(360px, 54svh) 4px min(34svh, 300px) !important; }
+  .theater .isTheater .theaterFilmstrip .callGrid.hasSpotlight :global(.call-tile.spotlighted) { width: auto !important; height: min(calc(100% - 10px), 230px) !important; }
+  .roomPage:fullscreen :global(.room-command-bar) { gap: 4px; }
+  .roomPage:fullscreen :global(.icon-command) { width: 34px; height: 34px; }
+  .roomPage:fullscreen :global(.room-header) { right: auto !important; left: 8px !important; }
+}
+
+/* One restrained rail rhythm across normal, theatre, and fullscreen rooms. */
+.roomLayout { column-gap: 0; }
+.roomSidebar { gap: 0 !important; }
+.roomPage:not(.theater) .roomSidebar > .chatPanel { border-radius: var(--radius-lg) !important; }
+.roomPage:not(.theater) .roomSidebar > .callPanel { border-radius: var(--radius-md) !important; }
+.isTheater .resizeRail { margin: 0; }
+
+/* Normal mode uses the same fine divider as theatre, rather than a wide empty
+   column beside the provider. The rail is a boundary, not another panel. */
+@media (min-width: 961px) {
+  .roomLayout { grid-template-columns: minmax(0, 1fr) 4px minmax(280px, var(--room-rail-width, 320px)) !important; }
+  .resizeRail { width: 4px !important; }
+  .resizeRail::after { inset: 40% 1px !important; width: 2px; }
+  .roomSidebar { margin-left: 0 !important; }
+  .roomPage:not(.theater) .roomSidebar > .callPanel { top: 4px !important; right: 4px !important; left: 4px !important; }
+}
+
+/* Live video must preserve its camera frame when the dock is resized. */
+@media (min-width: 961px) {
+  .roomPage:not(.theater) .callActive .callMediaSurface .callGrid { align-content: start; grid-auto-rows: auto; overflow: auto; }
+  .roomPage:not(.theater) .callActive .callMediaSurface .callGrid :global(.call-tile) { height: auto !important; aspect-ratio: 16 / 9 !important; }
+}
+
+/* Theater and fullscreen rails share the same obvious grab affordance as the
+   normal call dock. Enlarging spotlight changes its rail, never its ratio. */
+.theater .isTheater .resizeRail::after { inset: 0 !important; width: 36px !important; height: 7px !important; margin: auto; border-radius: 999px; background: rgba(255, 255, 255, .3) !important; }
+.theater .isTheater .resizeRail:hover::after { background: var(--border-active) !important; }
+.theater .isTheater .theaterChat .chatResize.visible::after { top: 50%; bottom: auto; left: 0; width: 7px; height: 36px; margin-top: -18px; background: rgba(255, 255, 255, .3); }
+.theater .isTheater .theaterChat .chatResize.visible:hover::after { background: var(--border-active); }
+.theater .isTheater:has(.callGrid.hasSpotlight) { grid-template-rows: minmax(0, 1fr) 4px min(max(var(--theater-call-height), 320px), 58dvh) !important; }
+
+/* Room menus are actionable surfaces, so they must layer above the theater
+   chat rail rather than being hidden behind it. */
+.theater :global(.room-header) { position: relative; z-index: 50 !important; isolation: isolate; }
+.theater :global(.people-menu[open]) { z-index: 60; }
+.theater :global(.people-popover) { position: fixed !important; z-index: 70; top: 54px !important; right: 54px !important; }
+.theater:has(.chatOpen) :global(.people-popover) { right: min(42vw, 352px) !important; }
+.theater .isTheater .theaterChat { z-index: 2 !important; }
+.theater .isTheater { z-index: 0 !important; }

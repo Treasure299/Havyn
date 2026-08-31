@@ -1,4 +1,30 @@
-# Havyn MVP
+# Havyn
+
+**[Open Havyn Web](https://havyn-web.pages.dev/)**
+
+Havyn is a social watch room for people who want to watch from their own devices without losing the feeling of being together. Pick a title, start a private room, share the link or room code, and keep the conversation, presence, call, and playback state in one place.
+
+Every participant uses their own authorised provider session. Havyn coordinates the room; it does not host or redistribute media.
+
+![Havyn Discover](docs/screenshots/discover.png)
+
+![A Havyn watch room](docs/screenshots/room.png)
+
+## Havyn Web
+
+The Web app lives in `apps/web`, with a Cloudflare Durable Object room coordinator in `apps/room-worker` and a Cloudflare content worker in `apps/content-worker`.
+
+```bash
+npm install
+Copy-Item apps/web/.env.example apps/web/.env
+npm --workspace apps/web run dev
+```
+
+Set `apps/web/.env` with your Supabase project and worker URLs. TMDB, YouTube, room-ticket, and TURN credentials belong in Cloudflare secrets and are deliberately not included here. See [apps/room-worker/README.md](apps/room-worker/README.md) and [apps/content-worker/README.md](apps/content-worker/README.md) for worker setup.
+
+Playback capability depends on the provider, browser, device, account, and region. Havyn keeps the room, invitation, and conversation intact even when a provider does not load or cannot offer full synchronization.
+
+## Desktop MVP Notes
 
 Havyn is a desktop-first social watch-party platform for small private rooms. It gives each person their own embedded browser session, detects generic HTML5 video elements, and synchronizes navigation and playback state through a local Socket.IO signaling server.
 

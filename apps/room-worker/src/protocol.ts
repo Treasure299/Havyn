@@ -4,6 +4,16 @@ export const PLAYBACK_MODES = ["host-only", "host-and-cohosts", "everyone"] as c
 export type PlaybackMode = typeof PLAYBACK_MODES[number];
 export type RoomRole = "host" | "cohost" | "viewer";
 export type RoomExperience = "synced-media" | "live-share";
+export type SyncStatus = "checking" | "synced" | "catching-up" | "buffering" | "out-of-sync";
+
+export interface MediaSuggestion {
+  id: string;
+  userId: string;
+  displayName: string;
+  media: Record<string, unknown>;
+  sourceFingerprint: string;
+  createdAt: string;
+}
 
 export interface LiveShareState {
   status: "idle" | "available" | "active";
@@ -12,6 +22,28 @@ export interface LiveShareState {
   hasAudio: boolean;
   startedAt: number | null;
   viewerUserIds: string[];
+}
+
+export interface SelectedContent {
+  id: string;
+  mediaType: "movie" | "tv";
+  title: string;
+  year?: string;
+  overview?: string;
+  posterUrl?: string;
+  backdropUrl?: string;
+  provider?: {
+    id: number | string;
+    name: string;
+    destination: string;
+    capability: "manual" | "synced";
+    kind?: "service" | "embed";
+    source?: string;
+    adapterId?: "cinesrc" | "strigil" | "moviesapi" | "youtube";
+    origin?: string;
+  } | null;
+  selectedByUserId: string;
+  selectedAt: number;
 }
 
 export interface PlaybackState {
@@ -26,6 +58,9 @@ export interface PlaybackState {
   controllerUserId: string | null;
   commandId?: string;
   sequence: number;
+  mediaSessionId?: string;
+  sourceFingerprint?: string;
+  sessionStartedAt?: number | null;
 }
 
 export interface Participant {
@@ -41,6 +76,14 @@ export interface Participant {
   joinedAt: string;
   lastSeenAt: string;
   capabilities?: string[];
+  syncStatus?: SyncStatus;
+  syncDriftSeconds?: number;
+  syncReportedAt?: number;
+  mediaSessionId?: string;
+  sourceFingerprint?: string;
+  lastAppliedSequence?: number;
+  buffering?: boolean;
+  guest?: boolean;
 }
 
 export interface RoomState {
@@ -52,6 +95,10 @@ export interface RoomState {
   playbackState: PlaybackState;
   roomExperience: RoomExperience;
   liveShare: LiveShareState;
+  mediaSessionCounter?: number;
+  mediaSuggestions?: MediaSuggestion[];
+  blockedGuestIds?: string[];
+  selectedContent?: SelectedContent | null;
   createdAt: string;
   revision: number;
 }
@@ -66,6 +113,7 @@ export interface RoomTicketClaims {
   exp: number;
   jti: string;
   capabilities?: string[];
+  guest?: boolean;
 }
 
 export interface ClientEnvelope {
@@ -104,7 +152,10 @@ export function defaultPlaybackState(hostUserId: string | null): PlaybackState {
     activeMediaUrl: "",
     activeMediaTitle: "",
     controllerUserId: hostUserId,
-    sequence: 0
+    sequence: 0,
+    mediaSessionId: "",
+    sourceFingerprint: "",
+    sessionStartedAt: null
   };
 }
 

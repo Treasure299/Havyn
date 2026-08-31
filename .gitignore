@@ -6,10 +6,22 @@ apps/desktop/release/
 apps/desktop/release-*/
 apps/desktop/release-cloudflare/
 apps/desktop/release-widevine/
+apps/web/dist/
 apps/windows/bin/
 apps/windows/obj/
+# Local configuration and deployment credentials.
 .env
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.sample
 apps/*/.env
+apps/*/.dev.vars
+apps/*/.dev.vars.*
+!apps/*/.dev.vars.example
+*.pem
+*.key
 *.log
 .DS_Store
 Thumbs.db

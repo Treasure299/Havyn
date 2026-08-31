@@ -3,6 +3,7 @@ const TMDB_IMAGES = "https://image.tmdb.org/t/p";
 
 interface Env {
   TMDB_API_TOKEN: string;
+  YOUTUBE_API_KEY?: string;
   CLIENT_ORIGIN: string;
   NEWS_FEEDS: string;
 }
@@ -141,12 +142,33 @@ async function providers(request: Request, env: Env, url: URL, mediaType: string
   return json(request, env, { region, attribution: "Streaming availability data provided by JustWatch.", availabilityUrl: regional.link || "", providers: [...merged.values()] });
 }
 
+async function youtubeSearch(request: Request, env: Env, url: URL) {
+  const query = String(url.searchParams.get("query") || "").trim().slice(0, 180);
+  if (!query) return json(request, env, { items: [] }, 200, 60);
+  if (!env.YOUTUBE_API_KEY) return json(request, env, { error: "YouTube search is not configured yet." }, 503, 0);
+  const apiUrl = new URL("https://www.googleapis.com/youtube/v3/search");
+  apiUrl.search = new URLSearchParams({ part: "snippet", type: "video", maxResults: "16", q: query, key: env.YOUTUBE_API_KEY }).toString();
+  const response = await fetch(apiUrl, { cf: { cacheEverything: true, cacheTtl: 600 } });
+  if (!response.ok) throw new Error(`YouTube returned ${response.status}`);
+  const payload = await response.json<{ items?: Array<{ id?: { videoId?: string }; snippet?: { title?: string; description?: string; channelTitle?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> } }> }>();
+  const items = (payload.items || []).map((item) => ({
+    id: String(item.id?.videoId || ""),
+    title: String(item.snippet?.title || "YouTube video"),
+    description: String(item.snippet?.description || "").slice(0, 420),
+    channelTitle: String(item.snippet?.channelTitle || "YouTube"),
+    publishedAt: String(item.snippet?.publishedAt || ""),
+    thumbnailUrl: String(item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.default?.url || "")
+  })).filter((item) => item.id);
+  return json(request, env, { items }, 200, 600);
+}
+
 async function handle(request: Request, env: Env) {
   const url = new URL(request.url);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request, env) });
   if (request.method !== "GET") return json(request, env, { error: "Method not allowed" }, 405, 0);
   if (url.pathname === "/health") return json(request, env, { ok: true }, 200, 30);
   if (url.pathname === "/api/news") return news(request, env, url);
+  if (url.pathname === "/api/youtube/search") return youtubeSearch(request, env, url);
   if (url.pathname === "/api/home") {
     const newsLimit = Math.min(12, Math.max(1, Number(url.searchParams.get("newsLimit") || 6)));
     const movieLimit = Math.min(12, Math.max(1, Number(url.searchParams.get("movieLimit") || 6)));
@@ -169,21 +191,38 @@ async function handle(request: Request, env: Env) {
     return json(request, env, { items: ((payload.results as unknown[]) || []).slice(0, limit) });
   }
   if (url.pathname === "/api/movies/discover") {
-    const query = url.searchParams.get("query");
-    const path = query ? "/search/multi" : "/discover/movie";
+    const query = url.searchParams.get("query")?.trim();
+    const mediaType = url.searchParams.get("type") === "tv" ? "tv" : url.searchParams.get("type") === "movie" ? "movie" : "all";
+    const path = query
+      ? mediaType === "all" ? "/search/multi" : `/search/${mediaType}`
+      : `/discover/${mediaType === "tv" ? "tv" : "movie"}`;
     const params = new URLSearchParams({ language: "en-US", include_adult: "false", page: url.searchParams.get("page") || "1" });
     if (query) params.set("query", query);
     else {
       params.set("sort_by", url.searchParams.get("sort") || "popularity.desc");
       params.set("region", url.searchParams.get("region") || "US");
-      for (const [source, target] of [["genre", "with_genres"], ["year", "primary_release_year"], ["runtime", "with_runtime.lte"], ["rating", "vote_average.gte"], ["provider", "with_watch_providers"]]) {
+        for (const [source, target] of [["genre", "with_genres"], ["year", mediaType === "tv" ? "first_air_date_year" : "primary_release_year"], ["runtime", "with_runtime.lte"], ["rating", "vote_average.gte"], ["provider", "with_watch_providers"]]) {
         const value = url.searchParams.get(source);
         if (value) params.set(target, value);
       }
       if (url.searchParams.get("provider")) params.set("watch_region", url.searchParams.get("region") || "US");
     }
     const payload = await tmdb(path, params, env);
-    return json(request, env, { page: payload.page || 1, totalPages: payload.total_pages || 1, items: payload.results || [] });
+    const sourceItems = (payload.results as Array<Record<string, unknown>> | undefined) || [];
+    // Multi-search also returns people. They are not selectable Havyn viewing titles.
+    const typedItems = mediaType === "all" && query
+      ? sourceItems.filter((item) => item.media_type === "movie" || item.media_type === "tv")
+      : sourceItems;
+    const genre = url.searchParams.get("genre");
+    const items = query && genre
+      ? typedItems.filter((item) => Array.isArray(item.genre_ids) && item.genre_ids.map(String).includes(genre))
+      : typedItems;
+    return json(request, env, { page: payload.page || 1, totalPages: payload.total_pages || 1, items });
+  }
+  const seasonMatch = url.pathname.match(/^\/api\/movies\/tv\/(\d+)\/season\/(\d+)$/);
+  if (seasonMatch) {
+    const payload = await tmdb(`/tv/${seasonMatch[1]}/season/${seasonMatch[2]}`, new URLSearchParams({ language: "en-US" }), env);
+    return json(request, env, { episodes: payload.episodes || [] }, 200, 3600);
   }
   const match = url.pathname.match(/^\/api\/movies\/(movie|tv)\/(\d+)(\/providers)?$/);
   if (match?.[3]) return providers(request, env, url, match[1], match[2]);

@@ -46,6 +46,18 @@ describe("RoomEngine playback authority", () => {
     });
     expect(event(result, "playback-command")?.payload).toMatchObject({ action: "play", commandId: "play-1" });
     expect(event(result, "room-action")?.payload).toMatchObject({ message: "host played" });
+    expect(engine.state.playbackState.sessionStartedAt).toBeTypeOf("number");
+  });
+
+  it("keeps a media session marked as started after a later pause", () => {
+    const engine = roomWithTwoUsers();
+    engine.state.playbackState.mediaSessionId = "ROOM1234:1";
+    engine.handle("playback-play", { currentTime: 12 }, "host", "play-1");
+    const startedAt = engine.state.playbackState.sessionStartedAt;
+    engine.handle("playback-pause", { currentTime: 18 }, "host", "pause-1");
+
+    expect(startedAt).toBeTypeOf("number");
+    expect(engine.state.playbackState.sessionStartedAt).toBe(startedAt);
   });
 
   it("broadcasts Treasure play so Vaultr can play and both see the action", () => {
@@ -116,6 +128,119 @@ describe("RoomEngine playback authority", () => {
 });
 
 describe("RoomEngine media and late joins", () => {
+  it("persists a title and provider selected by the host for every later snapshot", () => {
+    const engine = roomWithTwoUsers();
+    const selected = engine.handle("room-content-select", {
+      content: {
+        id: "123",
+        mediaType: "movie",
+        title: "A durable title",
+        provider: {
+          id: "vidrock",
+          name: "VidRock",
+          destination: "https://vidrock.net/movie/123?autoplay=true",
+          kind: "embed",
+          source: "StreamHub"
+        }
+      }
+    }, "host", "title-1");
+
+    expect(event(selected, "room-content-selected")?.payload).toMatchObject({
+      id: "123",
+      title: "A durable title",
+      provider: expect.objectContaining({ id: "vidrock", destination: expect.stringContaining("vidrock.net") })
+    });
+    expect(engine.snapshot().selectedContent).toMatchObject({ id: "123", title: "A durable title" });
+  });
+
+  it("starts an authoritative playback session when a synced provider is selected", () => {
+    const engine = roomWithTwoUsers();
+    const selected = engine.handle("room-content-select", {
+      content: {
+        id: "456", mediaType: "movie", title: "A synced title",
+        provider: { id: "cinesrc", name: "CineSrc", kind: "embed", capability: "synced", adapterId: "cinesrc", origin: "https://cinesrc.st", destination: "https://cinesrc.st/embed/movie/456" }
+      }
+    }, "host", "title-sync-1");
+
+    expect(engine.state.playbackState).toMatchObject({ isPlaying: false, currentTime: 0, activeMediaTitle: "A synced title", mediaSessionId: "ROOM1234:1" });
+    expect(engine.state.playbackState.sourceFingerprint).toBeTruthy();
+    expect(event(selected, "playback-state-sync")?.payload).toMatchObject({ mediaSessionId: "ROOM1234:1" });
+    expect(engine.state.selectedContent?.provider).toMatchObject({ capability: "synced", adapterId: "cinesrc" });
+  });
+
+  it("keeps a cohost source as a suggestion until the host accepts it", () => {
+    const engine = roomWithTwoUsers("host-and-cohosts");
+    engine.participants.set("viewer", participant("viewer", "cohost"));
+    const before = { ...engine.state.playbackState };
+
+    const suggested = engine.handle("media-selected", {
+      media: { pageUrl: "https://example.com/new", frameUrl: "https://player.example/new", title: "New pick" }
+    }, "viewer", "suggestion-1");
+
+    expect(engine.state.playbackState).toEqual(before);
+    expect(engine.state.mediaSuggestions).toEqual([
+      expect.objectContaining({ id: "suggestion-1", userId: "viewer", sourceFingerprint: expect.any(String) })
+    ]);
+    expect(event(suggested, "media-selected")).toBeUndefined();
+    expect(event(suggested, "media-suggestion-created")?.targetUserId).toBe("host");
+
+    const accepted = engine.handle("media-suggestion-accept", { suggestionId: "suggestion-1" }, "host", "accept-1");
+    expect(event(accepted, "media-selected")?.payload).toMatchObject({ mediaSessionId: "ROOM1234:1" });
+    expect(engine.state.playbackState).toMatchObject({
+      activeMediaUrl: "https://example.com/new",
+      mediaSessionId: "ROOM1234:1",
+      sourceFingerprint: expect.any(String)
+    });
+    expect(engine.state.mediaSuggestions).toEqual([]);
+  });
+
+  it("notifies the whole room when the host declines a source suggestion", () => {
+    const engine = roomWithTwoUsers("host-and-cohosts");
+    engine.participants.set("viewer", participant("viewer", "cohost"));
+    engine.handle("media-selected", {
+      media: { pageUrl: "https://example.com/new", title: "New pick" }
+    }, "viewer", "suggestion-decline");
+
+    const declined = engine.handle(
+      "media-suggestion-decline",
+      { suggestionId: "suggestion-decline" },
+      "host",
+      "decline-1"
+    );
+
+    expect(engine.state.mediaSuggestions).toEqual([]);
+    expect(event(declined, "room-action")).toMatchObject({
+      payload: expect.objectContaining({ message: "host declined viewer's source suggestion" })
+    });
+  });
+
+  it("reports verified sync only for the active media session and playback sequence", () => {
+    const engine = roomWithTwoUsers();
+    engine.handle("media-selected", {
+      media: { pageUrl: "https://example.com/movie", title: "Movie", currentTime: 20, paused: true }
+    }, "host", "media-sync-1");
+    const state = engine.state.playbackState;
+
+    engine.handle("participant-sync-report", {
+      mediaSessionId: state.mediaSessionId,
+      sourceFingerprint: state.sourceFingerprint,
+      currentTime: 20.2,
+      isPlaying: false,
+      playbackRate: 1,
+      lastAppliedSequence: state.sequence
+    }, "viewer", "sync-report-1");
+    expect(engine.participants.get("viewer")).toMatchObject({ syncStatus: "synced", mediaSessionId: state.mediaSessionId });
+
+    engine.handle("participant-sync-report", {
+      mediaSessionId: "old-session",
+      sourceFingerprint: state.sourceFingerprint,
+      currentTime: 20,
+      isPlaying: false,
+      lastAppliedSequence: state.sequence
+    }, "viewer", "sync-report-2");
+    expect(engine.participants.get("viewer")?.syncStatus).toBe("out-of-sync");
+  });
+
   it("stores the selected source and exposes it in a late-join snapshot", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-13T20:00:00Z"));
@@ -237,6 +362,24 @@ describe("RoomEngine call signaling", () => {
       muted: true,
       cameraOff: false
     });
+  });
+});
+
+describe("RoomEngine reactions", () => {
+  it("broadcasts a lightweight reaction without changing room state", () => {
+    const engine = roomWithTwoUsers();
+    const revision = engine.state.revision;
+    const result = engine.handle("room-reaction", { emoji: "🔥" }, "viewer", "reaction-1");
+
+    expect(result.stateChanged).toBeUndefined();
+    expect(engine.state.revision).toBe(revision);
+    expect(event(result, "room-reaction")?.payload).toMatchObject({
+      id: "reaction-1",
+      userId: "viewer",
+      displayName: "viewer",
+      emoji: "🔥"
+    });
+    expect(event(result, "room-reaction")?.targetUserId).toBeUndefined();
   });
 });
 

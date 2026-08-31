@@ -4,9 +4,11 @@ import {
   isPlaybackMode,
   projectPlayback,
   type Participant,
+  type MediaSuggestion,
   type PlaybackState,
   type RoomRole,
-  type RoomState
+  type RoomState,
+  type SelectedContent
 } from "./protocol";
 
 export interface EngineEvent {
@@ -40,8 +42,18 @@ export class RoomEngine {
   constructor(state: RoomState, participants: Iterable<Participant> = [], preLiveSharePlayback: PlaybackState | null = null) {
     this.state = {
       ...state,
+      playbackState: {
+        ...state.playbackState,
+        // Old rooms predate the explicit readiness gate. Treat their current
+        // session as already underway instead of showing a stale overlay.
+        sessionStartedAt: state.playbackState.sessionStartedAt === undefined && state.playbackState.mediaSessionId ? Date.now() : state.playbackState.sessionStartedAt ?? null
+      },
       roomExperience: state.roomExperience === "live-share" ? "live-share" : "synced-media",
-      liveShare: { ...defaultLiveShareState(), ...(state.liveShare || {}) }
+      liveShare: { ...defaultLiveShareState(), ...(state.liveShare || {}) },
+      mediaSessionCounter: Number(state.mediaSessionCounter || 0),
+      mediaSuggestions: Array.isArray(state.mediaSuggestions) ? state.mediaSuggestions : [],
+      blockedGuestIds: Array.isArray(state.blockedGuestIds) ? state.blockedGuestIds : [],
+      selectedContent: state.selectedContent || null
     };
     this.participants = new Map(Array.from(participants, (participant) => [participant.userId, participant]));
     this.preLiveSharePlayback = preLiveSharePlayback;
@@ -63,6 +75,10 @@ export class RoomEngine {
       },
       roomExperience: "synced-media",
       liveShare: defaultLiveShareState(),
+      mediaSessionCounter: Number(room.mediaSessionCounter || 0),
+      mediaSuggestions: Array.isArray(room.mediaSuggestions) ? room.mediaSuggestions : [],
+      blockedGuestIds: Array.isArray(room.blockedGuestIds) ? room.blockedGuestIds : [],
+      selectedContent: room.selectedContent || null,
       createdAt: room.createdAt || now,
       revision: Number(room.revision || 1)
     });
@@ -128,16 +144,28 @@ export class RoomEngine {
     switch (event) {
       case "chat-message":
         return this.chat(payload, actorUserId, commandId);
+      case "room-reaction":
+        return this.reaction(payload, actorUserId, commandId);
       case "room-leave":
         return this.leave(actorUserId);
       case "room-playback-mode":
         return this.setPlaybackMode(payload, actorUserId);
       case "room-role-update":
         return this.setRole(payload, actorUserId);
+      case "room-guest-revoke":
+        return this.revokeGuest(payload, actorUserId);
+      case "room-content-select":
+        return this.selectContent(payload, actorUserId);
       case "media-detected":
         return this.mediaDetected(payload, actorUserId);
       case "media-selected":
         return this.selectMedia(payload, actorUserId, commandId);
+      case "media-suggestion-accept":
+        return this.acceptMediaSuggestion(payload, actorUserId, commandId);
+      case "media-suggestion-decline":
+        return this.declineMediaSuggestion(payload, actorUserId);
+      case "participant-sync-report":
+        return this.syncReport(payload, actorUserId);
       case "playback-sync-request":
         return { events: [{ event: "playback-state-sync", payload: { ...projectPlayback(this.state.playbackState), reason: "sync-response", targetUserId: actorUserId }, targetUserId: actorUserId }] };
       case "playback-drift-correction":
@@ -198,12 +226,32 @@ export class RoomEngine {
     };
   }
 
+  private revokeGuest(payload: Record<string, unknown>, actorUserId: string): EngineResult {
+    if (this.state.hostUserId !== actorUserId) return this.denied(actorUserId, "Only the host can remove a guest.");
+    const targetUserId = String(payload.targetUserId || "");
+    const target = this.participants.get(targetUserId);
+    if (!target?.guest) return this.denied(actorUserId, "Only guest participants can be removed this way.");
+
+    this.state.blockedGuestIds = Array.from(new Set([...(this.state.blockedGuestIds || []), targetUserId])).slice(-80);
+    this.participants.delete(targetUserId);
+    this.bumpRevision();
+    return {
+      stateChanged: true,
+      participantChanged: true,
+      events: [
+        { event: "guest-revoked", payload: { reason: "The host removed this guest from the room." }, targetUserId },
+        { event: "room-action", payload: { message: `${target.displayName} was removed from the room.` } },
+        { event: "room-state", payload: this.snapshot() }
+      ]
+    };
+  }
+
   private handlePlayback(event: string, payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
     if (this.state.roomExperience === "live-share") {
       return { events: [{ event: "permission-denied", payload: { reason: "Playback controls are paused during Live Share." }, targetUserId: userId }] };
     }
-    if (!this.canControl(userId)) return this.denied(userId);
     const action = PLAYBACK_ACTIONS[event];
+    if (!this.canControl(userId)) return this.denied(userId);
     const now = Date.now();
     const projected = projectPlayback(this.state.playbackState, now);
     const next: PlaybackState = {
@@ -215,16 +263,21 @@ export class RoomEngine {
       commandId,
       sequence: this.state.playbackState.sequence + 1
     };
-    if (action === "play") next.isPlaying = true;
+    if (action === "play") {
+      next.isPlaying = true;
+      next.sessionStartedAt ||= now;
+    }
     if (action === "pause" || action === "ended") next.isPlaying = false;
     if (action === "seek") next.currentTime = Math.max(0, finiteNumber(payload.currentTime, 0));
     if (action !== "rate-change") next.playbackRate = this.state.playbackState.playbackRate || 1;
     if (action === "rate-change") next.playbackRate = Math.min(4, Math.max(0.25, next.playbackRate));
     this.state.playbackState = next;
+    console.log(JSON.stringify({ event: "room.playback-command", roomId: this.state.roomId, actorUserId: userId, action, sequence: next.sequence, currentTime: next.currentTime, isPlaying: next.isPlaying }));
     this.bumpRevision();
     const participant = this.participants.get(userId);
     return {
       stateChanged: true,
+      participantChanged: true,
       events: [
         { event: "playback-command", payload: { action, state: next, commandId } },
         { event: "room-action", payload: roomAction(`${participant?.displayName || "Someone"} ${actionLabel(action)}`) },
@@ -246,6 +299,24 @@ export class RoomEngine {
           userId,
           displayName: participant.displayName,
           message,
+          createdAt: new Date().toISOString()
+        }
+      }]
+    };
+  }
+
+  private reaction(payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
+    const participant = this.participants.get(userId);
+    const emoji = String(payload.emoji || "").trim().slice(0, 16);
+    if (!participant || !emoji) return { events: [] };
+    return {
+      events: [{
+        event: "room-reaction",
+        payload: {
+          id: String(payload.id || commandId),
+          userId,
+          displayName: participant.displayName,
+          emoji,
           createdAt: new Date().toISOString()
         }
       }]
@@ -288,6 +359,98 @@ export class RoomEngine {
     };
   }
 
+  private selectContent(payload: Record<string, unknown>, userId: string): EngineResult {
+    const participant = this.participants.get(userId);
+    if (!participant || (participant.role !== "host" && participant.role !== "cohost" && this.state.hostUserId !== userId)) {
+      return this.denied(userId, "Only the host or a cohost can choose a title.");
+    }
+
+    const raw = (payload.content || {}) as Record<string, unknown>;
+    const title = String(raw.title || "").trim().slice(0, 180);
+    const id = String(raw.id || "").trim().slice(0, 120);
+    if (!title || !id) {
+      return this.denied(userId, "Choose a valid movie or series.");
+    }
+    const mediaType = raw.mediaType === "tv" ? "tv" : "movie";
+
+    const providerRaw = raw.provider && typeof raw.provider === "object"
+      ? raw.provider as Record<string, unknown>
+      : null;
+    const destination = String(providerRaw?.destination || "").trim().slice(0, 2048);
+    const adapterId = ["cinesrc", "strigil", "moviesapi", "youtube"].includes(String(providerRaw?.adapterId || ""))
+      ? String(providerRaw?.adapterId || "") as "cinesrc" | "strigil" | "moviesapi" | "youtube"
+      : undefined;
+    const origins: Record<string, string> = { cinesrc: "https://cinesrc.st", strigil: "https://strigil.cc", moviesapi: "https://moviesapi.to", youtube: "https://www.youtube.com" };
+    let destinationOrigin = "";
+    try { destinationOrigin = new URL(destination).origin; } catch { /* The empty capability below keeps malformed destinations manual. */ }
+    const capability = adapterId && destinationOrigin === origins[adapterId] ? "synced" as const : "manual" as const;
+    const provider = providerRaw && destination
+      ? {
+          id: String(providerRaw.id || providerRaw.name || "").slice(0, 120),
+          name: String(providerRaw.name || "Provider").slice(0, 120),
+          destination,
+          capability,
+          kind: providerRaw.kind === "embed" ? "embed" as const : "service" as const,
+          source: String(providerRaw.source || "").slice(0, 80) || undefined,
+          adapterId,
+          origin: capability === "synced" && adapterId ? origins[adapterId] : undefined
+        }
+      : null;
+    const content: SelectedContent = {
+      id,
+      mediaType,
+      title,
+      year: String(raw.year || "").slice(0, 16) || undefined,
+      overview: String(raw.overview || "").slice(0, 1500) || undefined,
+      posterUrl: String(raw.posterUrl || "").slice(0, 2048) || undefined,
+      backdropUrl: String(raw.backdropUrl || "").slice(0, 2048) || undefined,
+      provider,
+      selectedByUserId: userId,
+      selectedAt: Date.now()
+    };
+    this.state.selectedContent = content;
+    // Choosing a provider is a source change, even before the host presses
+    // play. Establish its session here so reports and remote commands agree.
+    this.state.mediaSessionCounter = Number(this.state.mediaSessionCounter || 0) + 1;
+    const mediaSessionId = `${this.state.roomId}:${this.state.mediaSessionCounter}`;
+    const sourceFingerprint = fingerprintMedia({
+      url: provider?.destination || `havyn:${mediaType}:${id}`,
+      pageUrl: provider?.destination || "",
+      frameUrl: provider?.destination || "",
+      title
+    });
+    this.state.playbackState = {
+      ...this.state.playbackState,
+      isPlaying: false,
+      currentTime: 0,
+      updatedAt: Date.now(),
+      playbackRate: 1,
+      activeMediaUrl: provider?.destination || "",
+      activeMediaPageUrl: provider?.destination || "",
+      activeMediaFrameUrl: provider?.destination || "",
+      activeMediaTitle: title,
+      controllerUserId: userId,
+      commandId: undefined,
+      sequence: this.state.playbackState.sequence + 1,
+      mediaSessionId,
+      sourceFingerprint,
+      sessionStartedAt: null
+    };
+    for (const current of this.participants.values()) {
+      this.participantPatch(current.userId, { syncStatus: "checking", syncDriftSeconds: undefined, mediaSessionId: "", sourceFingerprint: "", lastAppliedSequence: 0, buffering: false });
+    }
+    this.bumpRevision();
+    return {
+      stateChanged: true,
+      events: [
+        { event: "room-content-selected", payload: content },
+        { event: "room-action", payload: roomAction(`${participant.displayName} selected ${title}`) },
+        { event: "playback-state-sync", payload: this.state.playbackState },
+        { event: "room-state", payload: this.snapshot() }
+      ]
+    };
+  }
+
   private mediaDetected(payload: Record<string, unknown>, userId: string): EngineResult {
     this.participantPatch(userId, { mediaReady: true });
     return {
@@ -307,7 +470,8 @@ export class RoomEngine {
   }
 
   private selectMedia(payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
-    if (!this.canControl(userId)) return this.denied(userId);
+    const participant = this.participants.get(userId);
+    if (!participant) return { events: [] };
     const media = (payload.media || {}) as Record<string, unknown>;
     const pageUrl = String(media.pageUrl || media.url || media.frameUrl || "");
     const frameUrl = String(media.frameUrl || media.url || pageUrl);
@@ -319,7 +483,40 @@ export class RoomEngine {
       pageUrl,
       frameUrl
     };
+    const sourceFingerprint = fingerprintMedia(normalizedMedia);
+    if (participant.role !== "host" && this.state.hostUserId !== userId) {
+      if (participant.role !== "cohost") return this.denied(userId, "Only the host can change the room source.");
+      const suggestion: MediaSuggestion = {
+        id: commandId,
+        userId,
+        displayName: participant.displayName,
+        media: normalizedMedia,
+        sourceFingerprint,
+        createdAt: new Date().toISOString()
+      };
+      this.state.mediaSuggestions = [
+        ...(this.state.mediaSuggestions || []).filter((item) => item.userId !== userId),
+        suggestion
+      ].slice(-4);
+      this.bumpRevision();
+      return {
+        stateChanged: true,
+        events: [
+          { event: "media-suggestion-created", payload: suggestion, targetUserId: this.state.hostUserId },
+          { event: "room-action", payload: roomAction(`${participant.displayName} suggested a source`), targetUserId: this.state.hostUserId },
+          { event: "room-state", payload: this.snapshot() }
+        ]
+      };
+    }
+    return this.activateMedia(normalizedMedia, sourceFingerprint, userId, commandId);
+  }
+
+  private activateMedia(media: Record<string, unknown>, sourceFingerprint: string, userId: string, commandId: string): EngineResult {
+    const pageUrl = String(media.pageUrl || media.url || media.frameUrl || "");
+    const frameUrl = String(media.frameUrl || media.url || pageUrl);
     const now = Date.now();
+    this.state.mediaSessionCounter = Number(this.state.mediaSessionCounter || 0) + 1;
+    const mediaSessionId = `${this.state.roomId}:${this.state.mediaSessionCounter}`;
     this.state.playbackState = {
       ...this.state.playbackState,
       isPlaying: media.paused === false,
@@ -332,16 +529,96 @@ export class RoomEngine {
       activeMediaTitle: String(media.title || "Detected media"),
       controllerUserId: userId,
       commandId,
-      sequence: this.state.playbackState.sequence + 1
+      sequence: this.state.playbackState.sequence + 1,
+      mediaSessionId,
+      sourceFingerprint,
+      sessionStartedAt: null
     };
+    this.state.mediaSuggestions = [];
+    for (const participant of this.participants.values()) {
+      this.participantPatch(participant.userId, {
+        syncStatus: "checking",
+        syncDriftSeconds: undefined,
+        mediaSessionId: "",
+        sourceFingerprint: "",
+        lastAppliedSequence: 0,
+        buffering: false
+      });
+    }
     this.bumpRevision();
     return {
       stateChanged: true,
+      participantChanged: true,
       events: [
-        { event: "media-selected", payload: { media: normalizedMedia, playbackState: this.state.playbackState } },
+        { event: "media-selected", payload: { media, playbackState: this.state.playbackState, mediaSessionId, sourceFingerprint } },
         { event: "playback-state-sync", payload: this.state.playbackState },
         { event: "room-state", payload: this.snapshot() }
       ]
+    };
+  }
+
+  private acceptMediaSuggestion(payload: Record<string, unknown>, userId: string, commandId: string): EngineResult {
+    if (userId !== this.state.hostUserId) return this.denied(userId, "Only the host can accept source suggestions.");
+    const suggestionId = String(payload.suggestionId || "");
+    const suggestion = (this.state.mediaSuggestions || []).find((item) => item.id === suggestionId);
+    if (!suggestion) return { events: [] };
+    return this.activateMedia(suggestion.media, suggestion.sourceFingerprint, userId, commandId);
+  }
+
+  private declineMediaSuggestion(payload: Record<string, unknown>, userId: string): EngineResult {
+    if (userId !== this.state.hostUserId) return this.denied(userId, "Only the host can decline source suggestions.");
+    const suggestionId = String(payload.suggestionId || "");
+    const previous = this.state.mediaSuggestions || [];
+    const suggestion = previous.find((item) => item.id === suggestionId);
+    this.state.mediaSuggestions = previous.filter((item) => item.id !== suggestionId);
+    if (this.state.mediaSuggestions.length === previous.length) return { events: [] };
+    this.bumpRevision();
+    const host = this.participants.get(userId);
+    return {
+      stateChanged: true,
+      events: [
+        {
+          event: "room-action",
+          payload: roomAction(`${host?.displayName || "Host"} declined ${suggestion?.displayName || "a cohost"}'s source suggestion`)
+        },
+        { event: "room-state", payload: this.snapshot() }
+      ]
+    };
+  }
+
+  private syncReport(payload: Record<string, unknown>, userId: string): EngineResult {
+    const participant = this.participants.get(userId);
+    if (!participant) return { events: [] };
+    const authoritative = projectPlayback(this.state.playbackState);
+    const mediaSessionId = String(payload.mediaSessionId || "");
+    const sourceFingerprint = String(payload.sourceFingerprint || "");
+    const currentTime = Math.max(0, finiteNumber(payload.currentTime, 0));
+    const drift = Math.abs(currentTime - authoritative.currentTime);
+    const buffering = Boolean(payload.buffering);
+    const sequence = Math.max(0, finiteNumber(payload.lastAppliedSequence, 0));
+    const localPlaying = Boolean(payload.isPlaying);
+    let syncStatus: Participant["syncStatus"] = "checking";
+    if (!authoritative.mediaSessionId) syncStatus = "checking";
+    else if (mediaSessionId !== authoritative.mediaSessionId || sourceFingerprint !== authoritative.sourceFingerprint) syncStatus = "out-of-sync";
+    else if (buffering) syncStatus = "buffering";
+    else if (sequence < authoritative.sequence || localPlaying !== authoritative.isPlaying) syncStatus = "catching-up";
+    else if (drift <= 0.85) syncStatus = "synced";
+    else if (drift <= 2.5) syncStatus = "catching-up";
+    else syncStatus = "out-of-sync";
+    const changed = participant.syncStatus !== syncStatus || participant.mediaSessionId !== mediaSessionId;
+    if (changed) console.log(JSON.stringify({ event: "room.sync-status", roomId: this.state.roomId, userId, syncStatus, drift: Math.round(drift * 100) / 100, sequence }));
+    this.participantPatch(userId, {
+      syncStatus,
+      syncDriftSeconds: Math.round(drift * 10) / 10,
+      syncReportedAt: Date.now(),
+      mediaSessionId,
+      sourceFingerprint,
+      lastAppliedSequence: sequence,
+      buffering
+    });
+    return {
+      participantChanged: true,
+      events: changed ? [{ event: "participant-sync-status", payload: { userId, syncStatus, driftSeconds: drift } }, { event: "room-state", payload: this.snapshot() }] : []
     };
   }
 
@@ -557,6 +834,21 @@ function systemMessage(message: string) {
 
 function roomAction(message: string) {
   return { id: crypto.randomUUID(), type: "playback", message, createdAt: new Date().toISOString() };
+}
+
+function fingerprintMedia(media: Record<string, unknown>): string {
+  const raw = [
+    String(media.pageUrl || media.url || "").trim().toLowerCase(),
+    String(media.frameUrl || "").trim().toLowerCase(),
+    String(media.title || "").trim().toLowerCase(),
+    Math.round(finiteNumber(media.duration, 0))
+  ].join("|");
+  let hash = 2166136261;
+  for (let index = 0; index < raw.length; index += 1) {
+    hash ^= raw.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `media-${(hash >>> 0).toString(36)}`;
 }
 
 function actionLabel(action: string): string {

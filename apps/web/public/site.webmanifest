@@ -1,0 +1,11 @@
+{
+  "name": "Havyn Web",
+  "short_name": "Havyn",
+  "icons": [
+    { "src": "/havyn-mark-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/havyn-mark-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#09090d",
+  "background_color": "#09090d",
+  "display": "standalone"
+}
