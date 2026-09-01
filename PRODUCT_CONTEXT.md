@@ -205,6 +205,16 @@ in the participant list and remove or change their role like any other room
 participant. Guests are not a way around provider authorization: each person
 still uses their own provider session.
 
+### Media-first call audio decision (2026-09-01)
+
+Havyn Web calls join in a media-first state: the participant can see the call
+and hear other people, but Havyn does not activate their microphone simply by
+joining. This avoids browser-level call-audio ducking of the provider. A person
+explicitly enables their microphone when they want to speak; muting stops and
+releases that track instead of only disabling it, so compatible browsers return
+to normal media-playback audio routing. This behavior applies regardless of
+room control mode and does not affect provider playback coordination.
+
 ### YouTube room decision (2026-08-29)
 
 YouTube is a first-class embedded web provider. Havyn may use YouTube's official
