@@ -3,7 +3,30 @@ import { supabase } from "./supabase.js";
 import { ROOM_ENDPOINT } from "./roomConfig.js";
 
 const fallbackIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-const constraints = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: { width: { ideal: 640, max: 960 }, height: { ideal: 360, max: 540 }, frameRate: { ideal: 15, max: 20 } } };
+const videoConstraints = { width: { ideal: 640, max: 960 }, height: { ideal: 360, max: 540 }, frameRate: { ideal: 15, max: 20 } };
+
+function isAppleBrowser() {
+  const userAgent = navigator.userAgent || "";
+  const isIOS = /iPad|iPhone|iPod/.test(userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return isIOS || /^((?!chrome|android).)*safari/i.test(userAgent);
+}
+
+function configureAudioSession(type) {
+  try {
+    if ("audioSession" in navigator) navigator.audioSession.type = type;
+  } catch {
+    // Audio Session is optional. Browsers without it keep their normal behavior.
+  }
+}
+
+function callConstraints() {
+  // Safari and iOS can duck video playback when their voice-processing input
+  // starts. Prefer an unprocessed track there so the film remains foreground.
+  const audio = isAppleBrowser()
+    ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  return { audio, video: videoConstraints };
+}
 
 async function loadIceConfig(roomId) {
   const token = (await supabase?.auth.getSession())?.data?.session?.access_token;
@@ -34,8 +57,8 @@ export function useRoomCall({ room, socket, user, notify }) {
     return peer;
   }, [closePeer, socket]);
   const sendOffer = useCallback(async (userId) => { const peer = createPeer(userId); if (!peer || peer.signalingState !== "stable") return; const offer = await peer.createOffer(); await peer.setLocalDescription(offer); socket?.command("webrtc-offer", { toUserId: userId, offer: peer.localDescription }); }, [createPeer, socket]);
-  const leave = useCallback(() => { socket?.command("call-leave"); peers.current.forEach((entry) => (entry.peer || entry).close()); peers.current.clear(); queuedIce.current.clear(); local.current?.getTracks().forEach((track) => track.stop()); local.current = null; joinedRef.current = false; setJoined(false); setMuted(false); setCameraOff(false); setLocalStream(null); setRemoteStreams([]); }, [socket]);
-  const join = useCallback(async () => { if (joinedRef.current) return; try { const [stream, config] = await Promise.all([navigator.mediaDevices.getUserMedia(constraints), loadIceConfig(room?.roomId)]); iceConfig.current = config; local.current = stream; joinedRef.current = true; setLocalStream(stream); setJoined(true); setMuted(false); setCameraOff(false); socket?.command("call-join", { muted: false, cameraOff: false }); } catch (error) { notify(error?.name === "NotAllowedError" ? "Allow camera and microphone access to join the call." : "The call could not start. Check your camera, microphone, and network."); } }, [notify, room?.roomId, socket]);
+  const leave = useCallback(() => { socket?.command("call-leave"); peers.current.forEach((entry) => (entry.peer || entry).close()); peers.current.clear(); queuedIce.current.clear(); local.current?.getTracks().forEach((track) => track.stop()); local.current = null; configureAudioSession("playback"); joinedRef.current = false; setJoined(false); setMuted(false); setCameraOff(false); setLocalStream(null); setRemoteStreams([]); }, [socket]);
+  const join = useCallback(async () => { if (joinedRef.current) return; configureAudioSession("play-and-record"); try { const [stream, config] = await Promise.all([navigator.mediaDevices.getUserMedia(callConstraints()), loadIceConfig(room?.roomId)]); iceConfig.current = config; local.current = stream; joinedRef.current = true; setLocalStream(stream); setJoined(true); setMuted(false); setCameraOff(false); socket?.command("call-join", { muted: false, cameraOff: false }); } catch (error) { configureAudioSession("playback"); notify(error?.name === "NotAllowedError" ? "Allow camera and microphone access to join the call." : "The call could not start. Check your camera, microphone, and network."); } }, [notify, room?.roomId, socket]);
   const toggleMute = useCallback(() => { const next = !muted; local.current?.getAudioTracks().forEach((track) => { track.enabled = !next; }); setMuted(next); socket?.command("call-status", { muted: next, cameraOff }); }, [cameraOff, muted, socket]);
   const toggleCamera = useCallback(() => { const next = !cameraOff; local.current?.getVideoTracks().forEach((track) => { track.enabled = !next; }); setCameraOff(next); socket?.command("call-status", { muted, cameraOff: next }); }, [cameraOff, muted, socket]);
 
@@ -72,6 +95,6 @@ export function useRoomCall({ room, socket, user, notify }) {
     const interval = setInterval(() => void inspect(), 3500);
     return () => clearInterval(interval);
   }, [joined, user.userId]);
-  useEffect(() => () => { peers.current.forEach((entry) => (entry.peer || entry).close()); local.current?.getTracks().forEach((track) => track.stop()); }, []);
+  useEffect(() => () => { peers.current.forEach((entry) => (entry.peer || entry).close()); local.current?.getTracks().forEach((track) => track.stop()); configureAudioSession("playback"); }, []);
   return { joined, muted, cameraOff, localStream, remoteStreams, connectionQuality, join, leave, toggleMute, toggleCamera };
 }
