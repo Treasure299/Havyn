@@ -810,8 +810,10 @@ function PlaybackModeMenu({ mode, disabled, onChange }) { const { ref, close } =
 function ConnectionIndicator({ quality = "checking" }) { const labels = { good: "Stable connection", fair: "Usable connection", poor: "Unstable connection", checking: "Connection is being measured" }; return <span className={`connection-indicator ${quality}`} title={labels[quality]}><Signal size={14}/></span>; }
 function PeopleMenu({ participants, quality, role, onRoleChange, onRemoveGuest }) { const { ref, close } = useDismissibleDetails(); return <details ref={ref} className="people-menu"><summary aria-label="Open people list"><Users size={16}/><span className="people-label">People</span><b>{participants.length}</b><ChevronDown size={14}/></summary><div className="room-menu-popover people-popover"><div className="people-popover-heading"><strong>In this room</strong><span>{participants.length}</span></div>{participants.map((participant) => <div className="participant" key={participant.userId}><span className="avatar">{participant.displayName.slice(0, 1)}</span><div><strong>{participant.displayName}</strong><small>{participant.guest ? `${participant.role} · guest` : participant.role}</small></div><ConnectionIndicator quality={quality[participant.userId] || "checking"}/>{role === "host" && participant.role !== "host" ? <span className="participant-actions"><button className="role-button" onClick={() => { onRoleChange(participant.userId, participant.role === "cohost" ? "viewer" : "cohost"); close(); }}>{participant.role === "cohost" ? "Remove cohost" : "Make cohost"}</button>{participant.guest && <button className="role-button danger" onClick={() => { onRemoveGuest(participant.userId); close(); }}>Remove</button>}</span> : <i className={participant.online ? "online" : ""}/>}</div>)}</div></details>; }
 
-const CALL_MIX_DEFAULT = 0.35;
-const CALL_MIX_MAX = 0.8;
+// Provider playback owns the room's primary sound. Keep every incoming call
+// stream noticeably beneath it, even when multiple people are connected.
+const CALL_MIX_DEFAULT = 0.2;
+const CALL_MIX_MAX = 0.7;
 
 function MediaTile({ stream, label, quality, muted = false, spotlighted, onSpotlight }) {
   const ref = useRef(null); const [volume, setVolume] = useState(CALL_MIX_DEFAULT); const [volumeOpen, setVolumeOpen] = useState(false);
