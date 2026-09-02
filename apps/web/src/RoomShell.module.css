@@ -773,10 +773,18 @@
   .roomPage:not(.theater) .roomSidebar > .callPanel { top: 4px !important; right: 4px !important; left: 4px !important; }
 }
 
-/* Live video must preserve its camera frame when the dock is resized. */
+/* A resized call dock is usable space: its camera tiles grow with it. */
 @media (min-width: 961px) {
-  .roomPage:not(.theater) .callActive .callMediaSurface .callGrid { align-content: start; grid-auto-rows: auto; overflow: auto; }
-  .roomPage:not(.theater) .callActive .callMediaSurface .callGrid :global(.call-tile) { height: auto !important; aspect-ratio: 16 / 9 !important; }
+  .roomPage:not(.theater) .callActive .callMediaSurface .callGrid {
+    align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .roomPage:not(.theater) .callActive .callMediaSurface .callGrid :global(.call-tile) {
+    min-height: 0;
+    height: 100% !important;
+    aspect-ratio: auto !important;
+  }
 }
 
 /* Theater and fullscreen rails share the same obvious grab affordance as the
