@@ -49,7 +49,7 @@ export function useRoomCall({ room, socket, user, notify }) {
   const [joined, setJoined] = useState(false); const [muted, setMuted] = useState(false); const [cameraOff, setCameraOff] = useState(false);
   const [localStream, setLocalStream] = useState(null); const [remoteStreams, setRemoteStreams] = useState([]);
   const [connectionQuality, setConnectionQuality] = useState({});
-  const peers = useRef(new Map()); const queuedIce = useRef(new Map()); const local = useRef(null); const joinedRef = useRef(false); const iceConfig = useRef(fallbackIce); const relayByteTotals = useRef(new Map());
+  const peers = useRef(new Map()); const queuedIce = useRef(new Map()); const local = useRef(null); const joinedRef = useRef(false); const iceConfig = useRef(fallbackIce); const relayByteTotals = useRef(new Map()); const failureNotified = useRef(false);
 
   const closePeer = useCallback((userId) => { const entry = peers.current.get(userId); const peer = entry?.peer || entry; if (entry?.recoveryTimer) clearTimeout(entry.recoveryTimer); if (entry?.offerTimer) clearTimeout(entry.offerTimer); if (peer) peer.close(); peers.current.delete(userId); queuedIce.current.delete(userId); relayByteTotals.current.delete(userId); setRemoteStreams((streams) => streams.filter((stream) => stream.userId !== userId)); }, []);
   const createPeer = useCallback((userId) => {
@@ -85,7 +85,10 @@ export function useRoomCall({ room, socket, user, notify }) {
         else if (!meta.recoveryTimer) meta.recoveryTimer = setTimeout(restart, 1800);
       } else if (peer.connectionState === "failed" && meta.restarting && !meta.failedAfterRestart) {
         meta.failedAfterRestart = true;
-        notify("Direct and relay call paths failed. Try another relay under Account > Call relay, then rejoin.");
+        if (!failureNotified.current) {
+          failureNotified.current = true;
+          notify("One or more participants could not connect through the current relay. Try another relay under Account > Call relay, then rejoin.");
+        }
       }
       if (peer.connectionState === "closed") closePeer(userId);
     };
@@ -126,6 +129,7 @@ export function useRoomCall({ room, socket, user, notify }) {
       [stream] = result;
       const config = result[1];
       iceConfig.current = config;
+      failureNotified.current = false;
       local.current = stream;
       syncDebug("call-local-tracks", { tracks: stream.getTracks().map((track) => ({ kind: track.kind, enabled: track.enabled, muted: track.muted, readyState: track.readyState, label: track.label })) });
       joinedRef.current = true;

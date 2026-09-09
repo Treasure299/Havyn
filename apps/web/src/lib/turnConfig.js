@@ -62,28 +62,56 @@ export function subscribeTurnSettings(listener) {
 export async function probeTurnSettings(settings) {
   const turnUrls = splitUrls(settings.turnUrls);
   if (!turnUrls.length || !settings.username || !settings.credential) throw new Error("Enter a TURN server, username, and password.");
-  const peer = new RTCPeerConnection({
+  const configuration = {
     iceTransportPolicy: "relay",
     iceServers: [
       ...(settings.stunUrl ? [{ urls: settings.stunUrl }] : []),
       { urls: turnUrls, username: settings.username, credential: settings.credential }
     ]
-  });
+  };
+  const sender = new RTCPeerConnection(configuration);
+  const receiver = new RTCPeerConnection(configuration);
+  const senderQueue = [];
+  const receiverQueue = [];
+  let relayProtocol = "TURN";
   try {
     return await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("No relay candidate was received.")), 12_000);
-      peer.onicecandidate = ({ candidate }) => {
-        if (candidate?.type !== "relay") return;
-        clearTimeout(timeout);
-        resolve(candidate.protocol || "TURN");
+      const timeout = setTimeout(() => reject(new Error("The relay accepted credentials but could not carry data end to end.")), 15_000);
+      sender.onicecandidate = ({ candidate }) => {
+        if (!candidate) return;
+        if (candidate.type === "relay") relayProtocol = candidate.protocol || relayProtocol;
+        if (receiver.remoteDescription) void receiver.addIceCandidate(candidate).catch(() => {});
+        else receiverQueue.push(candidate);
       };
-      peer.createDataChannel("havyn-relay-test");
-      peer.createOffer().then((offer) => peer.setLocalDescription(offer)).catch((error) => {
+      receiver.onicecandidate = ({ candidate }) => {
+        if (!candidate) return;
+        if (candidate.type === "relay") relayProtocol = candidate.protocol || relayProtocol;
+        if (sender.remoteDescription) void sender.addIceCandidate(candidate).catch(() => {});
+        else senderQueue.push(candidate);
+      };
+      receiver.ondatachannel = ({ channel }) => {
+        channel.onmessage = ({ data }) => {
+          if (data !== "havyn-relay-ready") return;
+          clearTimeout(timeout);
+          resolve(relayProtocol);
+        };
+      };
+      const channel = sender.createDataChannel("havyn-relay-test");
+      channel.onopen = () => channel.send("havyn-relay-ready");
+      sender.createOffer().then(async (offer) => {
+        await sender.setLocalDescription(offer);
+        await receiver.setRemoteDescription(sender.localDescription);
+        await Promise.all(receiverQueue.splice(0).map((candidate) => receiver.addIceCandidate(candidate)));
+        await receiver.setLocalDescription(await receiver.createAnswer());
+        await sender.setRemoteDescription(receiver.localDescription);
+        await Promise.all(senderQueue.splice(0).map((candidate) => sender.addIceCandidate(candidate)));
+      }).catch((error) => {
         clearTimeout(timeout);
         reject(error);
       });
     });
   } finally {
-    peer.close();
+    sender.close();
+    receiver.close();
   }
 }
