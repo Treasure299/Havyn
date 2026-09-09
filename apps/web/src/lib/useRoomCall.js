@@ -51,13 +51,24 @@ export function useRoomCall({ room, socket, user, notify }) {
   const [connectionQuality, setConnectionQuality] = useState({});
   const peers = useRef(new Map()); const queuedIce = useRef(new Map()); const local = useRef(null); const joinedRef = useRef(false); const iceConfig = useRef(fallbackIce); const relayByteTotals = useRef(new Map());
 
-  const closePeer = useCallback((userId) => { const entry = peers.current.get(userId); const peer = entry?.peer || entry; if (entry?.recoveryTimer) clearTimeout(entry.recoveryTimer); if (peer) peer.close(); peers.current.delete(userId); queuedIce.current.delete(userId); relayByteTotals.current.delete(userId); setRemoteStreams((streams) => streams.filter((stream) => stream.userId !== userId)); }, []);
+  const closePeer = useCallback((userId) => { const entry = peers.current.get(userId); const peer = entry?.peer || entry; if (entry?.recoveryTimer) clearTimeout(entry.recoveryTimer); if (entry?.offerTimer) clearTimeout(entry.offerTimer); if (peer) peer.close(); peers.current.delete(userId); queuedIce.current.delete(userId); relayByteTotals.current.delete(userId); setRemoteStreams((streams) => streams.filter((stream) => stream.userId !== userId)); }, []);
   const createPeer = useCallback((userId) => {
     const existing = peers.current.get(userId); if (existing) return existing.peer || existing;
-    const peer = new RTCPeerConnection(iceConfig.current); const meta = { peer, restarting: false, failedAfterRestart: false, offerPending: false, negotiated: false, recoveryTimer: null }; peers.current.set(userId, meta);
+    const peer = new RTCPeerConnection(iceConfig.current); const meta = { peer, remoteStream: new MediaStream(), restarting: false, failedAfterRestart: false, offerPending: false, negotiated: false, recoveryTimer: null, offerTimer: null }; peers.current.set(userId, meta);
     local.current?.getTracks().forEach((track) => peer.addTrack(track, local.current));
     peer.onicecandidate = ({ candidate }) => { if (candidate) socket?.command("webrtc-ice-candidate", { toUserId: userId, candidate }); };
-    peer.ontrack = ({ streams, track }) => { const stream = streams[0] || new MediaStream([track]); track.onunmute = () => setRemoteStreams((current) => [...current.filter((item) => item.userId !== userId), { userId, stream }]); setRemoteStreams((current) => [...current.filter((item) => item.userId !== userId), { userId, stream }]); };
+    peer.ontrack = ({ streams, track }) => {
+      const incomingTracks = streams[0]?.getTracks() || [track];
+      incomingTracks.forEach((incoming) => {
+        if (!meta.remoteStream.getTracks().some((current) => current.id === incoming.id)) meta.remoteStream.addTrack(incoming);
+        incoming.onended = () => {
+          meta.remoteStream.removeTrack(incoming);
+          if (!meta.remoteStream.getTracks().some((current) => current.readyState === "live")) setRemoteStreams((current) => current.filter((item) => item.userId !== userId));
+        };
+      });
+      syncDebug("call-remote-track", { userId, kind: track.kind, muted: track.muted, streamless: !streams[0], trackKinds: meta.remoteStream.getTracks().map((item) => item.kind) });
+      setRemoteStreams((current) => [...current.filter((item) => item.userId !== userId), { userId, stream: meta.remoteStream }]);
+    };
     peer.onicecandidateerror = (event) => syncDebug("call-ice-candidate-error", { userId, code: event.errorCode, text: event.errorText, url: event.url });
     const restart = () => {
       if (peer.connectionState !== "failed" || meta.restarting) return;
@@ -68,7 +79,7 @@ export function useRoomCall({ room, socket, user, notify }) {
     };
     peer.onconnectionstatechange = () => {
       syncDebug("call-peer-state", { userId, connectionState: peer.connectionState, iceConnectionState: peer.iceConnectionState });
-      if (peer.connectionState === "connected") { clearTimeout(meta.recoveryTimer); meta.recoveryTimer = null; meta.restarting = false; meta.failedAfterRestart = false; }
+      if (peer.connectionState === "connected") { clearTimeout(meta.recoveryTimer); clearTimeout(meta.offerTimer); meta.recoveryTimer = null; meta.offerTimer = null; meta.restarting = false; meta.failedAfterRestart = false; }
       if (peer.connectionState === "failed" && !meta.restarting) {
         if (String(user.userId) > String(userId)) restart();
         else if (!meta.recoveryTimer) meta.recoveryTimer = setTimeout(restart, 1800);
@@ -89,6 +100,15 @@ export function useRoomCall({ room, socket, user, notify }) {
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       socket?.command("webrtc-offer", { toUserId: userId, offer: peer.localDescription });
+      clearTimeout(meta.offerTimer);
+      meta.offerTimer = setTimeout(() => {
+        if (peer.connectionState === "connected" || peer.connectionState === "closed") return;
+        meta.offerPending = false;
+        meta.negotiated = false;
+        syncDebug("call-offer-timeout", { userId, connectionState: peer.connectionState, signalingState: peer.signalingState });
+        if (peer.signalingState === "have-local-offer") void peer.setLocalDescription({ type: "rollback" }).then(() => sendOffer(userId)).catch(() => closePeer(userId));
+        else void sendOffer(userId);
+      }, 5000);
     } catch (error) {
       meta.offerPending = false;
       syncDebug("call-offer-error", { userId, message: error?.message || String(error) });
@@ -107,6 +127,7 @@ export function useRoomCall({ room, socket, user, notify }) {
       const config = result[1];
       iceConfig.current = config;
       local.current = stream;
+      syncDebug("call-local-tracks", { tracks: stream.getTracks().map((track) => ({ kind: track.kind, enabled: track.enabled, muted: track.muted, readyState: track.readyState, label: track.label })) });
       joinedRef.current = true;
       setLocalStream(stream);
       setJoined(true);
@@ -136,6 +157,10 @@ export function useRoomCall({ room, socket, user, notify }) {
     const offOffer = socket.on("webrtc-offer", acceptOffer); const offAnswer = socket.on("webrtc-answer", acceptAnswer); const offIce = socket.on("webrtc-ice-candidate", acceptIce); const offLeave = socket.on("user-left-call", ({ userId }) => closePeer(userId)); const offFull = socket.on("call-full", ({ message }) => { notify(message || "This call is full."); leave(); }); const offCallUsers = socket.on("call-users", connectPeers); const offCallJoined = socket.on("call-user-joined", ({ user: participant }) => connectPeers([participant]));
     return () => { offOffer(); offAnswer(); offIce(); offLeave(); offFull(); offCallUsers(); offCallJoined(); };
   }, [closePeer, createPeer, leave, notify, sendOffer, socket, user.userId]);
+  useEffect(() => {
+    const self = room?.participants?.find((participant) => participant.userId === user.userId);
+    if (!joinedRef.current && self?.callStatus === "connected") socket?.command("call-leave");
+  }, [room?.participants, socket, user.userId]);
   useEffect(() => { if (!joined || !socket) return; const participants = (room?.participants || []).filter((participant) => participant.userId !== user.userId && participant.callStatus === "connected"); const ids = new Set(participants.map((participant) => participant.userId)); peers.current.forEach((_peer, userId) => { if (!ids.has(userId)) closePeer(userId); }); participants.forEach((participant) => { createPeer(participant.userId); if (String(user.userId) > String(participant.userId)) void sendOffer(participant.userId); }); }, [closePeer, createPeer, joined, room?.participants, sendOffer, socket, user.userId]);
   useEffect(() => {
     if (!joined) return undefined;
@@ -158,7 +183,7 @@ export function useRoomCall({ room, socket, user, notify }) {
           if (relayActive && Number.isFinite(previousBytes)) recordRelayUsage(Math.max(0, relayBytes - previousBytes));
           relayByteTotals.current.set(userId, relayBytes);
           const loss = lost / Math.max(1, lost + received);
-          next[userId] = rtt > .65 || loss > .12 ? "poor" : rtt > .28 || loss > .045 ? "fair" : "good";
+          next[userId] = peer.connectionState !== "connected" || !selectedPair ? "checking" : rtt > .65 || loss > .12 ? "poor" : rtt > .28 || loss > .045 ? "fair" : "good";
         } catch { next[userId] = "checking"; }
       }));
       setConnectionQuality(next);
