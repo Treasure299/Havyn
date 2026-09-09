@@ -45,6 +45,40 @@ async function roomTicket(roomId: string, userId: string, creating: boolean, cap
   return (await response.json() as { ticket: string }).ticket;
 }
 
+async function guestRoomTicket(roomId: string, userId: string, creating: boolean) {
+  const response = await worker.fetch(new Request(`https://havyn.test/v2/rooms/${roomId}/ticket`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      creating,
+      room: { roomId, roomName: "Guest room", hostUserId: userId, playbackMode: "host-only" },
+      displayName: "Guest caller",
+      guest: { userId, displayName: "Guest caller" }
+    })
+  }));
+  expect(response.status).toBe(200);
+  return (await response.json() as { ticket: string }).ticket;
+}
+
+describe("call relay credentials", () => {
+  it("accepts a fresh room ticket for ICE configuration", async () => {
+    const roomId = `ICE-${crypto.randomUUID().slice(0, 8)}`.toUpperCase();
+    const ticket = await guestRoomTicket(roomId, `guest_${crypto.randomUUID().replaceAll("-", "")}`, true);
+    const response = await worker.fetch(new Request(
+      `https://havyn.test/v2/rooms/${roomId}/ice?ticket=${encodeURIComponent(ticket)}`
+    ));
+    const payload = await response.json() as { iceServers?: Array<{ urls: string | string[] }>; relayConfigured?: boolean };
+    expect(response.status).toBe(200);
+    expect(payload.iceServers?.[0]?.urls).toBe("stun:stun.expressturn.com:3478");
+    expect(payload.relayConfigured).toBe(false);
+  });
+
+  it("rejects ICE configuration without room authorization", async () => {
+    const response = await worker.fetch(new Request("https://havyn.test/v2/rooms/NO-AUTH/ice"));
+    expect(response.status).toBe(401);
+  });
+});
+
 async function connect(roomId: string, userId: string, creating = false, capabilities = ["live-share-v1"]): Promise<TestClient> {
   const ticket = await roomTicket(roomId, userId, creating, capabilities);
   const response = await worker.fetch(new Request(

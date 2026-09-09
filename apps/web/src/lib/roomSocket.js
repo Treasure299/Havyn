@@ -31,21 +31,17 @@ export class RoomSocket {
     this.handlers.get(event)?.forEach((handler) => handler(payload));
   }
 
-  async connect(connection) {
-    const generation = ++this.connectionGeneration;
-    const nextRoomId = String(connection.roomId).toUpperCase();
-    this.connection = { ...connection, roomId: String(connection.roomId).toUpperCase() };
-    this.intentional = false;
-    clearTimeout(this.retry);
+  async requestTicket({ creating = this.connection?.creating } = {}) {
+    if (!this.connection) throw new Error("Room connection is not ready.");
     const isGuest = Boolean(this.connection.user?.guest);
     const { data } = isGuest ? { data: { session: null } } : await supabase.auth.getSession();
     let token = data.session?.access_token;
     if (!token && !isGuest) throw new Error("Sign in to enter a Havyn room.");
-    const ticketRequest = () => fetch(`${ROOM_ENDPOINT}/v2/rooms/${encodeURIComponent(this.connection.roomId)}/ticket`, {
+    const send = () => fetch(`${ROOM_ENDPOINT}/v2/rooms/${encodeURIComponent(this.connection.roomId)}/ticket`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({
-        creating: Boolean(this.connection.creating),
+        creating: Boolean(creating),
         roomName: this.connection.roomName,
         visibility: this.connection.visibility || "private",
         room: this.connection.room,
@@ -53,17 +49,66 @@ export class RoomSocket {
         ...(isGuest ? { guest: { userId: this.connection.user.userId, displayName: this.connection.user.displayName } } : {})
       })
     });
-    let response = await ticketRequest();
+    let response = await send();
     if (!isGuest && response.status === 401) {
       const refreshed = await supabase.auth.refreshSession();
       token = refreshed.data.session?.access_token || "";
-      if (token) response = await ticketRequest();
+      if (token) response = await send();
     }
-    const ticketResponse = await response.json().catch(() => ({}));
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ticket) throw new Error(payload.error || "Could not authorize this room.");
+    return payload.ticket;
+  }
+
+  async loadIceConfig() {
+    if (!this.connection) throw new Error("Room connection is not ready.");
+    const ticket = await this.requestTicket({ creating: false });
+    const url = new URL(`${ROOM_ENDPOINT}/v2/rooms/${encodeURIComponent(this.connection.roomId)}/ice`);
+    url.searchParams.set("ticket", ticket);
+    const response = await fetch(url);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !Array.isArray(payload.iceServers)) throw new Error(payload.error || "Call relay is unavailable.");
+    return payload;
+  }
+
+  async waitUntilOpen(timeoutMs = 10_000) {
+    if (this.ws?.readyState === WebSocket.OPEN) return true;
+    if (!this.connection) throw new Error("Room connection is not ready.");
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        off();
+        reject(new Error("The room connection did not become ready."));
+      }, timeoutMs);
+      const off = this.on("connection", (status) => {
+        if (status === "connected") {
+          clearTimeout(timeout);
+          off();
+          resolve(true);
+        } else if (status === "error") {
+          clearTimeout(timeout);
+          off();
+          reject(new Error("The room connection could not be reached."));
+        }
+      });
+    });
+  }
+
+  async connect(connection) {
+    const generation = ++this.connectionGeneration;
+    const nextRoomId = String(connection.roomId).toUpperCase();
+    this.connection = { ...connection, roomId: String(connection.roomId).toUpperCase() };
+    this.intentional = false;
+    clearTimeout(this.retry);
+    let ticket;
+    try {
+      ticket = await this.requestTicket();
+    } catch (error) {
+      if (generation !== this.connectionGeneration) return;
+      throw error;
+    }
     if (generation !== this.connectionGeneration) return;
-    if (!response.ok || !ticketResponse.ticket) throw new Error(ticketResponse.error || "Could not enter this room.");
     this.ws?.close(4000, "Switching Havyn rooms");
-    const ws = new WebSocket(socketUrl(this.connection.roomId, ticketResponse.ticket));
+    const ws = new WebSocket(socketUrl(this.connection.roomId, ticket));
     this.ws = ws;
     ws.addEventListener("open", () => {
       if (this.ws !== ws || generation !== this.connectionGeneration) return;

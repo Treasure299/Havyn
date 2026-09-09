@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft, ArrowUp, ChevronLeft, ChevronRight, CircleUserRound, Clapperboard, Compass, Copy, ExternalLink,
   Camera, ChevronDown, Film, Info, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, Play, Plus, Search, Send, ShieldCheck, Signal, Sparkles, Star, UserPlus, Users, Video, VideoOff, Volume2, VolumeX, X
@@ -13,6 +14,7 @@ import { activityLabel, publishPresence } from "./lib/presence.js";
 import { useRoomCall } from "./lib/useRoomCall.js";
 import { useProviderPlayback } from "./lib/useProviderPlayback.js";
 import { useYouTubePlayback } from "./lib/useYouTubePlayback.js";
+import { getRelayUsage, getTurnSettings, probeTurnSettings, saveTurnSettings, subscribeTurnSettings } from "./lib/turnConfig.js";
 import roomStyles from "./RoomShell.module.css";
 
 const roomCode = () => crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
@@ -108,7 +110,7 @@ export default function App() {
   };
   return (
     <main className={`web-app${page === "room" && roomId ? " room-app" : ""}`}>
-      <TopBar user={user} page={page} pendingInvites={pendingInvites} onGuestAccount={() => { localStorage.removeItem(GUEST_KEY); setGuest(null); }} onNavigate={(next) => { location.hash = ""; setRoomId(""); setPage(next); }} />
+      <TopBar user={user} page={page} pendingInvites={pendingInvites} notify={notify} onGuestAccount={() => { localStorage.removeItem(GUEST_KEY); setGuest(null); }} onNavigate={(next) => { location.hash = ""; setRoomId(""); setPage(next); }} />
       {toast && <Toast {...toast} onDismiss={() => setToast(null)} />}
       {page === "room" && roomId
         ? <RoomShell key={roomId} roomId={roomId} user={user} onBack={() => { location.hash = ""; setPage("discover"); }} notify={notify} />
@@ -191,8 +193,9 @@ function AuthScreen({ onGuest }) {
   </form></div>;
 }
 
-function TopBar({ user, page, pendingInvites, onNavigate, onGuestAccount }) {
+function TopBar({ user, page, pendingInvites, notify, onNavigate, onGuestAccount }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [relayOpen, setRelayOpen] = useState(false);
   const profileRef = useRef(null);
   useEffect(() => {
     const dismiss = (event) => { if (profileRef.current && !profileRef.current.contains(event.target)) setMenuOpen(false); };
@@ -204,9 +207,44 @@ function TopBar({ user, page, pendingInvites, onNavigate, onGuestAccount }) {
     <nav><button className={page === "discover" ? "active" : ""} onClick={() => onNavigate("discover")}><Compass size={15}/><span>Discover</span></button>{!user.guest && <button className={page === "friends" ? "active" : ""} onClick={() => onNavigate("friends")}><Users size={15}/><span>Friends</span>{pendingInvites > 0 && <i className="nav-count" aria-label={`${pendingInvites} pending room invitations`}>{pendingInvites}</i>}</button>}</nav>
     <div className="profile-wrap" ref={profileRef}>
       {!user.guest && <button className="discord-trigger" type="button" title="Havyn Discord is coming soon" aria-label="Havyn Discord is coming soon" disabled><img src={discordLogo} alt="" /></button>}<button className="profile-trigger" onClick={() => setMenuOpen((value) => !value)} aria-label="Open account menu" title={user.displayName} aria-expanded={menuOpen}><CircleUserRound size={18}/></button>
-      {menuOpen && <div className="profile-menu"><strong>{user.displayName}</strong><span>{user.guest ? "Guest in this browser" : "Signed in to Havyn"}</span>{user.guest && <button className="profile-menu-primary" onClick={() => { setMenuOpen(false); onGuestAccount(); }}><CircleUserRound size={16}/> Sign in or create account</button>}{!user.guest && <button onClick={() => { setMenuOpen(false); onNavigate("profile"); }}><Info size={16}/> About Havyn Web</button>}{!user.guest && <button onClick={() => supabase.auth.signOut()}><LogOut size={16}/> Sign out</button>}</div>}
+      {menuOpen && <div className="profile-menu"><strong>{user.displayName}</strong><span>{user.guest ? "Guest in this browser" : "Signed in to Havyn"}</span><button className="profile-menu-primary" onClick={() => { setMenuOpen(false); setRelayOpen(true); }}><Signal size={16}/> Call relay</button>{user.guest && <button className="profile-menu-primary" onClick={() => { setMenuOpen(false); onGuestAccount(); }}><CircleUserRound size={16}/> Sign in or create account</button>}{!user.guest && <button onClick={() => { setMenuOpen(false); onNavigate("profile"); }}><Info size={16}/> About Havyn Web</button>}{!user.guest && <button onClick={() => supabase.auth.signOut()}><LogOut size={16}/> Sign out</button>}</div>}
     </div>
+    {relayOpen && createPortal(<TurnSettingsModal notify={notify} onClose={() => setRelayOpen(false)} />, document.body)}
   </header>;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1000 ** 2) return `${Math.round(bytes / 1000)} KB`;
+  if (bytes < 1000 ** 3) return `${(bytes / 1000 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1000 ** 3).toFixed(2)} GB`;
+}
+
+function TurnSettingsModal({ notify, onClose }) {
+  const initial = getTurnSettings();
+  const [custom, setCustom] = useState(Boolean(initial.enabled));
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [stunUrl, setStunUrl] = useState(initial.stunUrl || "stun:stun.expressturn.com:3478");
+  const [turnUrls, setTurnUrls] = useState(initial.turnUrls || "turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp");
+  const [username, setUsername] = useState(initial.username || "");
+  const [credential, setCredential] = useState(initial.credential || "");
+  const [testing, setTesting] = useState(false);
+  const [usage, setUsage] = useState(getRelayUsage);
+  useEffect(() => subscribeTurnSettings(() => setUsage(getRelayUsage())), []);
+  const settings = { enabled: custom, stunUrl: stunUrl.trim(), turnUrls, username: username.trim(), credential };
+  const test = async () => {
+    setTesting(true);
+    try { const protocol = await probeTurnSettings(settings); notify(`Custom relay connected over ${String(protocol).toUpperCase()}.`); }
+    catch (error) { notify(error?.message || "The custom relay could not connect."); }
+    finally { setTesting(false); }
+  };
+  const save = () => {
+    if (custom && (!turnUrls.trim() || !username.trim() || !credential)) return notify("Enter the TURN server, username, and password.");
+    saveTurnSettings(settings);
+    notify(custom ? "Custom call relay saved for this browser session." : "Havyn managed relay selected.");
+    onClose();
+  };
+  const progress = Math.min(100, usage / 1_000_000_000_000 * 100);
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Call relay settings"><section className="relay-modal"><button className="icon-close" onClick={onClose} aria-label="Close call relay settings"><X /></button><p className="eyebrow">CALL RELAY</p><h2>Connection route</h2><div className="relay-mode" role="group" aria-label="Relay source"><button className={!custom ? "active" : ""} onClick={() => setCustom(false)}>Havyn relay</button><button className={custom ? "active" : ""} onClick={() => setCustom(true)}>Own credentials</button></div><p className="relay-mode-note">{custom ? "Replace Havyn's managed relay with another STUN and TURN account." : "No setup required. Havyn securely supplies the managed ExpressTURN credentials when you join a call."}</p>{custom ? <div className="relay-fields"><label className="relay-wide">STUN URL<input value={stunUrl} onChange={(event) => setStunUrl(event.target.value)} placeholder="stun:stun.expressturn.com:3478" /></label><label className="relay-wide">TURN URLs<textarea value={turnUrls} onChange={(event) => setTurnUrls(event.target.value)} placeholder={"turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp"} /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label><label>Password<input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoComplete="new-password" /></label><p className="relay-apply-note relay-wide">Custom details stay in this browser session and apply the next time you join a call.</p></div> : <div className="relay-managed"><Signal size={18}/><span><strong>ExpressTURN managed</strong><small>Used automatically when a direct call path is unavailable</small></span><b>Configured</b></div>}<button className="relay-help-button" type="button" onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen}><Info size={15}/><span>Where to get the details</span><ChevronDown size={15}/></button>{guideOpen && <div className="relay-guide"><ol><li>Sign in to <a href="https://www.expressturn.com/#dashboard" target="_blank" rel="noreferrer">ExpressTURN <ExternalLink size={12}/></a> and open the Dashboard.</li><li>Copy the TURN Server, Username, and Password shown there. Free accounts use these static credentials; do not enter the Secret Key.</li><li>Use <code>stun:stun.expressturn.com:3478</code> for STUN.</li><li>For TURN, use your dashboard server twice: once with <code>?transport=udp</code> and once with <code>?transport=tcp</code>. Keep one URL per line.</li><li>Select <strong>Test relay</strong>. Once it connects, save and rejoin the call.</li></ol></div>}<div className="relay-usage"><span><strong>{formatBytes(usage)}</strong><small>estimated relay data on this device this month</small></span><b>{progress < .01 ? "<0.01" : progress.toFixed(2)}%</b><i aria-label={`${progress.toFixed(2)} percent of the local 1 TB reference`}><em style={{ width: `${progress}%` }} /></i><p>Local estimate only. ExpressTURN Free does not expose account-wide usage, so Havyn counts relayed call data observed by this browser.</p></div><div className="relay-actions">{custom && <button className="button subtle" onClick={test} disabled={testing}>{testing ? "Testing..." : "Test relay"}</button>}<button className="button primary" onClick={save}>Save</button></div></section></div>;
 }
 
 function Discover({ user, onEnterRoom, notify }) {

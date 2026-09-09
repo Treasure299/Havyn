@@ -11,7 +11,12 @@ interface Env {
   CLIENT_ORIGIN?: string;
   TURN_URLS?: string;
   TURN_SHARED_SECRET?: string;
+  TURN_USERNAME?: string;
+  TURN_CREDENTIAL?: string;
+  TURN_STUN_URL?: string;
   TURN_TTL_SECONDS?: string;
+  CLOUDFLARE_TURN_KEY_ID?: string;
+  CLOUDFLARE_TURN_API_TOKEN?: string;
 }
 
 interface ConnectionAttachment extends Participant {
@@ -24,6 +29,12 @@ interface StoredRoom {
   preLiveSharePlayback?: RoomState["playbackState"] | null;
   recentCommandIds: string[];
   pendingDisconnects: Record<string, { participant: ConnectionAttachment; expiresAt: number }>;
+}
+
+interface IceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
 }
 
 const MAX_RECENT_COMMANDS = 160;
@@ -43,7 +54,7 @@ export default {
     }
 
     const iceMatch = url.pathname.match(/^\/v2\/rooms\/([A-Z0-9-]{4,64})\/ice$/i);
-    if (iceMatch && request.method === "GET") return issueIceConfig(request, env);
+    if (iceMatch && request.method === "GET") return issueIceConfig(request, env, iceMatch[1].toUpperCase());
 
     const connectMatch = url.pathname.match(/^\/v2\/rooms\/([A-Z0-9-]{4,64})\/connect$/i);
     if (connectMatch && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
@@ -365,18 +376,49 @@ async function issueRoomTicket(request: Request, env: Env, roomId: string): Prom
   return corsResponse(JSON.stringify({ ticket: await signTicket(claims, secret), expiresAt: claims.exp, protocol: PROTOCOL_VERSION }), env);
 }
 
-async function issueIceConfig(request: Request, env: Env): Promise<Response> {
-  const user = await authenticateUser(request, env, {});
-  if (!user) return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
-  const stun = { urls: "stun:stun.l.google.com:19302" };
+async function issueIceConfig(request: Request, env: Env, roomId: string): Promise<Response> {
+  const secret = ticketSecret(env);
+  const ticket = new URL(request.url).searchParams.get("ticket") || "";
+  const claims = secret && ticket ? await verifyTicket(ticket, secret) : null;
+  const authenticated = claims?.roomId === roomId
+    ? { id: claims.userId }
+    : await authenticateUser(request, env, {});
+  if (!authenticated) return corsResponse(JSON.stringify({ error: "Room authorization required" }), env, 401);
+  const stun = { urls: env.TURN_STUN_URL || "stun:stun.expressturn.com:3478" };
+  const ttl = Math.max(300, Math.min(86_400, Number(env.TURN_TTL_SECONDS || 21_600)));
+  if (env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN) {
+    try {
+      const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.CLOUDFLARE_TURN_KEY_ID)}/credentials/generate-ice-servers`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.CLOUDFLARE_TURN_API_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl, customIdentifier: `${roomId}:${authenticated.id}` })
+      });
+      const payload = await response.json().catch(() => ({})) as { iceServers?: IceServerConfig[]; error?: string };
+      if (!response.ok || !Array.isArray(payload.iceServers)) throw new Error(payload.error || `TURN credential request failed (${response.status})`);
+      const iceServers = payload.iceServers.map((server) => ({
+        ...server,
+        urls: (Array.isArray(server.urls) ? server.urls : [server.urls]).filter((url) => !String(url).includes(":53"))
+      })).filter((server) => server.urls.length);
+      return corsResponse(JSON.stringify({ iceServers, relayConfigured: true, relayProvider: "cloudflare" }), env, 200);
+    } catch (error) {
+      console.error("Cloudflare TURN credential generation failed", error instanceof Error ? error.message : String(error));
+    }
+  }
   const urls = String(env.TURN_URLS || "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (urls.length && env.TURN_USERNAME && env.TURN_CREDENTIAL) {
+    return corsResponse(JSON.stringify({
+      iceServers: [stun, { urls, username: env.TURN_USERNAME, credential: env.TURN_CREDENTIAL }],
+      relayConfigured: true,
+      relayProvider: "express-turn"
+    }), env, 200);
+  }
   if (!urls.length || !env.TURN_SHARED_SECRET) return corsResponse(JSON.stringify({ iceServers: [stun], relayConfigured: false }), env, 200);
-  const expiry = Math.floor(Date.now() / 1000) + Math.max(300, Math.min(3600, Number(env.TURN_TTL_SECONDS || 900)));
-  const username = `${expiry}:${user.id}`;
+  const expiry = Math.floor(Date.now() / 1000) + ttl;
+  const username = `${expiry}:${authenticated.id}`;
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.TURN_SHARED_SECRET), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(username));
   const credential = btoa(String.fromCharCode(...new Uint8Array(signature)));
-  return corsResponse(JSON.stringify({ iceServers: [stun, { urls, username, credential }], relayConfigured: true }), env, 200);
+  return corsResponse(JSON.stringify({ iceServers: [stun, { urls, username, credential }], relayConfigured: true, relayProvider: "express-turn" }), env, 200);
 }
 
 async function authenticateUser(request: Request, env: Env, body: Record<string, unknown>): Promise<{ id: string; displayName?: string } | null> {
@@ -414,6 +456,7 @@ function corsResponse(body: BodyInit | null, env: Env, status = 200): Response {
     status,
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": env.CLIENT_ORIGIN || "*",
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
