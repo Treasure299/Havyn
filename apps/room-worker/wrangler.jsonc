@@ -38,7 +38,7 @@
       "vars": {
         "ENVIRONMENT": "staging",
         "CLIENT_ORIGIN": "*",
-        "TURN_STUN_URL": "stun:stun.expressturn.com:3478",
+        "TURN_STUN_URL": "stun:stun.cloudflare.com:3478,stun:stun.cloudflare.com:53,stun:stun.l.google.com:19302",
         "TURN_URLS": "turn:free.expressturn.com:3478?transport=udp,turn:free.expressturn.com:3478?transport=tcp"
       }
     },
@@ -55,7 +55,7 @@
       "vars": {
         "ENVIRONMENT": "production",
         "CLIENT_ORIGIN": "*",
-        "TURN_STUN_URL": "stun:stun.expressturn.com:3478",
+        "TURN_STUN_URL": "stun:stun.cloudflare.com:3478,stun:stun.cloudflare.com:53,stun:stun.l.google.com:19302",
         "TURN_URLS": "turn:free.expressturn.com:3478?transport=udp,turn:free.expressturn.com:3478?transport=tcp"
       }
     }

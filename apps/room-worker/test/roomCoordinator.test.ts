@@ -69,7 +69,11 @@ describe("call relay credentials", () => {
     ));
     const payload = await response.json() as { iceServers?: Array<{ urls: string | string[] }>; relayConfigured?: boolean };
     expect(response.status).toBe(200);
-    expect(payload.iceServers?.[0]?.urls).toBe("stun:stun.expressturn.com:3478");
+    expect(payload.iceServers?.[0]?.urls).toEqual(expect.arrayContaining([
+      "stun:stun.cloudflare.com:3478",
+      "stun:stun.cloudflare.com:53",
+      "stun:stun.l.google.com:19302",
+    ]));
     expect(payload.relayConfigured).toBe(false);
   });
 

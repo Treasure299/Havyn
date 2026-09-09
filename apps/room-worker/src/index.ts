@@ -384,7 +384,11 @@ async function issueIceConfig(request: Request, env: Env, roomId: string): Promi
     ? { id: claims.userId }
     : await authenticateUser(request, env, {});
   if (!authenticated) return corsResponse(JSON.stringify({ error: "Room authorization required" }), env, 401);
-  const stun = { urls: env.TURN_STUN_URL || "stun:stun.expressturn.com:3478" };
+  const stun = {
+    urls: env.TURN_STUN_URL
+      ? String(env.TURN_STUN_URL).split(",").map((value) => value.trim()).filter(Boolean)
+      : ["stun:stun.cloudflare.com:3478", "stun:stun.cloudflare.com:53", "stun:stun.l.google.com:19302"]
+  };
   const ttl = Math.max(300, Math.min(86_400, Number(env.TURN_TTL_SECONDS || 21_600)));
   if (env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN) {
     try {

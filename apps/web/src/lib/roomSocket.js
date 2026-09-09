@@ -121,8 +121,16 @@ export class RoomSocket {
     ws.addEventListener("error", () => {
       if (this.ws === ws && generation === this.connectionGeneration) this.emit("connection", "error");
     });
-    ws.addEventListener("close", () => {
+    ws.addEventListener("close", (event) => {
       if (this.intentional || this.ws !== ws || generation !== this.connectionGeneration) return;
+      if (event.code === 4009) {
+        this.ws = null;
+        syncDebug("socket-replaced", { roomId: this.connection.roomId, code: event.code, reason: event.reason });
+        this.emit("connection", "replaced");
+        this.emit("error", "This Havyn account opened the room in another tab or device. Continue from the newer session.");
+        return;
+      }
+      syncDebug("socket-close", { roomId: this.connection.roomId, code: event.code, reason: event.reason });
       this.emit("connection", "reconnecting");
       this.retry = setTimeout(() => {
         if (this.ws === ws && generation === this.connectionGeneration) this.connect({ ...this.connection, creating: false }).catch(() => {});
