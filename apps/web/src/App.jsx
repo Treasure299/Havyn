@@ -231,18 +231,35 @@ function TurnSettingsModal({ user, notify, onClose }) {
   const [credential, setCredential] = useState(initial.credential || "");
   const [testing, setTesting] = useState(false);
   const [accountUsage, setAccountUsage] = useState(null);
+  const [accountUsageStatus, setAccountUsageStatus] = useState("idle");
   const usageProvider = custom ? "custom" : "cloudflare";
   const [usage, setUsage] = useState(() => getRelayUsage(usageProvider));
   useEffect(() => { setUsage(getRelayUsage(usageProvider)); return subscribeTurnSettings(() => setUsage(getRelayUsage(usageProvider))); }, [usageProvider]);
   useEffect(() => {
-    if (custom || user.guest || !supabase) { setAccountUsage(null); return undefined; }
+    if (custom || user.guest || !supabase) { setAccountUsage(null); setAccountUsageStatus("idle"); return undefined; }
     const controller = new AbortController();
-    supabase.auth.getSession()
-      .then(({ data }) => data.session?.access_token ? fetch(`${ROOM_ENDPOINT}/v2/turn-usage`, { signal: controller.signal, headers: { Authorization: `Bearer ${data.session.access_token}` } }) : null)
-      .then((response) => response?.ok ? response.json() : null)
-      .then((payload) => { if (payload?.configured) setAccountUsage(payload); })
-      .catch(() => {});
-    return () => controller.abort();
+    let active = true;
+    setAccountUsageStatus("loading");
+    const refresh = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!data.session?.access_token) throw new Error("No active Havyn session");
+        const response = await fetch(`${ROOM_ENDPOINT}/v2/turn-usage`, {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${data.session.access_token}` }
+        });
+        if (!response.ok) throw new Error(`Usage request failed (${response.status})`);
+        const payload = await response.json();
+        if (!payload?.configured) throw new Error("Cloudflare account analytics unavailable");
+        if (active) { setAccountUsage(payload); setAccountUsageStatus("ready"); }
+      } catch (error) {
+        if (active && error?.name !== "AbortError") setAccountUsageStatus("error");
+      }
+    };
+    void refresh();
+    const interval = setInterval(refresh, 60_000);
+    return () => { active = false; clearInterval(interval); controller.abort(); };
   }, [custom, user.guest]);
   const settings = { enabled: custom, stunUrl: stunUrl.trim(), turnUrls, username: username.trim(), credential };
   const test = async () => {
@@ -257,12 +274,15 @@ function TurnSettingsModal({ user, notify, onClose }) {
     notify(custom ? "Custom call relay saved for this browser session." : "Havyn managed relay selected.");
     onClose();
   };
-  const measuredUsage = !custom && accountUsage ? Number(accountUsage.egressBytes || 0) : usage;
+  const sharedAccountUsage = !custom && !user.guest;
+  const measuredUsage = custom || user.guest ? usage : Number(accountUsage?.egressBytes || 0);
   const freeTierBytes = Number(accountUsage?.freeTierBytes || 1_000_000_000_000);
   const progress = Math.min(100, measuredUsage / freeTierBytes * 100);
   const overageBytes = Math.max(0, measuredUsage - freeTierBytes);
   const estimatedCost = overageBytes / 1_000_000_000 * Number(accountUsage?.ratePerGb || .05);
-  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Call relay settings"><section className="relay-modal"><button className="icon-close" onClick={onClose} aria-label="Close call relay settings"><X /></button><p className="eyebrow">CALL RELAY</p><h2>Connection route</h2><div className="relay-mode" role="group" aria-label="Relay source"><button className={!custom ? "active" : ""} onClick={() => setCustom(false)}>Havyn relay</button><button className={custom ? "active" : ""} onClick={() => setCustom(true)}>Own credentials</button></div><p className="relay-mode-note">{custom ? "Replace Havyn's managed relay with another STUN and TURN account." : "No setup required. Havyn securely supplies short-lived Cloudflare TURN credentials when a call needs a relay."}</p>{custom ? <div className="relay-fields"><label className="relay-wide">STUN URL<input value={stunUrl} onChange={(event) => setStunUrl(event.target.value)} placeholder="stun:stun.expressturn.com:3478" /></label><label className="relay-wide">TURN URLs<textarea value={turnUrls} onChange={(event) => setTurnUrls(event.target.value)} placeholder={"turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp"} /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label><label>Password<input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoComplete="new-password" /></label><p className="relay-apply-note relay-wide">Custom details stay in this browser session and apply the next time you join a call.</p></div> : <div className="relay-managed"><Signal size={18}/><span><strong>Cloudflare TURN managed</strong><small>Used automatically when a direct call path is unavailable</small></span><b>Ready</b></div>}<button className="relay-help-button" type="button" onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen}><Info size={15}/><span>Where to get the details</span><ChevronDown size={15}/></button>{guideOpen && <div className="relay-guide"><ol><li>Sign in to your TURN provider and open its credential dashboard.</li><li>Copy its STUN URL, TURN URLs, username, and password. Keep one TURN URL per line.</li><li>Include UDP plus TCP or TLS routes where the provider supports them.</li><li>Select <strong>Test relay</strong>. Havyn verifies that data travels end to end through TURN before saving.</li></ol></div>}<div className="relay-usage"><span><strong>{formatBytes(measuredUsage)}</strong><small>{custom ? "estimated custom relay data on this device" : accountUsage ? "Cloudflare TURN egress this month" : "estimated Cloudflare relay data on this device"}</small></span>{!custom && <b>{progress < .01 ? "<0.01" : progress.toFixed(2)}%</b>}{!custom && <i aria-label={`${progress.toFixed(2)} percent of Cloudflare's shared 1 TB free tier`}><em style={{ width: `${progress}%` }} /></i>}{!custom && <strong className="relay-cost">{overageBytes > 0 ? `Estimated overage $${estimatedCost.toFixed(2)}` : `${formatBytes(Math.max(0, freeTierBytes - measuredUsage))} free tier remaining`}</strong>}<p>Direct calls are excluded. {accountUsage ? "Cloudflare Analytics reports billable TURN egress; the final invoice may differ." : "This browser estimate is used until account analytics is configured."}</p></div><div className="relay-actions">{custom && <button className="button subtle" onClick={test} disabled={testing}>{testing ? "Testing..." : "Test relay"}</button>}<button className="button primary" onClick={save}>Save</button></div></section></div>;
+  const showManagedUsage = !custom && (!sharedAccountUsage || accountUsageStatus === "ready");
+  const usageLabel = custom ? "estimated custom relay data on this device" : user.guest ? "estimated Cloudflare relay data on this device" : accountUsageStatus === "error" ? "shared Cloudflare usage temporarily unavailable" : accountUsageStatus === "loading" ? "loading shared Cloudflare usage" : `Cloudflare TURN egress for ${accountUsage?.month || "this month"}`;
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Call relay settings"><section className="relay-modal"><button className="icon-close" onClick={onClose} aria-label="Close call relay settings"><X /></button><p className="eyebrow">CALL RELAY</p><h2>Connection route</h2><div className="relay-mode" role="group" aria-label="Relay source"><button className={!custom ? "active" : ""} onClick={() => setCustom(false)}>Havyn relay</button><button className={custom ? "active" : ""} onClick={() => setCustom(true)}>Own credentials</button></div><p className="relay-mode-note">{custom ? "Replace Havyn's managed relay with another STUN and TURN account." : "No setup required. Havyn securely supplies short-lived Cloudflare TURN credentials when a call needs a relay."}</p>{custom ? <div className="relay-fields"><label className="relay-wide">STUN URL<input value={stunUrl} onChange={(event) => setStunUrl(event.target.value)} placeholder="stun:stun.expressturn.com:3478" /></label><label className="relay-wide">TURN URLs<textarea value={turnUrls} onChange={(event) => setTurnUrls(event.target.value)} placeholder={"turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp"} /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label><label>Password<input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoComplete="new-password" /></label><p className="relay-apply-note relay-wide">Custom details stay in this browser session and apply the next time you join a call.</p></div> : <div className="relay-managed"><Signal size={18}/><span><strong>Cloudflare TURN managed</strong><small>Used automatically when a direct call path is unavailable</small></span><b>Ready</b></div>}<button className="relay-help-button" type="button" onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen}><Info size={15}/><span>Where to get the details</span><ChevronDown size={15}/></button>{guideOpen && <div className="relay-guide"><ol><li>Sign in to your TURN provider and open its credential dashboard.</li><li>Copy its STUN URL, TURN URLs, username, and password. Keep one TURN URL per line.</li><li>Include UDP plus TCP or TLS routes where the provider supports them.</li><li>Select <strong>Test relay</strong>. Havyn verifies that data travels end to end through TURN before saving.</li></ol></div>}<div className={`relay-usage ${sharedAccountUsage ? `is-${accountUsageStatus}` : ""}`}><span><strong>{sharedAccountUsage && accountUsageStatus !== "ready" ? "--" : formatBytes(measuredUsage)}</strong><small>{usageLabel}</small></span>{showManagedUsage && <b>{progress < .01 ? "<0.01" : progress.toFixed(2)}%</b>}{showManagedUsage && <i aria-label={`${progress.toFixed(2)} percent of Cloudflare's shared 1 TB free tier`}><em style={{ width: `${progress}%` }} /></i>}{showManagedUsage && <strong className="relay-cost">{overageBytes > 0 ? `Estimated overage $${estimatedCost.toFixed(2)}` : `${formatBytes(Math.max(0, freeTierBytes - measuredUsage))} free tier remaining`}</strong>}<p>Direct calls are excluded. {sharedAccountUsage ? accountUsageStatus === "error" ? "Havyn will retry the shared Cloudflare total automatically." : `Shared by every Havyn account and refreshed automatically${accountUsage?.nextResetAt ? `; resets ${new Date(accountUsage.nextResetAt).toLocaleDateString()}` : " each month"}.` : "This browser estimate resets automatically each month."}</p></div><div className="relay-actions">{custom && <button className="button subtle" onClick={test} disabled={testing}>{testing ? "Testing..." : "Test relay"}</button>}<button className="button primary" onClick={save}>Save</button></div></section></div>;
 }
 
 function Discover({ user, onEnterRoom, notify }) {

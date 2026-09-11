@@ -431,14 +431,16 @@ async function issueIceConfig(request: Request, env: Env, roomId: string): Promi
 }
 
 async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
-  const month = new Date().toISOString().slice(0, 7);
+  const now = new Date();
+  const month = now.toISOString().slice(0, 7);
+  const nextResetAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
   const freeTierBytes = 1_000_000_000_000;
   const ratePerGb = 0.05;
   if (env.ENVIRONMENT !== "local" && !await authenticateUser(request, env, {})) {
     return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
   }
   if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_ANALYTICS_API_TOKEN || !env.CLOUDFLARE_TURN_KEY_ID) {
-    return corsResponse(JSON.stringify({ configured: false, month, freeTierBytes, ratePerGb }), env, 200);
+    return corsResponse(JSON.stringify({ configured: false, month, nextResetAt, freeTierBytes, ratePerGb }), env, 200);
   }
   const dateFrom = `${month}-01`;
   const dateTo = new Date().toISOString().slice(0, 10);
@@ -471,6 +473,8 @@ async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
       configured: true,
       source: "cloudflare-analytics",
       month,
+      nextResetAt,
+      refreshedAt: new Date().toISOString(),
       egressBytes,
       freeTierBytes,
       overageBytes,
@@ -479,7 +483,7 @@ async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
     }), env, 200);
   } catch (error) {
     console.error("Cloudflare TURN analytics request failed", error instanceof Error ? error.message : String(error));
-    return corsResponse(JSON.stringify({ configured: false, month, freeTierBytes, ratePerGb, unavailable: true }), env, 200);
+    return corsResponse(JSON.stringify({ configured: false, month, nextResetAt, freeTierBytes, ratePerGb, unavailable: true }), env, 200);
   }
 }
 
