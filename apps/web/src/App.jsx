@@ -10,6 +10,7 @@ import joinRoomLogo from "./assets/join-room.png";
 import { discover, GENRES, getHome, getProviders, getSeasonEpisodes, getSeriesDetails, searchYouTube, youtubeBrowseProvider, youtubeProvider } from "./lib/catalog.js";
 import { isSupabaseConfigured, supabase } from "./lib/supabase.js";
 import { RoomSocket } from "./lib/roomSocket.js";
+import { ROOM_ENDPOINT } from "./lib/roomConfig.js";
 import { activityLabel, publishPresence } from "./lib/presence.js";
 import { useRoomCall } from "./lib/useRoomCall.js";
 import { useProviderPlayback } from "./lib/useProviderPlayback.js";
@@ -209,17 +210,18 @@ function TopBar({ user, page, pendingInvites, notify, onNavigate, onGuestAccount
       {!user.guest && <button className="discord-trigger" type="button" title="Havyn Discord is coming soon" aria-label="Havyn Discord is coming soon" disabled><img src={discordLogo} alt="" /></button>}<button className="profile-trigger" onClick={() => setMenuOpen((value) => !value)} aria-label="Open account menu" title={user.displayName} aria-expanded={menuOpen}><CircleUserRound size={18}/></button>
       {menuOpen && <div className="profile-menu"><strong>{user.displayName}</strong><span>{user.guest ? "Guest in this browser" : "Signed in to Havyn"}</span><button className="profile-menu-primary" onClick={() => { setMenuOpen(false); setRelayOpen(true); }}><Signal size={16}/> Call relay</button>{user.guest && <button className="profile-menu-primary" onClick={() => { setMenuOpen(false); onGuestAccount(); }}><CircleUserRound size={16}/> Sign in or create account</button>}{!user.guest && <button onClick={() => { setMenuOpen(false); onNavigate("profile"); }}><Info size={16}/> About Havyn Web</button>}{!user.guest && <button onClick={() => supabase.auth.signOut()}><LogOut size={16}/> Sign out</button>}</div>}
     </div>
-    {relayOpen && createPortal(<TurnSettingsModal notify={notify} onClose={() => setRelayOpen(false)} />, document.body)}
+    {relayOpen && createPortal(<TurnSettingsModal user={user} notify={notify} onClose={() => setRelayOpen(false)} />, document.body)}
   </header>;
 }
 
 function formatBytes(bytes) {
   if (bytes < 1000 ** 2) return `${Math.round(bytes / 1000)} KB`;
   if (bytes < 1000 ** 3) return `${(bytes / 1000 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1000 ** 4) return `${(bytes / 1000 ** 4).toFixed(2)} TB`;
   return `${(bytes / 1000 ** 3).toFixed(2)} GB`;
 }
 
-function TurnSettingsModal({ notify, onClose }) {
+function TurnSettingsModal({ user, notify, onClose }) {
   const initial = getTurnSettings();
   const [custom, setCustom] = useState(Boolean(initial.enabled));
   const [guideOpen, setGuideOpen] = useState(false);
@@ -228,8 +230,20 @@ function TurnSettingsModal({ notify, onClose }) {
   const [username, setUsername] = useState(initial.username || "");
   const [credential, setCredential] = useState(initial.credential || "");
   const [testing, setTesting] = useState(false);
-  const [usage, setUsage] = useState(getRelayUsage);
-  useEffect(() => subscribeTurnSettings(() => setUsage(getRelayUsage())), []);
+  const [accountUsage, setAccountUsage] = useState(null);
+  const usageProvider = custom ? "custom" : "cloudflare";
+  const [usage, setUsage] = useState(() => getRelayUsage(usageProvider));
+  useEffect(() => { setUsage(getRelayUsage(usageProvider)); return subscribeTurnSettings(() => setUsage(getRelayUsage(usageProvider))); }, [usageProvider]);
+  useEffect(() => {
+    if (custom || user.guest || !supabase) { setAccountUsage(null); return undefined; }
+    const controller = new AbortController();
+    supabase.auth.getSession()
+      .then(({ data }) => data.session?.access_token ? fetch(`${ROOM_ENDPOINT}/v2/turn-usage`, { signal: controller.signal, headers: { Authorization: `Bearer ${data.session.access_token}` } }) : null)
+      .then((response) => response?.ok ? response.json() : null)
+      .then((payload) => { if (payload?.configured) setAccountUsage(payload); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [custom, user.guest]);
   const settings = { enabled: custom, stunUrl: stunUrl.trim(), turnUrls, username: username.trim(), credential };
   const test = async () => {
     setTesting(true);
@@ -243,8 +257,12 @@ function TurnSettingsModal({ notify, onClose }) {
     notify(custom ? "Custom call relay saved for this browser session." : "Havyn managed relay selected.");
     onClose();
   };
-  const progress = Math.min(100, usage / 1_000_000_000_000 * 100);
-  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Call relay settings"><section className="relay-modal"><button className="icon-close" onClick={onClose} aria-label="Close call relay settings"><X /></button><p className="eyebrow">CALL RELAY</p><h2>Connection route</h2><div className="relay-mode" role="group" aria-label="Relay source"><button className={!custom ? "active" : ""} onClick={() => setCustom(false)}>Havyn relay</button><button className={custom ? "active" : ""} onClick={() => setCustom(true)}>Own credentials</button></div><p className="relay-mode-note">{custom ? "Replace Havyn's managed relay with another STUN and TURN account." : "No setup required. Havyn securely supplies the managed ExpressTURN credentials when you join a call."}</p>{custom ? <div className="relay-fields"><label className="relay-wide">STUN URL<input value={stunUrl} onChange={(event) => setStunUrl(event.target.value)} placeholder="stun:stun.expressturn.com:3478" /></label><label className="relay-wide">TURN URLs<textarea value={turnUrls} onChange={(event) => setTurnUrls(event.target.value)} placeholder={"turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp"} /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label><label>Password<input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoComplete="new-password" /></label><p className="relay-apply-note relay-wide">Custom details stay in this browser session and apply the next time you join a call.</p></div> : <div className="relay-managed"><Signal size={18}/><span><strong>ExpressTURN managed</strong><small>Used automatically when a direct call path is unavailable</small></span><b>Configured</b></div>}<button className="relay-help-button" type="button" onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen}><Info size={15}/><span>Where to get the details</span><ChevronDown size={15}/></button>{guideOpen && <div className="relay-guide"><ol><li>Sign in to <a href="https://www.expressturn.com/#dashboard" target="_blank" rel="noreferrer">ExpressTURN <ExternalLink size={12}/></a> and open the Dashboard.</li><li>Copy the TURN Server, Username, and Password shown there. Free accounts use these static credentials; do not enter the Secret Key.</li><li>Use <code>stun:stun.expressturn.com:3478</code> for STUN.</li><li>For TURN, use your dashboard server twice: once with <code>?transport=udp</code> and once with <code>?transport=tcp</code>. Keep one URL per line.</li><li>Select <strong>Test relay</strong>. Once it connects, save and rejoin the call.</li></ol></div>}<div className="relay-usage"><span><strong>{formatBytes(usage)}</strong><small>estimated relay data on this device this month</small></span><b>{progress < .01 ? "<0.01" : progress.toFixed(2)}%</b><i aria-label={`${progress.toFixed(2)} percent of the local 1 TB reference`}><em style={{ width: `${progress}%` }} /></i><p>Local estimate only. ExpressTURN Free does not expose account-wide usage, so Havyn counts relayed call data observed by this browser.</p></div><div className="relay-actions">{custom && <button className="button subtle" onClick={test} disabled={testing}>{testing ? "Testing..." : "Test relay"}</button>}<button className="button primary" onClick={save}>Save</button></div></section></div>;
+  const measuredUsage = !custom && accountUsage ? Number(accountUsage.egressBytes || 0) : usage;
+  const freeTierBytes = Number(accountUsage?.freeTierBytes || 1_000_000_000_000);
+  const progress = Math.min(100, measuredUsage / freeTierBytes * 100);
+  const overageBytes = Math.max(0, measuredUsage - freeTierBytes);
+  const estimatedCost = overageBytes / 1_000_000_000 * Number(accountUsage?.ratePerGb || .05);
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Call relay settings"><section className="relay-modal"><button className="icon-close" onClick={onClose} aria-label="Close call relay settings"><X /></button><p className="eyebrow">CALL RELAY</p><h2>Connection route</h2><div className="relay-mode" role="group" aria-label="Relay source"><button className={!custom ? "active" : ""} onClick={() => setCustom(false)}>Havyn relay</button><button className={custom ? "active" : ""} onClick={() => setCustom(true)}>Own credentials</button></div><p className="relay-mode-note">{custom ? "Replace Havyn's managed relay with another STUN and TURN account." : "No setup required. Havyn securely supplies short-lived Cloudflare TURN credentials when a call needs a relay."}</p>{custom ? <div className="relay-fields"><label className="relay-wide">STUN URL<input value={stunUrl} onChange={(event) => setStunUrl(event.target.value)} placeholder="stun:stun.expressturn.com:3478" /></label><label className="relay-wide">TURN URLs<textarea value={turnUrls} onChange={(event) => setTurnUrls(event.target.value)} placeholder={"turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp"} /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label><label>Password<input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoComplete="new-password" /></label><p className="relay-apply-note relay-wide">Custom details stay in this browser session and apply the next time you join a call.</p></div> : <div className="relay-managed"><Signal size={18}/><span><strong>Cloudflare TURN managed</strong><small>Used automatically when a direct call path is unavailable</small></span><b>Ready</b></div>}<button className="relay-help-button" type="button" onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen}><Info size={15}/><span>Where to get the details</span><ChevronDown size={15}/></button>{guideOpen && <div className="relay-guide"><ol><li>Sign in to your TURN provider and open its credential dashboard.</li><li>Copy its STUN URL, TURN URLs, username, and password. Keep one TURN URL per line.</li><li>Include UDP plus TCP or TLS routes where the provider supports them.</li><li>Select <strong>Test relay</strong>. Havyn verifies that data travels end to end through TURN before saving.</li></ol></div>}<div className="relay-usage"><span><strong>{formatBytes(measuredUsage)}</strong><small>{custom ? "estimated custom relay data on this device" : accountUsage ? "Cloudflare TURN egress this month" : "estimated Cloudflare relay data on this device"}</small></span>{!custom && <b>{progress < .01 ? "<0.01" : progress.toFixed(2)}%</b>}{!custom && <i aria-label={`${progress.toFixed(2)} percent of Cloudflare's shared 1 TB free tier`}><em style={{ width: `${progress}%` }} /></i>}{!custom && <strong className="relay-cost">{overageBytes > 0 ? `Estimated overage $${estimatedCost.toFixed(2)}` : `${formatBytes(Math.max(0, freeTierBytes - measuredUsage))} free tier remaining`}</strong>}<p>Direct calls are excluded. {accountUsage ? "Cloudflare Analytics reports billable TURN egress; the final invoice may differ." : "This browser estimate is used until account analytics is configured."}</p></div><div className="relay-actions">{custom && <button className="button subtle" onClick={test} disabled={testing}>{testing ? "Testing..." : "Test relay"}</button>}<button className="button primary" onClick={save}>Save</button></div></section></div>;
 }
 
 function Discover({ user, onEnterRoom, notify }) {

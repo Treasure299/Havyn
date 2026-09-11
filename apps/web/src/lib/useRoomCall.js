@@ -32,13 +32,13 @@ async function loadIceConfig(socket) {
   const manual = getManualIceConfig();
   if (manual) {
     syncDebug("call-ice-config", { relayConfigured: true, relayProvider: "custom" });
-    return { iceServers: manual.iceServers };
+    return { iceServers: manual.iceServers, relayProvider: "custom" };
   }
   try {
     const data = await socket?.loadIceConfig();
     if (!Array.isArray(data?.iceServers)) return fallbackIce;
     syncDebug("call-ice-config", { relayConfigured: data.relayConfigured === true, relayProvider: data.relayProvider || "none" });
-    return { iceServers: data.iceServers };
+    return { iceServers: data.iceServers, relayProvider: data.relayProvider || "none" };
   } catch (error) {
     syncDebug("call-ice-config-error", { message: error?.message || String(error) });
     return fallbackIce;
@@ -49,7 +49,7 @@ export function useRoomCall({ room, socket, user, notify }) {
   const [joined, setJoined] = useState(false); const [muted, setMuted] = useState(false); const [cameraOff, setCameraOff] = useState(false);
   const [localStream, setLocalStream] = useState(null); const [remoteStreams, setRemoteStreams] = useState([]);
   const [connectionQuality, setConnectionQuality] = useState({});
-  const peers = useRef(new Map()); const queuedIce = useRef(new Map()); const local = useRef(null); const joinedRef = useRef(false); const iceConfig = useRef(fallbackIce); const relayByteTotals = useRef(new Map()); const failureNotified = useRef(false);
+  const peers = useRef(new Map()); const queuedIce = useRef(new Map()); const local = useRef(null); const joinedRef = useRef(false); const iceConfig = useRef(fallbackIce); const relayProvider = useRef("none"); const relayByteTotals = useRef(new Map()); const failureNotified = useRef(false);
   const callStatus = useRef({ muted: false, cameraOff: false });
 
   const closePeer = useCallback((userId) => { const entry = peers.current.get(userId); const peer = entry?.peer || entry; if (entry?.recoveryTimer) clearTimeout(entry.recoveryTimer); if (entry?.offerTimer) clearTimeout(entry.offerTimer); if (peer) peer.close(); peers.current.delete(userId); queuedIce.current.delete(userId); relayByteTotals.current.delete(userId); setRemoteStreams((streams) => streams.filter((stream) => stream.userId !== userId)); }, []);
@@ -141,7 +141,8 @@ export function useRoomCall({ room, socket, user, notify }) {
       const result = await Promise.all([navigator.mediaDevices.getUserMedia(callConstraints()), loadIceConfig(socket), socket?.waitUntilOpen()]);
       [stream] = result;
       const config = result[1];
-      iceConfig.current = config;
+      iceConfig.current = { iceServers: config.iceServers };
+      relayProvider.current = config.relayProvider || "none";
       failureNotified.current = false;
       local.current = stream;
       syncDebug("call-local-tracks", { tracks: stream.getTracks().map((track) => ({ kind: track.kind, enabled: track.enabled, muted: track.muted, readyState: track.readyState, label: track.label })) });
@@ -213,7 +214,7 @@ export function useRoomCall({ room, socket, user, notify }) {
           const remoteCandidate = selectedPair?.remoteCandidateId ? stats.get(selectedPair.remoteCandidateId) : null;
           const relayActive = localCandidate?.candidateType === "relay" || remoteCandidate?.candidateType === "relay";
           const previousBytes = relayByteTotals.current.get(userId);
-          if (relayActive && Number.isFinite(previousBytes)) recordRelayUsage(Math.max(0, relayBytes - previousBytes));
+          if (relayActive && Number.isFinite(previousBytes)) recordRelayUsage(relayProvider.current, Math.max(0, relayBytes - previousBytes));
           relayByteTotals.current.set(userId, relayBytes);
           const loss = lost / Math.max(1, lost + received);
           next[userId] = peer.connectionState !== "connected" || !selectedPair ? "checking" : rtt > .65 || loss > .12 ? "poor" : rtt > .28 || loss > .045 ? "fair" : "good";

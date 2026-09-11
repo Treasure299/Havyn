@@ -271,7 +271,7 @@ The corrected model is a premium Havyn companion layer around or adjacent to the
 ## Current MVP constraints and known risks
 
 - Rooms are optimized for small private sessions.
-- Voice/video calling targets a small group and must use a managed TURN relay when direct WebRTC connectivity fails. The room coordinator issues ICE configuration to account and guest participants through fresh, room-scoped tickets. Provider credentials are stored as Worker secrets and never committed; short-lived credentials are preferred, while static Free-tier credentials must be rotated if exposed or abused.
+- Voice/video calling targets a small group and uses Cloudflare TURN when direct WebRTC connectivity fails. The room coordinator exchanges a server-side TURN key for short-lived, participant-specific credentials through fresh room-scoped tickets. Long-term credentials remain Worker secrets and are never shipped to the browser or committed. Direct calls are preferred. The relay meter uses Cloudflare's account-level TURN egress analytics when configured, with a device-local selected-relay estimate as fallback, and estimates overage after Cloudflare Realtime's shared 1,000 GB monthly SFU/TURN free tier at the published rate.
 - Provider UI and internal APIs can change, so adapters require maintenance and testing.
 - Autoplay and browser gesture requirements can interrupt automatic room startup.
 - Every participant may need their own provider account/subscription.

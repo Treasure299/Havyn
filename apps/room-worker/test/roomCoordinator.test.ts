@@ -61,6 +61,13 @@ async function guestRoomTicket(roomId: string, userId: string, creating: boolean
 }
 
 describe("call relay credentials", () => {
+  it("returns pricing metadata when account analytics is not configured", async () => {
+    const response = await worker.fetch(new Request("https://havyn.test/v2/turn-usage"));
+    const payload = await response.json() as { configured?: boolean; freeTierBytes?: number; ratePerGb?: number };
+    expect(response.status).toBe(200);
+    expect(payload).toMatchObject({ configured: false, freeTierBytes: 1_000_000_000_000, ratePerGb: 0.05 });
+  });
+
   it("accepts a fresh room ticket for ICE configuration", async () => {
     const roomId = `ICE-${crypto.randomUUID().slice(0, 8)}`.toUpperCase();
     const ticket = await guestRoomTicket(roomId, `guest_${crypto.randomUUID().replaceAll("-", "")}`, true);

@@ -17,6 +17,8 @@ interface Env {
   TURN_TTL_SECONDS?: string;
   CLOUDFLARE_TURN_KEY_ID?: string;
   CLOUDFLARE_TURN_API_TOKEN?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_ANALYTICS_API_TOKEN?: string;
 }
 
 interface ConnectionAttachment extends Participant {
@@ -46,6 +48,9 @@ export default {
     if (request.method === "OPTIONS") return corsResponse(null, env, 204);
     if (url.pathname === "/health") {
       return corsResponse(JSON.stringify({ ok: true, service: "havyn-room-coordinator", protocol: PROTOCOL_VERSION, environment: env.ENVIRONMENT }), env);
+    }
+    if (url.pathname === "/v2/turn-usage" && request.method === "GET") {
+      return issueTurnUsage(request, env);
     }
 
     const ticketMatch = url.pathname.match(/^\/v2\/rooms\/([A-Z0-9-]{4,64})\/ticket$/i);
@@ -423,6 +428,59 @@ async function issueIceConfig(request: Request, env: Env, roomId: string): Promi
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(username));
   const credential = btoa(String.fromCharCode(...new Uint8Array(signature)));
   return corsResponse(JSON.stringify({ iceServers: [stun, { urls, username, credential }], relayConfigured: true, relayProvider: "express-turn" }), env, 200);
+}
+
+async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
+  const month = new Date().toISOString().slice(0, 7);
+  const freeTierBytes = 1_000_000_000_000;
+  const ratePerGb = 0.05;
+  if (env.ENVIRONMENT !== "local" && !await authenticateUser(request, env, {})) {
+    return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
+  }
+  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_ANALYTICS_API_TOKEN || !env.CLOUDFLARE_TURN_KEY_ID) {
+    return corsResponse(JSON.stringify({ configured: false, month, freeTierBytes, ratePerGb }), env, 200);
+  }
+  const dateFrom = `${month}-01`;
+  const dateTo = new Date().toISOString().slice(0, 10);
+  const escapeGraphQl = (value: string) => JSON.stringify(value);
+  const query = `query TurnUsage {
+    viewer {
+      accounts(filter: { accountTag: ${escapeGraphQl(env.CLOUDFLARE_ACCOUNT_ID)} }) {
+        callsTurnUsageAdaptiveGroups(
+          limit: 1
+          filter: { date_geq: ${escapeGraphQl(dateFrom)}, date_leq: ${escapeGraphQl(dateTo)}, keyId: ${escapeGraphQl(env.CLOUDFLARE_TURN_KEY_ID)} }
+        ) { sum { egressBytes } }
+      }
+    }
+  }`;
+  try {
+    const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.CLOUDFLARE_ANALYTICS_API_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query })
+    });
+    const payload = await response.json() as {
+      data?: { viewer?: { accounts?: Array<{ callsTurnUsageAdaptiveGroups?: Array<{ sum?: { egressBytes?: number } }> }> } };
+      errors?: Array<{ message?: string }>;
+    };
+    if (!response.ok || payload.errors?.length) throw new Error(payload.errors?.[0]?.message || `Analytics request failed (${response.status})`);
+    const groups = payload.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups || [];
+    const egressBytes = groups.reduce((total, group) => total + Number(group.sum?.egressBytes || 0), 0);
+    const overageBytes = Math.max(0, egressBytes - freeTierBytes);
+    return corsResponse(JSON.stringify({
+      configured: true,
+      source: "cloudflare-analytics",
+      month,
+      egressBytes,
+      freeTierBytes,
+      overageBytes,
+      ratePerGb,
+      estimatedCostUsd: overageBytes / 1_000_000_000 * ratePerGb
+    }), env, 200);
+  } catch (error) {
+    console.error("Cloudflare TURN analytics request failed", error instanceof Error ? error.message : String(error));
+    return corsResponse(JSON.stringify({ configured: false, month, freeTierBytes, ratePerGb, unavailable: true }), env, 200);
+  }
 }
 
 async function authenticateUser(request: Request, env: Env, body: Record<string, unknown>): Promise<{ id: string; displayName?: string } | null> {

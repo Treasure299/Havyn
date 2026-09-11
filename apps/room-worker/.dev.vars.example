@@ -2,3 +2,7 @@ ROOM_TICKET_SECRET=replace-with-a-long-random-local-secret
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-supabase-anon-key
 CLIENT_ORIGIN=*
+CLOUDFLARE_TURN_KEY_ID=your-turn-key-id
+CLOUDFLARE_TURN_API_TOKEN=your-turn-key-secret
+CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+CLOUDFLARE_ANALYTICS_API_TOKEN=your-account-analytics-read-token

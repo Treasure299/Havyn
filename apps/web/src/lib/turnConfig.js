@@ -38,19 +38,23 @@ export function saveTurnSettings(settings) {
   dispatchEvent(new Event(CHANGE_EVENT));
 }
 
-export function getRelayUsage() {
+export function getRelayUsage(provider = "cloudflare") {
   try {
     const saved = JSON.parse(localStorage.getItem(USAGE_KEY) || "null");
-    return saved?.month === monthKey() ? Number(saved.bytes || 0) : 0;
+    return saved?.month === monthKey() ? Number(saved.providers?.[provider] || 0) : 0;
   } catch {
     return 0;
   }
 }
 
-export function recordRelayUsage(bytes) {
+export function recordRelayUsage(provider, bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return;
-  const next = getRelayUsage() + bytes;
-  localStorage.setItem(USAGE_KEY, JSON.stringify({ month: monthKey(), bytes: next }));
+  const key = provider || "unknown";
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(USAGE_KEY) || "null"); } catch { saved = null; }
+  const providers = saved?.month === monthKey() && saved.providers ? { ...saved.providers } : {};
+  providers[key] = Number(providers[key] || 0) + bytes;
+  localStorage.setItem(USAGE_KEY, JSON.stringify({ month: monthKey(), providers }));
   dispatchEvent(new Event(CHANGE_EVENT));
 }
 
