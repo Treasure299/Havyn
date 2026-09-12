@@ -12,10 +12,12 @@ export function useProviderPlayback({ provider, iframeRef, socket, room, userId,
   const delayedPlay = useRef(null);
   const playAttempt = useRef(null);
   const deniedNoticeAt = useRef(0);
+  const bridgeReady = useRef(false);
 
   useEffect(() => {
     setStatus(isSyncedProvider(provider) ? "connecting" : "manual");
     setNeedsGesture(false);
+    bridgeReady.current = false;
     local.current = { currentTime: 0, isPlaying: false, lastReportAt: 0, lastAppliedSequence: 0 };
   }, [provider?.adapterId, provider?.destination]);
 
@@ -126,14 +128,22 @@ export function useProviderPlayback({ provider, iframeRef, socket, room, userId,
     if (!isSyncedProvider(provider)) return undefined;
     const onMessage = (event) => {
       const parsed = parseProviderEvent(provider, event, iframeRef.current?.contentWindow);
-      if (!parsed) return;
+      if (!parsed) {
+        if (event.source === iframeRef.current?.contentWindow) {
+          syncDebug("provider-event-rejected", { provider: provider.adapterId, expectedOrigin: provider.origin, receivedOrigin: event.origin });
+        }
+        return;
+      }
       syncDebug("provider-event", { provider: provider.adapterId, ...parsed });
       if (parsed.type === "error") {
         setStatus("failed");
         syncDebug("provider-stream-failed", { provider: provider.adapterId, message: parsed.message });
         return;
       }
+      const firstBridgeEvent = !bridgeReady.current;
+      bridgeReady.current = true;
       setStatus("ready");
+      if (firstBridgeEvent && room?.playbackState?.sequence) apply(room.playbackState, { force: true });
       const pending = remoteEcho.current;
       const isRemoteAcknowledgement = pending && Date.now() < pending.until
         && ["play", "pause", "seeking", "seeked"].includes(parsed.type);
@@ -157,7 +167,7 @@ export function useProviderPlayback({ provider, iframeRef, socket, room, userId,
     };
     addEventListener("message", onMessage);
     return () => removeEventListener("message", onMessage);
-  }, [iframeRef, provider, publish, report]);
+  }, [apply, iframeRef, provider, publish, report, room?.playbackState]);
 
   useEffect(() => () => clearTimeout(delayedPlay.current), []);
 
@@ -195,8 +205,14 @@ export function useProviderPlayback({ provider, iframeRef, socket, room, userId,
       const timeout = setTimeout(() => setStatus("waiting"), 8000);
       return () => clearTimeout(timeout);
     }
+    if (status === "waiting") {
+      const retry = setInterval(() => {
+        postProviderCommand(provider, iframeRef.current?.contentWindow, "status");
+      }, 4000);
+      return () => clearInterval(retry);
+    }
     return undefined;
-  }, [status]);
+  }, [iframeRef, provider, status]);
 
   return { status, onFrameLoad, report, startPlayback, startLocally, needsGesture };
 }

@@ -1022,14 +1022,14 @@ function ProviderStage({ content, room, userId, socket, canControl, canChoose, o
   }, [content.provider?.id, content.provider?.destination, content.provider?.kind]);
   useEffect(() => {
     if (!embedded || isYouTube || isYouTubeBrowse || activeProvider?.capability !== "synced" || activeProvider?.id === "moviesapi") return undefined;
-    if (!matchMedia("(max-width: 620px)").matches || status === "ready") return undefined;
+    if (!matchMedia("(max-width: 620px)").matches || status !== "failed") return undefined;
     const fallback = syncedProviders(content, content.season || 1, content.episode || 1).find((provider) => provider.id === "moviesapi");
     if (!fallback) return undefined;
     const timer = setTimeout(() => {
       setGuardEnabled(false);
       setLocalProvider(fallback);
-      notify(`${activeProvider.name} did not respond on this phone. Switched to MoviesAPI.`);
-    }, status === "failed" ? 500 : 12_000);
+      notify(`${activeProvider.name} reported a playback error on this phone. Switched to MoviesAPI.`);
+    }, 500);
     return () => clearTimeout(timer);
   }, [activeProvider?.capability, activeProvider?.id, activeProvider?.name, content.id, content.mediaType, content.season, content.episode, embedded, isYouTube, isYouTubeBrowse, notify, status]);
   useEffect(() => {

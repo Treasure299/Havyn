@@ -134,6 +134,8 @@ Useful capability flags include:
 
 A provider switch should replace/recreate only the isolated provider surface. The Havyn room remains connected.
 
+A slow embedded-provider bridge must not be treated as a provider failure. Havyn may retry capability checks while it waits, but automatic provider recovery requires an explicit provider error; a silent timeout alone must not switch a participant away from their selected provider.
+
 ## Synchronization principles
 
 - The server maintains authoritative room playback state.

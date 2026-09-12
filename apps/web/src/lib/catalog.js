@@ -123,7 +123,7 @@ export function syncedProviders(content, season = 1, episode = 1) {
   return [
     {
       id: "cinesrc", name: "CineSrc", adapterId: "cinesrc", origin: "https://cinesrc.st", capability: "synced", kind: "embed", source: "Havyn Sync",
-      destination: isSeries ? `https://cinesrc.st/embed/tv/${content.id}?s=${season}&e=${episode}` : `https://cinesrc.st/embed/movie/${content.id}`
+      destination: isSeries ? `https://cinesrc.st/embed/tv/${content.id}?s=${season}&e=${episode}&autoplay=false` : `https://cinesrc.st/embed/movie/${content.id}?autoplay=false`
     },
     {
       id: "strigil", name: "Strigil", adapterId: "strigil", origin: "https://strigil.cc", capability: "synced", kind: "embed", source: "Havyn Sync",
