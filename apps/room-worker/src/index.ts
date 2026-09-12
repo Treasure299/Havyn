@@ -556,6 +556,30 @@ async function issueIceConfig(request: Request, env: Env, roomId: string): Promi
   return corsResponse(JSON.stringify({ iceServers: [stun, { urls, username, credential }], relayConfigured: true, relayProvider: "express-turn" }), env, 200);
 }
 
+type TurnAnalyticsManagedConfig = Pick<Extract<ManagedTurnConfig, { mode: "cloudflare" }>, "mode" | "accountId" | "analyticsApiToken"> | { mode: "static" };
+
+export function selectTurnAnalyticsCredentials(
+  managed: TurnAnalyticsManagedConfig | null,
+  environment: Pick<Env, "CLOUDFLARE_ACCOUNT_ID" | "CLOUDFLARE_ANALYTICS_API_TOKEN">
+) {
+  if (managed?.mode === "static") return { accountId: undefined, analyticsToken: undefined };
+  return {
+    accountId: managed?.accountId || environment.CLOUDFLARE_ACCOUNT_ID,
+    analyticsToken: managed?.analyticsApiToken || environment.CLOUDFLARE_ANALYTICS_API_TOKEN
+  };
+}
+
+export const TURN_USAGE_QUERY = `query TurnUsage($accountId: String!, $dateFrom: Date!, $dateTo: Date!) {
+  viewer {
+    accounts(filter: { accountTag: $accountId }) {
+      callsTurnUsageAdaptiveGroups(
+        limit: 1
+        filter: { date_geq: $dateFrom, date_leq: $dateTo }
+      ) { sum { egressBytes } }
+    }
+  }
+}`;
+
 async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
   const now = new Date();
   const month = now.toISOString().slice(0, 7);
@@ -566,30 +590,24 @@ async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
     return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
   }
   const managed = await readManagedTurnConfig(env);
-  const accountId = managed ? managed.mode === "cloudflare" ? managed.accountId : undefined : env.CLOUDFLARE_ACCOUNT_ID;
-  const analyticsToken = managed ? managed.mode === "cloudflare" ? managed.analyticsApiToken : undefined : env.CLOUDFLARE_ANALYTICS_API_TOKEN;
-  const keyId = managed ? managed.mode === "cloudflare" ? managed.keyId : undefined : env.CLOUDFLARE_TURN_KEY_ID;
-  if (!accountId || !analyticsToken || !keyId) {
-    return corsResponse(JSON.stringify({ configured: false, month, nextResetAt, freeTierBytes, ratePerGb }), env, 200);
+  const { accountId, analyticsToken } = selectTurnAnalyticsCredentials(managed, env);
+  if (!accountId || !analyticsToken) {
+    return corsResponse(JSON.stringify({
+      configured: false,
+      errorCode: !accountId ? "account-id-missing" : "analytics-token-missing",
+      month,
+      nextResetAt,
+      freeTierBytes,
+      ratePerGb
+    }), env, 200);
   }
   const dateFrom = `${month}-01`;
   const dateTo = new Date().toISOString().slice(0, 10);
-  const escapeGraphQl = (value: string) => JSON.stringify(value);
-  const query = `query TurnUsage {
-    viewer {
-      accounts(filter: { accountTag: ${escapeGraphQl(accountId)} }) {
-        callsTurnUsageAdaptiveGroups(
-          limit: 1
-          filter: { date_geq: ${escapeGraphQl(dateFrom)}, date_leq: ${escapeGraphQl(dateTo)}, keyId: ${escapeGraphQl(keyId)} }
-        ) { sum { egressBytes } }
-      }
-    }
-  }`;
   try {
     const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
       method: "POST",
       headers: { Authorization: `Bearer ${analyticsToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query: TURN_USAGE_QUERY, variables: { accountId, dateFrom, dateTo } })
     });
     const payload = await response.json() as {
       data?: { viewer?: { accounts?: Array<{ callsTurnUsageAdaptiveGroups?: Array<{ sum?: { egressBytes?: number } }> }> } };
@@ -612,8 +630,18 @@ async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
       estimatedCostUsd: overageBytes / 1_000_000_000 * ratePerGb
     }), env, 200);
   } catch (error) {
-    console.error("Cloudflare TURN analytics request failed", error instanceof Error ? error.message : String(error));
-    return corsResponse(JSON.stringify({ configured: false, month, nextResetAt, freeTierBytes, ratePerGb, unavailable: true }), env, 200);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Cloudflare TURN analytics request failed", message);
+    const denied = /auth|permission|access|unauthorized|forbidden/i.test(message);
+    return corsResponse(JSON.stringify({
+      configured: false,
+      errorCode: denied ? "analytics-token-denied" : "analytics-query-failed",
+      month,
+      nextResetAt,
+      freeTierBytes,
+      ratePerGb,
+      unavailable: true
+    }), env, 200);
   }
 }
 

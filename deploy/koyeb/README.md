@@ -53,7 +53,7 @@ Once Koyeb is healthy, package the desktop app with:
 
 ```env
 VITE_SOCKET_SERVER_URL=https://YOUR-KOYEB-DOMAIN
-VITE_AUTH_REDIRECT_URL=https://YOUR-KOYEB-DOMAIN/verify
+VITE_AUTH_REDIRECT_URL=https://havyn-web.pages.dev/verify/
 ```
 
 The app must be rebuilt and repackaged after changing Vite environment variables.

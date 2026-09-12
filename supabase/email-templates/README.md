@@ -12,17 +12,17 @@ Havyn access
 
 The template uses Supabase's required `{{ .ConfirmationURL }}` variable and does not include app launch or support links.
 
-## Free Redirect Setup
+## Confirmation Redirect
 
-Use the existing free Render server for the confirmation result page:
+The confirmation result page is deployed with Havyn Web on Cloudflare Pages:
 
 ```text
-https://havyn-socket-server.onrender.com/verify
+https://havyn-web.pages.dev/verify/
 ```
 
 In Supabase Auth URL settings:
 
-- Site URL: `https://havyn-socket-server.onrender.com/verify`
-- Redirect URL: `https://havyn-socket-server.onrender.com/verify`
+- Site URL: `https://havyn-web.pages.dev/verify/`
+- Redirect URL: `https://havyn-web.pages.dev/verify/`
 
-The desktop app also sends `emailRedirectTo` to this same URL through `VITE_AUTH_REDIRECT_URL`.
+Both Havyn Web and the desktop app send `emailRedirectTo` to this URL through `VITE_AUTH_REDIRECT_URL`. The old Render and static verification URLs remain compatibility paths for links already sent.

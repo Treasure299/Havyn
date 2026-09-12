@@ -177,6 +177,12 @@ web release does not proxy media or claim dependable iframe control for a
 provider that blocks embedding. A browser extension remains a later capability
 for coordinating provider tabs outside Havyn Web.
 
+Email confirmation resolves on the canonical Havyn Web domain at
+`https://havyn-web.pages.dev/verify/`. The Cloudflare Pages route owns the
+current confirmation UI and handles success, expired/invalid, and direct-visit
+states. Older Render and static verification URLs remain compatibility paths so
+confirmation links already sent do not strand users.
+
 ### Public positioning decision (2026-08-30)
 
 Havyn Web is the flagship public entry point while it is tested as a live demo.
@@ -283,7 +289,7 @@ The corrected model is a premium Havyn companion layer around or adjacent to the
 ## Current MVP constraints and known risks
 
 - Rooms are optimized for small private sessions.
-- Voice/video calling targets a small group and uses Cloudflare TURN when direct WebRTC connectivity fails. The room coordinator exchanges a server-side TURN key for short-lived, participant-specific credentials through fresh room-scoped tickets. Long-term credentials remain Worker secrets and are never shipped to the browser or committed. Direct calls are preferred. The relay meter uses Cloudflare's account-level TURN egress analytics when configured, with a device-local selected-relay estimate as fallback, and estimates overage after Cloudflare Realtime's shared 1,000 GB monthly SFU/TURN free tier at the published rate. During the web beta, every signed-in account is an administrator and may replace the global relay with a different Cloudflare account or standard STUN/TURN credentials; guests cannot. Secrets are submitted only to the coordinator and the settings read endpoint never returns them. Active callers must rejoin after a global relay change.
+- Voice/video calling targets a small group and uses Cloudflare TURN when direct WebRTC connectivity fails. The room coordinator exchanges a server-side TURN key for short-lived, participant-specific credentials through fresh room-scoped tickets. Long-term credentials remain Worker secrets and are never shipped to the browser or committed. Direct calls are preferred. The relay meter uses account-wide Cloudflare TURN egress analytics when configured, including usage from earlier keys in the same account, with a device-local selected-relay estimate as fallback. A global relay override without its own analytics token retains the deployment analytics token instead of disabling the meter. Havyn estimates overage after Cloudflare Realtime's shared 1,000 GB monthly SFU/TURN free tier at the published rate. During the web beta, every signed-in account is an administrator and may replace the global relay with a different Cloudflare account or standard STUN/TURN credentials; guests cannot. Secrets are submitted only to the coordinator and the settings read endpoint never returns them. Active callers must rejoin after a global relay change.
 - Provider UI and internal APIs can change, so adapters require maintenance and testing.
 - Autoplay and browser gesture requirements can interrupt automatic room startup.
 - Every participant may need their own provider account/subscription.

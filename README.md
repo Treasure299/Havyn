@@ -89,10 +89,11 @@ Copy-Item apps/desktop/.env.example apps/desktop/.env
 3. Run `supabase/schema.sql`.
    - Existing projects that already ran the older schema can run `supabase/social-beta.sql` once, then `supabase/friends-beta.sql` once.
 4. In Supabase Auth settings, enable email/password auth.
-5. In Authentication > URL Configuration, set Site URL to your verification page. For the hosted MVP this is `https://havyn-socket-server.onrender.com/verify`.
+5. In Authentication > URL Configuration, set Site URL to `https://havyn-web.pages.dev/verify/`.
 6. Add these Redirect URLs:
    - `http://127.0.0.1:5173/**`
-   - `http://localhost:5173/**`
+    - `http://localhost:5173/**`
+    - `https://havyn-web.pages.dev/verify/`
 7. Copy your project URL and anon key into `apps/desktop/.env`.
 
 Desktop `.env`:
@@ -102,7 +103,7 @@ VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 VITE_SIGNALING_PROVIDER=socket
 VITE_SOCKET_SERVER_URL=http://localhost:4000
-VITE_AUTH_REDIRECT_URL=https://havyn-socket-server.onrender.com/verify
+VITE_AUTH_REDIRECT_URL=https://havyn-web.pages.dev/verify/
 ```
 
 Server `.env`:
@@ -276,7 +277,7 @@ After Koyeb is healthy, rebuild the desktop app with:
 
 ```env
 VITE_SOCKET_SERVER_URL=https://YOUR-KOYEB-DOMAIN
-VITE_AUTH_REDIRECT_URL=https://YOUR-KOYEB-DOMAIN/verify
+VITE_AUTH_REDIRECT_URL=https://havyn-web.pages.dev/verify/
 ```
 
 ## Supabase Realtime Signaling

@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROTOCOL_VERSION, type ServerEnvelope } from "../src/protocol";
+import { selectTurnAnalyticsCredentials, TURN_USAGE_QUERY } from "../src/index";
 
 const worker = (exports as unknown as {
   default: { fetch(request: Request): Promise<Response> };
@@ -61,6 +62,24 @@ async function guestRoomTicket(roomId: string, userId: string, creating: boolean
 }
 
 describe("call relay credentials", () => {
+  it("keeps deployment analytics available after a Cloudflare relay override", () => {
+    expect(selectTurnAnalyticsCredentials({
+      mode: "cloudflare",
+      accountId: "managed-account"
+    }, {
+      CLOUDFLARE_ACCOUNT_ID: "deployment-account",
+      CLOUDFLARE_ANALYTICS_API_TOKEN: "deployment-analytics-token"
+    })).toEqual({
+      accountId: "managed-account",
+      analyticsToken: "deployment-analytics-token"
+    });
+  });
+
+  it("queries the shared Cloudflare account instead of one TURN key", () => {
+    expect(TURN_USAGE_QUERY).toContain("accountTag: $accountId");
+    expect(TURN_USAGE_QUERY).not.toContain("keyId");
+  });
+
   it("returns pricing metadata when account analytics is not configured", async () => {
     const response = await worker.fetch(new Request("https://havyn.test/v2/turn-usage"));
     const payload = await response.json() as { configured?: boolean; freeTierBytes?: number; ratePerGb?: number };

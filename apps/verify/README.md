@@ -5,7 +5,7 @@ This folder exists so the old free Render static service named `havyn-verify` ca
 The active Supabase redirect URL is:
 
 ```text
-https://havyn-socket-server.onrender.com/verify
+https://havyn-web.pages.dev/verify/
 ```
 
 That route is served by the main Havyn Socket.IO server.
