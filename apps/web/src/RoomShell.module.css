@@ -803,3 +803,17 @@
 .theater:has(.chatOpen) :global(.people-popover) { right: min(42vw, 352px) !important; }
 .theater .isTheater .theaterChat { z-index: 2 !important; }
 .theater .isTheater { z-index: 0 !important; }
+
+/* A normal phone room gives the embedded player a true video viewport. This
+   avoids presenting a tall, mostly black iframe as though playback failed. */
+@media (max-width: 620px) {
+  .roomPage:not(.theater) .providerStage {
+    height: auto !important;
+    min-height: 0 !important;
+    aspect-ratio: 16 / 9;
+  }
+  .roomPage:not(.theater) .providerStage :global(.provider-stage-content) {
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+}

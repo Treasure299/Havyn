@@ -39,6 +39,25 @@ interface IceServerConfig {
   credential?: string;
 }
 
+type ManagedTurnConfig = {
+  mode: "cloudflare";
+  accountId: string;
+  keyId: string;
+  turnApiToken: string;
+  analyticsApiToken?: string;
+  updatedAt: string;
+  updatedBy: string;
+} | {
+  mode: "static";
+  providerName: string;
+  stunUrls: string[];
+  turnUrls: string[];
+  username: string;
+  credential: string;
+  updatedAt: string;
+  updatedBy: string;
+};
+
 const MAX_RECENT_COMMANDS = 160;
 const RECONNECT_GRACE_MS = 12_000;
 
@@ -51,6 +70,9 @@ export default {
     }
     if (url.pathname === "/v2/turn-usage" && request.method === "GET") {
       return issueTurnUsage(request, env);
+    }
+    if (url.pathname === "/v2/admin/turn-config" && ["GET", "PUT", "DELETE"].includes(request.method)) {
+      return manageTurnConfig(request, env);
     }
 
     const ticketMatch = url.pathname.match(/^\/v2\/rooms\/([A-Z0-9-]{4,64})\/ticket$/i);
@@ -89,6 +111,22 @@ export class HavynRoom {
   }
 
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/internal/turn-config") {
+      if (request.method === "GET") {
+        const config = await this.ctx.storage.get<ManagedTurnConfig>("managed-turn-config");
+        return Response.json(config || null);
+      }
+      if (request.method === "PUT") {
+        const config = await request.json<ManagedTurnConfig>();
+        await this.ctx.storage.put("managed-turn-config", config);
+        return Response.json({ ok: true });
+      }
+      if (request.method === "DELETE") {
+        await this.ctx.storage.delete("managed-turn-config");
+        return Response.json({ ok: true });
+      }
+    }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
     }
@@ -381,37 +419,125 @@ async function issueRoomTicket(request: Request, env: Env, roomId: string): Prom
   return corsResponse(JSON.stringify({ ticket: await signTicket(claims, secret), expiresAt: claims.exp, protocol: PROTOCOL_VERSION }), env);
 }
 
+function configStub(env: Env): DurableObjectStub {
+  return env.HAVYN_ROOMS.getByName("HAVYN-SYSTEM-CONFIG");
+}
+
+async function readManagedTurnConfig(env: Env): Promise<ManagedTurnConfig | null> {
+  const response = await configStub(env).fetch("https://havyn.internal/internal/turn-config");
+  return response.ok ? await response.json() as ManagedTurnConfig | null : null;
+}
+
+function environmentStunUrls(env: Env): string[] {
+  return env.TURN_STUN_URL
+    ? String(env.TURN_STUN_URL).split(",").map((value) => value.trim()).filter(Boolean)
+    : ["stun:stun.cloudflare.com:3478", "stun:stun.cloudflare.com:53", "stun:stun.l.google.com:19302"];
+}
+
+async function generateCloudflareIceServers(keyId: string, token: string, ttl: number, customIdentifier: string): Promise<IceServerConfig[]> {
+  const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ttl, customIdentifier })
+  });
+  const payload = await response.json().catch(() => ({})) as { iceServers?: IceServerConfig[]; error?: string };
+  if (!response.ok || !Array.isArray(payload.iceServers)) throw new Error(payload.error || `TURN credential request failed (${response.status})`);
+  return payload.iceServers.map((server) => ({
+    ...server,
+    urls: (Array.isArray(server.urls) ? server.urls : [server.urls]).filter((url) => !String(url).includes(":53"))
+  })).filter((server) => server.urls.length);
+}
+
+function splitIceUrls(value: unknown, protocols: string[]): string[] {
+  const values = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+  return values.map(String).map((url) => url.trim()).filter((url) => protocols.some((protocol) => url.startsWith(`${protocol}:`)));
+}
+
+async function manageTurnConfig(request: Request, env: Env): Promise<Response> {
+  let body: Record<string, unknown> = {};
+  if (request.method === "PUT") {
+    try { body = await request.json() as Record<string, unknown>; } catch { return corsResponse(JSON.stringify({ error: "Invalid configuration" }), env, 400); }
+  }
+  const authenticated = env.ENVIRONMENT === "local" ? { id: "local-admin" } : await authenticateUser(request, env, body);
+  if (!authenticated) return corsResponse(JSON.stringify({ error: "Signed-in admin access required" }), env, 401);
+
+  if (request.method === "GET") {
+    const current = await readManagedTurnConfig(env);
+    return corsResponse(JSON.stringify({
+      admin: true,
+      source: current ? "admin" : "environment",
+      mode: current?.mode || (env.CLOUDFLARE_TURN_KEY_ID ? "cloudflare" : "static"),
+      providerName: current?.mode === "static" ? current.providerName : "Cloudflare",
+      accountId: current?.mode === "cloudflare" ? current.accountId : env.CLOUDFLARE_ACCOUNT_ID || "",
+      keyId: current?.mode === "cloudflare" ? current.keyId : env.CLOUDFLARE_TURN_KEY_ID || "",
+      updatedAt: current?.updatedAt || null,
+      updatedBy: current?.updatedBy || null
+    }), env, 200);
+  }
+
+  if (request.method === "DELETE") {
+    await configStub(env).fetch("https://havyn.internal/internal/turn-config", { method: "DELETE" });
+    return corsResponse(JSON.stringify({ ok: true, source: "environment" }), env, 200);
+  }
+
+  const mode = body.mode === "static" ? "static" : "cloudflare";
+  const updatedAt = new Date().toISOString();
+  let config: ManagedTurnConfig;
+  if (mode === "cloudflare") {
+    const accountId = String(body.accountId || "").trim();
+    const keyId = String(body.keyId || "").trim();
+    const turnApiToken = String(body.turnApiToken || "").trim();
+    const analyticsApiToken = String(body.analyticsApiToken || "").trim();
+    if (!accountId || !keyId || !turnApiToken) return corsResponse(JSON.stringify({ error: "Account ID, TURN key ID, and TURN API token are required" }), env, 400);
+    try {
+      await generateCloudflareIceServers(keyId, turnApiToken, 600, `HAVYN-ADMIN-TEST:${authenticated.id}`);
+    } catch (error) {
+      return corsResponse(JSON.stringify({ error: error instanceof Error ? error.message : "Cloudflare TURN validation failed" }), env, 400);
+    }
+    config = { mode, accountId, keyId, turnApiToken, ...(analyticsApiToken ? { analyticsApiToken } : {}), updatedAt, updatedBy: authenticated.id };
+  } else {
+    const providerName = String(body.providerName || "Custom TURN").trim().slice(0, 80) || "Custom TURN";
+    const stunUrls = splitIceUrls(body.stunUrls, ["stun", "stuns"]);
+    const turnUrls = splitIceUrls(body.turnUrls, ["turn", "turns"]);
+    const username = String(body.username || "").trim();
+    const credential = String(body.credential || "");
+    if (!turnUrls.length || !username || !credential) return corsResponse(JSON.stringify({ error: "TURN URLs, username, and password are required" }), env, 400);
+    config = { mode, providerName, stunUrls, turnUrls, username, credential, updatedAt, updatedBy: authenticated.id };
+  }
+  const stored = await configStub(env).fetch("https://havyn.internal/internal/turn-config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config)
+  });
+  if (!stored.ok) return corsResponse(JSON.stringify({ error: "Relay configuration could not be stored" }), env, 500);
+  return corsResponse(JSON.stringify({ ok: true, mode: config.mode, providerName: config.mode === "cloudflare" ? "Cloudflare" : config.providerName, updatedAt }), env, 200);
+}
+
 async function issueIceConfig(request: Request, env: Env, roomId: string): Promise<Response> {
   const secret = ticketSecret(env);
   const ticket = new URL(request.url).searchParams.get("ticket") || "";
   const claims = secret && ticket ? await verifyTicket(ticket, secret) : null;
-  const authenticated = claims?.roomId === roomId
-    ? { id: claims.userId }
-    : await authenticateUser(request, env, {});
-  if (!authenticated) return corsResponse(JSON.stringify({ error: "Room authorization required" }), env, 401);
-  const stun = {
-    urls: env.TURN_STUN_URL
-      ? String(env.TURN_STUN_URL).split(",").map((value) => value.trim()).filter(Boolean)
-      : ["stun:stun.cloudflare.com:3478", "stun:stun.cloudflare.com:53", "stun:stun.l.google.com:19302"]
-  };
+  if (claims?.roomId !== roomId) return corsResponse(JSON.stringify({ error: "Room authorization required" }), env, 401);
+  const authenticated = { id: claims.userId };
+  const managed = await readManagedTurnConfig(env);
+  const stun = { urls: managed?.mode === "static" ? managed.stunUrls : environmentStunUrls(env) };
   const ttl = Math.max(300, Math.min(86_400, Number(env.TURN_TTL_SECONDS || 21_600)));
-  if (env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN) {
+  const cloudflareKeyId = managed ? managed.mode === "cloudflare" ? managed.keyId : undefined : env.CLOUDFLARE_TURN_KEY_ID;
+  const cloudflareTurnToken = managed ? managed.mode === "cloudflare" ? managed.turnApiToken : undefined : env.CLOUDFLARE_TURN_API_TOKEN;
+  if (cloudflareKeyId && cloudflareTurnToken) {
     try {
-      const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.CLOUDFLARE_TURN_KEY_ID)}/credentials/generate-ice-servers`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${env.CLOUDFLARE_TURN_API_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ ttl, customIdentifier: `${roomId}:${authenticated.id}` })
-      });
-      const payload = await response.json().catch(() => ({})) as { iceServers?: IceServerConfig[]; error?: string };
-      if (!response.ok || !Array.isArray(payload.iceServers)) throw new Error(payload.error || `TURN credential request failed (${response.status})`);
-      const iceServers = payload.iceServers.map((server) => ({
-        ...server,
-        urls: (Array.isArray(server.urls) ? server.urls : [server.urls]).filter((url) => !String(url).includes(":53"))
-      })).filter((server) => server.urls.length);
+      const iceServers = await generateCloudflareIceServers(cloudflareKeyId, cloudflareTurnToken, ttl, `${roomId}:${authenticated.id}`);
       return corsResponse(JSON.stringify({ iceServers, relayConfigured: true, relayProvider: "cloudflare" }), env, 200);
     } catch (error) {
       console.error("Cloudflare TURN credential generation failed", error instanceof Error ? error.message : String(error));
     }
+  }
+  if (managed?.mode === "static") {
+    return corsResponse(JSON.stringify({
+      iceServers: [...(managed.stunUrls.length ? [stun] : []), { urls: managed.turnUrls, username: managed.username, credential: managed.credential }],
+      relayConfigured: true,
+      relayProvider: `managed:${managed.providerName}`
+    }), env, 200);
   }
   const urls = String(env.TURN_URLS || "").split(",").map((value) => value.trim()).filter(Boolean);
   if (urls.length && env.TURN_USERNAME && env.TURN_CREDENTIAL) {
@@ -439,7 +565,11 @@ async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
   if (env.ENVIRONMENT !== "local" && !await authenticateUser(request, env, {})) {
     return corsResponse(JSON.stringify({ error: "Authentication required" }), env, 401);
   }
-  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_ANALYTICS_API_TOKEN || !env.CLOUDFLARE_TURN_KEY_ID) {
+  const managed = await readManagedTurnConfig(env);
+  const accountId = managed ? managed.mode === "cloudflare" ? managed.accountId : undefined : env.CLOUDFLARE_ACCOUNT_ID;
+  const analyticsToken = managed ? managed.mode === "cloudflare" ? managed.analyticsApiToken : undefined : env.CLOUDFLARE_ANALYTICS_API_TOKEN;
+  const keyId = managed ? managed.mode === "cloudflare" ? managed.keyId : undefined : env.CLOUDFLARE_TURN_KEY_ID;
+  if (!accountId || !analyticsToken || !keyId) {
     return corsResponse(JSON.stringify({ configured: false, month, nextResetAt, freeTierBytes, ratePerGb }), env, 200);
   }
   const dateFrom = `${month}-01`;
@@ -447,10 +577,10 @@ async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
   const escapeGraphQl = (value: string) => JSON.stringify(value);
   const query = `query TurnUsage {
     viewer {
-      accounts(filter: { accountTag: ${escapeGraphQl(env.CLOUDFLARE_ACCOUNT_ID)} }) {
+      accounts(filter: { accountTag: ${escapeGraphQl(accountId)} }) {
         callsTurnUsageAdaptiveGroups(
           limit: 1
-          filter: { date_geq: ${escapeGraphQl(dateFrom)}, date_leq: ${escapeGraphQl(dateTo)}, keyId: ${escapeGraphQl(env.CLOUDFLARE_TURN_KEY_ID)} }
+          filter: { date_geq: ${escapeGraphQl(dateFrom)}, date_leq: ${escapeGraphQl(dateTo)}, keyId: ${escapeGraphQl(keyId)} }
         ) { sum { egressBytes } }
       }
     }
@@ -458,7 +588,7 @@ async function issueTurnUsage(request: Request, env: Env): Promise<Response> {
   try {
     const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
       method: "POST",
-      headers: { Authorization: `Bearer ${env.CLOUDFLARE_ANALYTICS_API_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${analyticsToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({ query })
     });
     const payload = await response.json() as {
@@ -525,7 +655,7 @@ function corsResponse(body: BodyInit | null, env: Env, status = 200): Response {
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": env.CLIENT_ORIGIN || "*",
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
     }
   });
 }

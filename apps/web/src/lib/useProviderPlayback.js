@@ -13,6 +13,12 @@ export function useProviderPlayback({ provider, iframeRef, socket, room, userId,
   const playAttempt = useRef(null);
   const deniedNoticeAt = useRef(0);
 
+  useEffect(() => {
+    setStatus(isSyncedProvider(provider) ? "connecting" : "manual");
+    setNeedsGesture(false);
+    local.current = { currentTime: 0, isPlaying: false, lastReportAt: 0, lastAppliedSequence: 0 };
+  }, [provider?.adapterId, provider?.destination]);
+
   const report = useCallback((force = false) => {
     const now = Date.now();
     if (!socket || !room?.playbackState || (!force && now - local.current.lastReportAt < 3500)) return;
@@ -90,7 +96,6 @@ export function useProviderPlayback({ provider, iframeRef, socket, room, userId,
 
   const onFrameLoad = useCallback(() => {
     if (!isSyncedProvider(provider)) return;
-    setStatus("ready");
     const frame = iframeRef.current?.contentWindow;
     postProviderCommand(provider, frame, "status");
     if (room?.playbackState?.sequence) apply(room.playbackState, { force: true });
@@ -123,6 +128,12 @@ export function useProviderPlayback({ provider, iframeRef, socket, room, userId,
       const parsed = parseProviderEvent(provider, event, iframeRef.current?.contentWindow);
       if (!parsed) return;
       syncDebug("provider-event", { provider: provider.adapterId, ...parsed });
+      if (parsed.type === "error") {
+        setStatus("failed");
+        syncDebug("provider-stream-failed", { provider: provider.adapterId, message: parsed.message });
+        return;
+      }
+      setStatus("ready");
       const pending = remoteEcho.current;
       const isRemoteAcknowledgement = pending && Date.now() < pending.until
         && ["play", "pause", "seeking", "seeked"].includes(parsed.type);

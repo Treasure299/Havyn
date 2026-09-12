@@ -8,6 +8,7 @@ const PROVIDER_ADAPTERS = {
       }
       if (type === "ready") return { type: "ready" };
       if (type === "response") return { type: "status", currentTime: Number(data.currentTime ?? data.result) };
+      if (type.includes("error") || type === "failed") return { type: "error", message: String(data.message || data.error || "Provider stream failed") };
       return null;
     },
     command(action, currentTime) {
@@ -24,6 +25,7 @@ const PROVIDER_ADAPTERS = {
       if (["play", "pause", "seeking", "seeked", "timeupdate"].includes(type)) {
         return { type, currentTime: Number(event.currentTime ?? event.time), isPlaying: type === "play" ? true : type === "pause" ? false : undefined };
       }
+      if (String(type).includes("error") || type === "failed") return { type: "error", message: String(event.message || event.error || "Provider stream failed") };
       return null;
     },
     command(action, currentTime) {
@@ -40,6 +42,7 @@ const PROVIDER_ADAPTERS = {
         return { type, currentTime, isPlaying: type === "play" ? true : type === "pause" ? false : undefined };
       }
       if (type === "playerstatus") return { type: "status", currentTime, isPlaying: data.paused === false ? true : data.paused === true ? false : undefined };
+      if (String(type).includes("error") || type === "failed") return { type: "error", message: String(data.message || data.error || "Provider stream failed") };
       return null;
     },
     command(action, currentTime) {

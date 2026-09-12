@@ -236,6 +236,16 @@ Only an adapter with both verified observation and command application may be
 presented as **Synced playback**. The room remains usable if an adapter fails;
 Havyn must show a clear recovery choice rather than silently claiming sync.
 
+The 2026-09-12 revalidation also excluded VidLink, `vidsrc.cc`, `vidsrc.to`,
+and Embed.su from the synced pool. VidLink's outbound events are real, but its
+current player ignored exact parent play, pause, and seek commands. VidCore's
+live embed emitted no bridge events; `vidsrc.cc` refused framing; `vidsrc.to`
+did not expose a live message bridge; and Embed.su did not resolve. On a phone,
+Havyn may recover locally from an unresponsive synced-provider frame by using
+the already verified MoviesAPI adapter without changing the provider surface
+for healthy participants. Readiness requires an actual provider bridge event,
+not merely the iframe load event.
+
 ### Desktop
 
 Desktop remains the highest-capability Havyn experience because it can host an isolated provider webview, provider adapters, protection controls, richer Live Share, and recovery.
@@ -271,7 +281,7 @@ The corrected model is a premium Havyn companion layer around or adjacent to the
 ## Current MVP constraints and known risks
 
 - Rooms are optimized for small private sessions.
-- Voice/video calling targets a small group and uses Cloudflare TURN when direct WebRTC connectivity fails. The room coordinator exchanges a server-side TURN key for short-lived, participant-specific credentials through fresh room-scoped tickets. Long-term credentials remain Worker secrets and are never shipped to the browser or committed. Direct calls are preferred. The relay meter uses Cloudflare's account-level TURN egress analytics when configured, with a device-local selected-relay estimate as fallback, and estimates overage after Cloudflare Realtime's shared 1,000 GB monthly SFU/TURN free tier at the published rate.
+- Voice/video calling targets a small group and uses Cloudflare TURN when direct WebRTC connectivity fails. The room coordinator exchanges a server-side TURN key for short-lived, participant-specific credentials through fresh room-scoped tickets. Long-term credentials remain Worker secrets and are never shipped to the browser or committed. Direct calls are preferred. The relay meter uses Cloudflare's account-level TURN egress analytics when configured, with a device-local selected-relay estimate as fallback, and estimates overage after Cloudflare Realtime's shared 1,000 GB monthly SFU/TURN free tier at the published rate. During the web beta, every signed-in account is an administrator and may replace the global relay with a different Cloudflare account or standard STUN/TURN credentials; guests cannot. Secrets are submitted only to the coordinator and the settings read endpoint never returns them. Active callers must rejoin after a global relay change.
 - Provider UI and internal APIs can change, so adapters require maintenance and testing.
 - Autoplay and browser gesture requirements can interrupt automatic room startup.
 - Every participant may need their own provider account/subscription.

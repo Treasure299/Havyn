@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft, ArrowUp, ChevronLeft, ChevronRight, CircleUserRound, Clapperboard, Compass, Copy, ExternalLink,
-  Camera, ChevronDown, Film, Info, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, Play, Plus, Search, Send, ShieldCheck, Signal, Sparkles, Star, UserPlus, Users, Video, VideoOff, Volume2, VolumeX, X
+  Camera, ChevronDown, Film, Info, KeyRound, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MonitorUp, Play, Plus, RotateCcw, Search, Send, ShieldCheck, Signal, Sparkles, Star, UserPlus, Users, Video, VideoOff, Volume2, VolumeX, X
 } from "lucide-react";
 import discordLogo from "./assets/discord.png";
 import youtubeLogo from "./assets/youtube.png";
 import joinRoomLogo from "./assets/join-room.png";
-import { discover, GENRES, getHome, getProviders, getSeasonEpisodes, getSeriesDetails, searchYouTube, youtubeBrowseProvider, youtubeProvider } from "./lib/catalog.js";
+import { discover, GENRES, getHome, getProviders, getSeasonEpisodes, getSeriesDetails, searchYouTube, syncedProviders, youtubeBrowseProvider, youtubeProvider } from "./lib/catalog.js";
 import { isSupabaseConfigured, supabase } from "./lib/supabase.js";
 import { RoomSocket } from "./lib/roomSocket.js";
 import { ROOM_ENDPOINT } from "./lib/roomConfig.js";
@@ -221,6 +221,70 @@ function formatBytes(bytes) {
   return `${(bytes / 1000 ** 3).toFixed(2)} GB`;
 }
 
+function AdminRelayConfig({ notify, onChanged }) {
+  const [providerMode, setProviderMode] = useState("cloudflare");
+  const [status, setStatus] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [fields, setFields] = useState({ accountId: "", keyId: "", turnApiToken: "", analyticsApiToken: "", providerName: "", stunUrls: "", turnUrls: "", username: "", credential: "" });
+  const request = useCallback(async (method, body) => {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session?.access_token) throw new Error("Sign in again to manage the Havyn relay.");
+    const response = await fetch(`${ROOM_ENDPOINT}/v2/admin/turn-config`, {
+      method,
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${data.session.access_token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Relay update failed (${response.status}).`);
+    return payload;
+  }, []);
+  const load = useCallback(() => request("GET").then((payload) => { setStatus(payload); setProviderMode(payload.mode || "cloudflare"); setFields((current) => ({ ...current, accountId: payload.accountId || "", keyId: payload.keyId || "", providerName: payload.providerName === "Cloudflare" ? "" : payload.providerName || "" })); }).catch((error) => notify(error.message)), [notify, request]);
+  useEffect(() => { void load(); }, [load]);
+  const updateField = (name) => (event) => setFields((current) => ({ ...current, [name]: event.target.value }));
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload = providerMode === "cloudflare"
+        ? { mode: "cloudflare", accountId: fields.accountId, keyId: fields.keyId, turnApiToken: fields.turnApiToken, analyticsApiToken: fields.analyticsApiToken }
+        : { mode: "static", providerName: fields.providerName, stunUrls: fields.stunUrls, turnUrls: fields.turnUrls, username: fields.username, credential: fields.credential };
+      if (providerMode === "static") await probeTurnSettings({ enabled: true, stunUrl: fields.stunUrls, turnUrls: fields.turnUrls, username: fields.username, credential: fields.credential });
+      await request("PUT", payload);
+      setFields((current) => ({ ...current, turnApiToken: "", analyticsApiToken: "", credential: "" }));
+      notify("Havyn's managed relay was updated. Active callers must rejoin the call.");
+      await load();
+      onChanged?.();
+    } catch (error) { notify(error.message || "The managed relay could not be updated."); }
+    finally { setSaving(false); }
+  };
+  const restore = async () => {
+    if (!confirm("Restore Havyn's deployment relay credentials for all rooms?")) return;
+    setSaving(true);
+    try { await request("DELETE"); notify("Havyn's deployment relay was restored. Active callers must rejoin."); await load(); onChanged?.(); }
+    catch (error) { notify(error.message || "The deployment relay could not be restored."); }
+    finally { setSaving(false); }
+  };
+  return <section className="relay-admin-panel" aria-label="Admin relay configuration">
+    <div className="relay-admin-heading"><span><strong>Global relay credentials</strong><small>{status?.source === "admin" ? `${status.providerName} override active` : "Havyn deployment default active"}</small></span><b>Beta admin</b></div>
+    <p>Every signed-in Havyn account currently has beta admin access. Changes apply to new call connections across every room; guests cannot change them.</p>
+    <div className="relay-admin-modes" role="group" aria-label="TURN credential type"><button className={providerMode === "cloudflare" ? "active" : ""} onClick={() => setProviderMode("cloudflare")}>Cloudflare</button><button className={providerMode === "static" ? "active" : ""} onClick={() => setProviderMode("static")}>Standard TURN</button></div>
+    <div className="relay-fields relay-admin-fields">{providerMode === "cloudflare" ? <>
+      <label>Account ID<input value={fields.accountId} onChange={updateField("accountId")} autoComplete="off" /></label>
+      <label>TURN key ID<input value={fields.keyId} onChange={updateField("keyId")} autoComplete="off" /></label>
+      <label className="relay-wide">TURN API token<input type="password" value={fields.turnApiToken} onChange={updateField("turnApiToken")} autoComplete="new-password" placeholder="Required to replace the active account" /></label>
+      <label className="relay-wide">Account Analytics token<input type="password" value={fields.analyticsApiToken} onChange={updateField("analyticsApiToken")} autoComplete="new-password" placeholder="Optional, enables the shared usage meter" /></label>
+    </> : <>
+      <label className="relay-wide">Provider name<input value={fields.providerName} onChange={updateField("providerName")} placeholder="ExpressTURN" /></label>
+      <label className="relay-wide">STUN URLs<textarea value={fields.stunUrls} onChange={updateField("stunUrls")} placeholder="stun:server.example.com:3478" /></label>
+      <label className="relay-wide">TURN URLs<textarea value={fields.turnUrls} onChange={updateField("turnUrls")} placeholder={"turn:server.example.com:3478?transport=udp\nturns:server.example.com:443?transport=tcp"} /></label>
+      <label>Username<input value={fields.username} onChange={updateField("username")} autoComplete="off" /></label>
+      <label>Password<input type="password" value={fields.credential} onChange={updateField("credential")} autoComplete="new-password" /></label>
+    </>}</div>
+    <p className="relay-admin-warning">A new key in the same Cloudflare account does not renew the 1 TB allowance. Use a different account or provider when changing capacity.</p>
+    <div className="relay-admin-actions"><button className="button subtle" type="button" onClick={restore} disabled={saving}><RotateCcw size={15}/> Restore default</button><button className="button primary" type="button" onClick={save} disabled={saving}>{saving ? "Validating..." : "Validate and apply"}</button></div>
+  </section>;
+}
+
 function TurnSettingsModal({ user, notify, onClose }) {
   const initial = getTurnSettings();
   const [custom, setCustom] = useState(Boolean(initial.enabled));
@@ -232,6 +296,8 @@ function TurnSettingsModal({ user, notify, onClose }) {
   const [testing, setTesting] = useState(false);
   const [accountUsage, setAccountUsage] = useState(null);
   const [accountUsageStatus, setAccountUsageStatus] = useState("idle");
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminRevision, setAdminRevision] = useState(0);
   const usageProvider = custom ? "custom" : "cloudflare";
   const [usage, setUsage] = useState(() => getRelayUsage(usageProvider));
   useEffect(() => { setUsage(getRelayUsage(usageProvider)); return subscribeTurnSettings(() => setUsage(getRelayUsage(usageProvider))); }, [usageProvider]);
@@ -260,7 +326,7 @@ function TurnSettingsModal({ user, notify, onClose }) {
     void refresh();
     const interval = setInterval(refresh, 60_000);
     return () => { active = false; clearInterval(interval); controller.abort(); };
-  }, [custom, user.guest]);
+  }, [adminRevision, custom, user.guest]);
   const settings = { enabled: custom, stunUrl: stunUrl.trim(), turnUrls, username: username.trim(), credential };
   const test = async () => {
     setTesting(true);
@@ -282,7 +348,7 @@ function TurnSettingsModal({ user, notify, onClose }) {
   const estimatedCost = overageBytes / 1_000_000_000 * Number(accountUsage?.ratePerGb || .05);
   const showManagedUsage = !custom && (!sharedAccountUsage || accountUsageStatus === "ready");
   const usageLabel = custom ? "estimated custom relay data on this device" : user.guest ? "estimated Cloudflare relay data on this device" : accountUsageStatus === "error" ? "shared Cloudflare usage temporarily unavailable" : accountUsageStatus === "loading" ? "loading shared Cloudflare usage" : `Cloudflare TURN egress for ${accountUsage?.month || "this month"}`;
-  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Call relay settings"><section className="relay-modal"><button className="icon-close" onClick={onClose} aria-label="Close call relay settings"><X /></button><p className="eyebrow">CALL RELAY</p><h2>Connection route</h2><div className="relay-mode" role="group" aria-label="Relay source"><button className={!custom ? "active" : ""} onClick={() => setCustom(false)}>Havyn relay</button><button className={custom ? "active" : ""} onClick={() => setCustom(true)}>Own credentials</button></div><p className="relay-mode-note">{custom ? "Replace Havyn's managed relay with another STUN and TURN account." : "No setup required. Havyn securely supplies short-lived Cloudflare TURN credentials when a call needs a relay."}</p>{custom ? <div className="relay-fields"><label className="relay-wide">STUN URL<input value={stunUrl} onChange={(event) => setStunUrl(event.target.value)} placeholder="stun:stun.expressturn.com:3478" /></label><label className="relay-wide">TURN URLs<textarea value={turnUrls} onChange={(event) => setTurnUrls(event.target.value)} placeholder={"turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp"} /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label><label>Password<input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoComplete="new-password" /></label><p className="relay-apply-note relay-wide">Custom details stay in this browser session and apply the next time you join a call.</p></div> : <div className="relay-managed"><Signal size={18}/><span><strong>Cloudflare TURN managed</strong><small>Used automatically when a direct call path is unavailable</small></span><b>Ready</b></div>}<button className="relay-help-button" type="button" onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen}><Info size={15}/><span>Where to get the details</span><ChevronDown size={15}/></button>{guideOpen && <div className="relay-guide"><ol><li>Sign in to your TURN provider and open its credential dashboard.</li><li>Copy its STUN URL, TURN URLs, username, and password. Keep one TURN URL per line.</li><li>Include UDP plus TCP or TLS routes where the provider supports them.</li><li>Select <strong>Test relay</strong>. Havyn verifies that data travels end to end through TURN before saving.</li></ol></div>}<div className={`relay-usage ${sharedAccountUsage ? `is-${accountUsageStatus}` : ""}`}><span><strong>{sharedAccountUsage && accountUsageStatus !== "ready" ? "--" : formatBytes(measuredUsage)}</strong><small>{usageLabel}</small></span>{showManagedUsage && <b>{progress < .01 ? "<0.01" : progress.toFixed(2)}%</b>}{showManagedUsage && <i aria-label={`${progress.toFixed(2)} percent of Cloudflare's shared 1 TB free tier`}><em style={{ width: `${progress}%` }} /></i>}{showManagedUsage && <strong className="relay-cost">{overageBytes > 0 ? `Estimated overage $${estimatedCost.toFixed(2)}` : `${formatBytes(Math.max(0, freeTierBytes - measuredUsage))} free tier remaining`}</strong>}<p>Direct calls are excluded. {sharedAccountUsage ? accountUsageStatus === "error" ? "Havyn will retry the shared Cloudflare total automatically." : `Shared by every Havyn account and refreshed automatically${accountUsage?.nextResetAt ? `; resets ${new Date(accountUsage.nextResetAt).toLocaleDateString()}` : " each month"}.` : "This browser estimate resets automatically each month."}</p></div><div className="relay-actions">{custom && <button className="button subtle" onClick={test} disabled={testing}>{testing ? "Testing..." : "Test relay"}</button>}<button className="button primary" onClick={save}>Save</button></div></section></div>;
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Call relay settings"><section className="relay-modal"><button className="icon-close" onClick={onClose} aria-label="Close call relay settings"><X /></button><p className="eyebrow">CALL RELAY</p><h2>Connection route</h2><div className="relay-mode" role="group" aria-label="Relay source"><button className={!custom ? "active" : ""} onClick={() => setCustom(false)}>Havyn relay</button><button className={custom ? "active" : ""} onClick={() => setCustom(true)}>Own credentials</button></div><p className="relay-mode-note">{custom ? "Replace Havyn's managed relay with another STUN and TURN account for this browser." : "No setup required. Havyn securely supplies short-lived TURN credentials when a call needs a relay."}</p>{custom ? <div className="relay-fields"><label className="relay-wide">STUN URL<input value={stunUrl} onChange={(event) => setStunUrl(event.target.value)} placeholder="stun:stun.expressturn.com:3478" /></label><label className="relay-wide">TURN URLs<textarea value={turnUrls} onChange={(event) => setTurnUrls(event.target.value)} placeholder={"turn:free.expressturn.com:3478?transport=udp\nturn:free.expressturn.com:3478?transport=tcp"} /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" /></label><label>Password<input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoComplete="new-password" /></label><p className="relay-apply-note relay-wide">Custom details stay in this browser session and apply the next time you join a call.</p></div> : <div className="relay-managed"><Signal size={18}/><span><strong>Havyn TURN managed</strong><small>Used automatically when a direct call path is unavailable</small></span><b>Ready</b></div>}{!custom && !user.guest && <button className="relay-admin-toggle" type="button" onClick={() => setAdminOpen((value) => !value)} aria-expanded={adminOpen}><KeyRound size={15}/><span>{adminOpen ? "Hide global credentials" : "Manage global credentials"}</span><ChevronDown size={15}/></button>}{adminOpen && !custom && !user.guest && <AdminRelayConfig notify={notify} onChanged={() => setAdminRevision((value) => value + 1)} />}<button className="relay-help-button" type="button" onClick={() => setGuideOpen((value) => !value)} aria-expanded={guideOpen}><Info size={15}/><span>Where to get the details</span><ChevronDown size={15}/></button>{guideOpen && <div className="relay-guide"><ol><li>Sign in to your TURN provider and open its credential dashboard.</li><li>Copy its STUN URL, TURN URLs, username, and password. Keep one TURN URL per line.</li><li>Include UDP plus TCP or TLS routes where the provider supports them.</li><li>Select <strong>Test relay</strong>. Havyn verifies that data travels end to end through TURN before saving.</li></ol></div>}<div className={`relay-usage ${sharedAccountUsage ? `is-${accountUsageStatus}` : ""}`}><span><strong>{sharedAccountUsage && accountUsageStatus !== "ready" ? "--" : formatBytes(measuredUsage)}</strong><small>{usageLabel}</small></span>{showManagedUsage && <b>{progress < .01 ? "<0.01" : progress.toFixed(2)}%</b>}{showManagedUsage && <i aria-label={`${progress.toFixed(2)} percent of Cloudflare's shared 1 TB free tier`}><em style={{ width: `${progress}%` }} /></i>}{showManagedUsage && <strong className="relay-cost">{overageBytes > 0 ? `Estimated overage $${estimatedCost.toFixed(2)}` : `${formatBytes(Math.max(0, freeTierBytes - measuredUsage))} free tier remaining`}</strong>}<p>Direct calls are excluded. {sharedAccountUsage ? accountUsageStatus === "error" ? "Havyn will retry the shared relay total automatically." : `Shared by every Havyn account and refreshed automatically${accountUsage?.nextResetAt ? `; resets ${new Date(accountUsage.nextResetAt).toLocaleDateString()}` : " each month"}.` : "This browser estimate resets automatically each month."}</p></div><div className="relay-actions">{custom && <button className="button subtle" onClick={test} disabled={testing}>{testing ? "Testing..." : "Test relay"}</button>}<button className="button primary" onClick={save}>Save</button></div></section></div>;
 }
 
 function Discover({ user, onEnterRoom, notify }) {
@@ -404,7 +470,7 @@ function Discover({ user, onEnterRoom, notify }) {
     <section className="home-browse-bar"><div className="home-content-tabs" role="tablist" aria-label="Featured titles"><button className={featuredTab === "trending" ? "active" : ""} type="button" onClick={() => { setFeaturedTab("trending"); setMediaType("all"); setGenre(""); setQuery(""); }}>Trending now</button><button className={featuredTab === "popular" ? "active" : ""} type="button" onClick={() => { setFeaturedTab("popular"); setMediaType("movie"); setGenre(""); setQuery(""); }}>Popular movies</button></div></section>
     {!query && !genre && <Rail featured title={featuredTab === "trending" ? "Trending now" : "Popular movies"} items={featuredItems} onChoose={choose} loading={featuredTab === "trending" ? loading : catalogLoading} />}
     <section className="discover-library">
-      <div className="library-heading"><div className="library-type-tabs" aria-label="Content type"><button className={mediaType === "all" || mediaType === "movie" ? "selected" : ""} onClick={() => setMediaType("movie")}>Movies</button><button className={mediaType === "tv" ? "selected" : ""} onClick={() => setMediaType("tv")}>Series</button></div><button className="library-search-button" type="button" onClick={() => document.querySelector(".catalog-search")?.focus()} aria-label="Search titles"><Search size={17}/></button></div>
+      <div className="library-heading"><div className="library-type-tabs" aria-label="Content type"><button className={mediaType === "all" || mediaType === "movie" ? "selected" : ""} onClick={() => setMediaType("movie")}>Movies</button><button className={mediaType === "tv" ? "selected" : ""} onClick={() => setMediaType("tv")}>Series</button></div></div>
       <section className="catalog-toolbar">
         <div className="search-wrap"><Search size={18}/><input className="catalog-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search movies and series" /></div>
         <div className="genre-carousel"><button className="genre-carousel-arrow previous" type="button" aria-label="Show previous genres" onClick={() => genreCarouselRef.current?.scrollBy({ left: -300, behavior: "smooth" })}><ChevronLeft size={16}/></button><div className="genre-list" ref={genreCarouselRef}><button className={!genre ? "selected" : ""} onClick={() => setGenre("")}>All genres</button>{GENRES.map(([id, label]) => <button key={id} className={genre === id ? "selected" : ""} onClick={() => setGenre(id)}>{label}</button>)}</div><button className="genre-carousel-arrow next" type="button" aria-label="Show more genres" onClick={() => genreCarouselRef.current?.scrollBy({ left: 300, behavior: "smooth" })}><ChevronRight size={16}/></button></div>
@@ -662,8 +728,15 @@ function RoomShell({ roomId, user, onBack, notify }) {
       contentCommandSent.current = socket.command("room-content-select", { content: { ...pending.content, provider: pending.provider } });
     };
     const offState = socket.on("room-state", (nextRoom) => {
-      const nextIds = new Set((nextRoom?.participants || []).map((participant) => participant.userId));
-      if (previousParticipants.current.size && [...nextIds].some((id) => id !== user.userId && !previousParticipants.current.has(id))) playSound("join");
+      const participants = nextRoom?.participants || [];
+      const nextIds = new Set(participants.map((participant) => participant.userId));
+      const joined = previousParticipants.current.size
+        ? participants.filter((participant) => participant.userId !== user.userId && !previousParticipants.current.has(participant.userId))
+        : [];
+      if (joined.length) {
+        playSound("join");
+        joined.forEach((participant) => notify(`${participant.displayName || "Someone"} joined the room.`));
+      }
       previousParticipants.current = nextIds;
       setRoom(nextRoom);
     });
@@ -932,39 +1005,54 @@ function CallPanel({ room, user, socket, notify, theater, idle, paused, onConnec
 function ProviderStage({ content, room, userId, socket, canControl, canChoose, onChoose, onSyncAvailability, notify }) {
   const [embedded, setEmbedded] = useState(content.provider?.kind === "embed");
   const [guardEnabled, setGuardEnabled] = useState(false);
+  const [localProvider, setLocalProvider] = useState(null);
   const iframeRef = useRef(null);
   const [youtubeContainer, setYoutubeContainer] = useState(null);
-  const providerPlayback = useProviderPlayback({ provider: content.provider, iframeRef, socket, room, userId, canControl, notify });
+  const activeProvider = localProvider || content.provider;
+  const providerPlayback = useProviderPlayback({ provider: activeProvider, iframeRef, socket, room, userId, canControl, notify });
   const { status, onFrameLoad } = providerPlayback;
-  const isYouTube = content.provider?.adapterId === "youtube"
-    || content.provider?.id === "youtube"
-    || /^https:\/\/(www\.)?youtube(?:-nocookie)?\.com\//.test(content.provider?.destination || "");
-  const isYouTubeBrowse = content.provider?.id === "youtube-browse";
+  const isYouTube = activeProvider?.adapterId === "youtube"
+    || activeProvider?.id === "youtube"
+    || /^https:\/\/(www\.)?youtube(?:-nocookie)?\.com\//.test(activeProvider?.destination || "");
+  const isYouTubeBrowse = activeProvider?.id === "youtube-browse";
   const youtube = useYouTubePlayback({ enabled: isYouTube, container: youtubeContainer, videoId: content.id, socket, room, userId, canControl, notify });
   useEffect(() => {
     setEmbedded(content.provider?.kind === "embed");
+    setLocalProvider(null);
   }, [content.provider?.id, content.provider?.destination, content.provider?.kind]);
   useEffect(() => {
+    if (!embedded || isYouTube || isYouTubeBrowse || activeProvider?.capability !== "synced" || activeProvider?.id === "moviesapi") return undefined;
+    if (!matchMedia("(max-width: 620px)").matches || status === "ready") return undefined;
+    const fallback = syncedProviders(content, content.season || 1, content.episode || 1).find((provider) => provider.id === "moviesapi");
+    if (!fallback) return undefined;
+    const timer = setTimeout(() => {
+      setGuardEnabled(false);
+      setLocalProvider(fallback);
+      notify(`${activeProvider.name} did not respond on this phone. Switched to MoviesAPI.`);
+    }, status === "failed" ? 500 : 12_000);
+    return () => clearTimeout(timer);
+  }, [activeProvider?.capability, activeProvider?.id, activeProvider?.name, content.id, content.mediaType, content.season, content.episode, embedded, isYouTube, isYouTubeBrowse, notify, status]);
+  useEffect(() => {
     const syncStatus = isYouTube ? youtube.status : status;
-    const ready = (content.provider?.capability === "synced" || isYouTube) && syncStatus === "ready";
+    const ready = (activeProvider?.capability === "synced" || isYouTube) && syncStatus === "ready";
     const startPlayback = isYouTube ? youtube.startPlayback : providerPlayback.startPlayback;
     const startLocally = isYouTube ? youtube.startLocally : providerPlayback.startLocally;
     const needsGesture = isYouTube ? youtube.needsGesture : providerPlayback.needsGesture;
     onSyncAvailability?.({ ready, startPlayback: ready ? startPlayback : null, startLocally: ready ? startLocally : null, needsGesture });
     return () => onSyncAvailability?.({ ready: false, startPlayback: null, startLocally: null, needsGesture: false });
-  }, [content.provider?.capability, isYouTube, onSyncAvailability, providerPlayback.needsGesture, providerPlayback.startLocally, providerPlayback.startPlayback, status, youtube.needsGesture, youtube.startLocally, youtube.startPlayback, youtube.status]);
-  const hasEmbeddedProvider = embedded && Boolean(content.provider?.destination);
+  }, [activeProvider?.capability, isYouTube, onSyncAvailability, providerPlayback.needsGesture, providerPlayback.startLocally, providerPlayback.startPlayback, status, youtube.needsGesture, youtube.startLocally, youtube.startPlayback, youtube.status]);
+  const hasEmbeddedProvider = embedded && Boolean(activeProvider?.destination);
   const syncStatus = isYouTube ? youtube.status : status;
-  const externalDestination = isYouTube ? `https://www.youtube.com/watch?v=${encodeURIComponent(content.id)}` : content.provider?.destination;
+  const externalDestination = isYouTube ? `https://www.youtube.com/watch?v=${encodeURIComponent(content.id)}` : activeProvider?.destination;
   return <div className={`provider-stage-content${hasEmbeddedProvider ? " is-embedded" : ""}`}>
     {content.backdropUrl && <img className="stage-backdrop" src={content.backdropUrl} alt="" />}
     <div className="stage-overlay"><p className="eyebrow">NOW PLAYING</p><h2>{content.title}</h2><p>{content.overview || "Your room is ready."}</p>
-      {content.provider ? <><span className={`provider-chip ${content.provider.capability === "synced" ? "synced" : ""}`}>{content.provider.name} · {content.provider.capability === "synced" ? syncStatus === "ready" ? "Synced playback" : "Connecting sync" : "Manual sync"}</span><div className="stage-actions"><a className="button primary" href={externalDestination} target="_blank" rel="noreferrer"><ExternalLink size={17}/> Open {content.provider.name}</a><button className="button subtle" onClick={() => setEmbedded((value) => !value)}>{embedded ? "Hide embedded view" : "Try embedded view"}</button></div>{embedded && content.provider.kind === "embed" && !isYouTube && <label className="guard-toggle"><ShieldCheck size={16}/><span>Ad & pop-up guard</span><input type="checkbox" checked={guardEnabled} onChange={(event) => setGuardEnabled(event.target.checked)} /><i /></label>}<small className="provider-note">{isYouTube ? "Open YouTube once to sign in. Your browser, not Havyn, remembers that session." : content.provider.capability === "synced" ? "Havyn observes and applies playback changes through this provider's dedicated adapter." : "Every participant uses their own authorised provider session where required."}</small></> : <p className="empty-copy">No provider chosen yet. The room, chat, and invitations stay available while you choose one.</p>}
+      {activeProvider ? <><span className={`provider-chip ${activeProvider.capability === "synced" ? "synced" : ""}`}>{activeProvider.name} · {activeProvider.capability === "synced" ? syncStatus === "ready" ? "Synced playback" : "Connecting sync" : "Manual sync"}</span><div className="stage-actions"><a className="button primary" href={externalDestination} target="_blank" rel="noreferrer"><ExternalLink size={17}/> Open {activeProvider.name}</a><button className="button subtle" onClick={() => setEmbedded((value) => !value)}>{embedded ? "Hide embedded view" : "Try embedded view"}</button></div>{embedded && activeProvider.kind === "embed" && !isYouTube && <label className="guard-toggle"><ShieldCheck size={16}/><span>Ad & pop-up guard</span><input type="checkbox" checked={guardEnabled} onChange={(event) => setGuardEnabled(event.target.checked)} /><i /></label>}<small className="provider-note">{localProvider ? `${content.provider.name} was unavailable on this phone, so Havyn recovered with ${activeProvider.name}.` : isYouTube ? "Open YouTube once to sign in. Your browser, not Havyn, remembers that session." : activeProvider.capability === "synced" ? "Havyn observes and applies playback changes through this provider's dedicated adapter." : "Every participant uses their own authorised provider session where required."}</small></> : <p className="empty-copy">No provider chosen yet. The room, chat, and invitations stay available while you choose one.</p>}
       {canChoose && <button className="link-action" onClick={onChoose}><Sparkles size={16}/> Choose a different title or provider</button>}
     </div>
     {embedded && isYouTubeBrowse && <YouTubeBrowseSurface canChoose={canChoose} socket={socket} notify={notify} />}
     {embedded && isYouTube && <div ref={setYoutubeContainer} className="youtube-player" aria-label={`${content.title} YouTube player`} />}
-    {embedded && !isYouTube && !isYouTubeBrowse && content.provider?.destination && <iframe ref={iframeRef} title={content.title} src={content.provider.destination} onLoad={onFrameLoad} {...(guardEnabled ? { sandbox: "allow-scripts allow-forms allow-same-origin" } : {})} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen />}
+    {embedded && !isYouTube && !isYouTubeBrowse && activeProvider?.destination && <iframe key={activeProvider.destination} ref={iframeRef} title={content.title} src={activeProvider.destination} onLoad={onFrameLoad} {...(guardEnabled ? { sandbox: "allow-scripts allow-forms allow-same-origin" } : {})} allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowFullScreen />}
   </div>;
 }
 

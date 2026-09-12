@@ -88,6 +88,42 @@ describe("call relay credentials", () => {
     const response = await worker.fetch(new Request("https://havyn.test/v2/rooms/NO-AUTH/ice"));
     expect(response.status).toBe(401);
   });
+
+  it("lets a signed-in beta admin replace and restore the global TURN credentials without exposing the password", async () => {
+    const put = await worker.fetch(new Request("https://havyn.test/v2/admin/turn-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "static",
+        providerName: "Test relay",
+        stunUrls: "stun:relay.example.test:3478",
+        turnUrls: "turn:relay.example.test:3478?transport=udp\nturns:relay.example.test:443?transport=tcp",
+        username: "test-user",
+        credential: "test-password"
+      })
+    }));
+    expect(put.status).toBe(200);
+
+    try {
+      const status = await worker.fetch(new Request("https://havyn.test/v2/admin/turn-config"));
+      const statusPayload = await status.json() as Record<string, unknown>;
+      expect(statusPayload).toMatchObject({ admin: true, source: "admin", mode: "static", providerName: "Test relay" });
+      expect(JSON.stringify(statusPayload)).not.toContain("test-password");
+
+      const roomId = `ICE-${crypto.randomUUID().slice(0, 8)}`.toUpperCase();
+      const ticket = await guestRoomTicket(roomId, `guest_${crypto.randomUUID().replaceAll("-", "")}`, true);
+      const ice = await worker.fetch(new Request(`https://havyn.test/v2/rooms/${roomId}/ice?ticket=${encodeURIComponent(ticket)}`));
+      const icePayload = await ice.json() as { iceServers: Array<{ urls: string | string[]; username?: string; credential?: string }>; relayProvider: string };
+      expect(icePayload.relayProvider).toBe("managed:Test relay");
+      expect(icePayload.iceServers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ urls: ["stun:relay.example.test:3478"] }),
+        expect.objectContaining({ username: "test-user", credential: "test-password" })
+      ]));
+    } finally {
+      const restored = await worker.fetch(new Request("https://havyn.test/v2/admin/turn-config", { method: "DELETE" }));
+      expect(restored.status).toBe(200);
+    }
+  });
 });
 
 async function connect(roomId: string, userId: string, creating = false, capabilities = ["live-share-v1"]): Promise<TestClient> {
