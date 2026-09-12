@@ -807,7 +807,14 @@
 /* A normal phone room gives the embedded player a true video viewport. This
    avoids presenting a tall, mostly black iframe as though playback failed. */
 @media (max-width: 620px) {
+  .roomPage:not(.theater) .roomLayout {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto auto;
+  }
   .roomPage:not(.theater) .providerStage {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
     height: auto !important;
     min-height: 0 !important;
     aspect-ratio: 16 / 9;
@@ -815,5 +822,10 @@
   .roomPage:not(.theater) .providerStage :global(.provider-stage-content) {
     height: 100% !important;
     min-height: 0 !important;
+  }
+  .roomPage:not(.theater) .roomSidebar {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
   }
 }

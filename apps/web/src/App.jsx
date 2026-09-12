@@ -694,8 +694,6 @@ function RoomShell({ roomId, user, onBack, notify }) {
   const [railWidth, setRailWidth] = useState(() => Number(localStorage.getItem("havyn-web:room-rail-width")) || 360);
   const [normalCallHeight, setNormalCallHeight] = useState(() => Number(localStorage.getItem("havyn-web:normal-call-height")) || 208);
   const [callDockActive, setCallDockActive] = useState(false);
-  const [compactControl, setCompactControl] = useState("");
-  const [compactToolbar, setCompactToolbar] = useState(() => window.innerWidth <= 820);
   const [connectionQuality, setConnectionQuality] = useState({});
   const [syncReady, setSyncReady] = useState(false);
   const [startSyncedPlayback, setStartSyncedPlayback] = useState(null);
@@ -707,18 +705,11 @@ function RoomShell({ roomId, user, onBack, notify }) {
   const theaterRef = useRef(false);
   const freshChatTimer = useRef(null);
   const theaterChatResizeActiveRef = useRef(false);
-  const compactTimerRef = useRef(null);
   const playSound = useRoomSounds();
   const createPayload = pendingCreateRef.current;
 
   useEffect(() => { theaterChatOpenRef.current = theaterChatOpen; }, [theaterChatOpen]);
   useEffect(() => { theaterRef.current = theater; }, [theater]);
-  useEffect(() => {
-    const update = () => { setCompactToolbar(window.innerWidth <= 820); if (window.innerWidth > 820) setCompactControl(""); };
-    addEventListener("resize", update);
-    return () => { removeEventListener("resize", update); clearTimeout(compactTimerRef.current); };
-  }, []);
-
   useEffect(() => {
     const socket = new RoomSocket();
     socketRef.current = socket;
@@ -901,12 +892,6 @@ function RoomShell({ roomId, user, onBack, notify }) {
     try { if (document.fullscreenElement) await document.exitFullscreen(); else { setTheater(true); await roomPageRef.current?.requestFullscreen(); } }
     catch { notify("Fullscreen is not available in this browser."); }
   };
-  const revealCompactControl = (name, action) => {
-    if (!compactToolbar || compactControl === name) { setCompactControl(""); action(); return; }
-    setCompactControl(name);
-    clearTimeout(compactTimerRef.current);
-    compactTimerRef.current = setTimeout(() => setCompactControl(""), 2600);
-  };
   const handleSyncAvailability = useCallback(({ ready, startPlayback, needsGesture, startLocally }) => {
     setSyncReady(ready);
     setStartSyncedPlayback(() => startPlayback || null);
@@ -915,7 +900,7 @@ function RoomShell({ roomId, user, onBack, notify }) {
   }, []);
 
   return <section ref={roomPageRef} className={`room-page ${roomStyles.roomPage}${user.guest ? " guest-room" : ""}${theater ? ` theater-mode ${roomStyles.theater}` : ""}${fullscreen ? " is-fullscreen" : ""}`}>
-    <header className="room-header"><button className="back-button" onClick={onBack} aria-label="Back to Discover" title="Discover"><ArrowLeft /></button><div><h1>{content?.title || room?.roomName || createPayload?.roomName || "Loading room..."}</h1></div><div className="room-command-bar"><span className={`connection ${connection}`}>{connection}</span>{canChoose && <button className={`button subtle room-change-button compact-command${compactControl === "title" ? " control-expanded" : ""}`} onClick={() => revealCompactControl("title", () => setChooseOpen(true))}><Sparkles size={16}/><span className="control-label">Change title</span></button>}<button className={`icon-command${theater ? " active" : ""}`} onClick={() => setTheater((value) => !value)} title="Toggle theater mode"><MonitorUp size={17}/></button><button className="icon-command" onClick={toggleFullscreen} title={fullscreen ? "Exit fullscreen" : "Fullscreen"}>{fullscreen ? <Minimize2 size={17}/> : <Maximize2 size={17}/>}</button><PlaybackModeMenu mode={room?.playbackMode || "host-only"} disabled={role !== "host"} onChange={(playbackMode) => socketRef.current?.command("room-playback-mode", { playbackMode })}/><button className={`room-code-button compact-command${compactControl === "code" ? " control-expanded" : ""}`} onClick={() => revealCompactControl("code", copyCode)} title="Copy room code"><span>Code</span><strong>{roomId}</strong><Copy size={14}/></button><button className={`button subtle compact-command${compactControl === "invite" ? " control-expanded" : ""}`} onClick={() => revealCompactControl("invite", () => setInviteOpen(true))}><UserPlus size={16}/><span className="control-label">Invite</span></button><PeopleMenu participants={room?.participants || []} quality={connectionQuality} role={role} onRoleChange={(targetUserId, nextRole) => socketRef.current?.command("room-role-update", { targetUserId, role: nextRole })} onRemoveGuest={(targetUserId) => socketRef.current?.command("room-guest-revoke", { targetUserId })}/></div></header>
+    <header className="room-header"><button className="back-button" onClick={onBack} aria-label="Back to Discover" title="Discover"><ArrowLeft /></button><div><h1>{content?.title || room?.roomName || createPayload?.roomName || "Loading room..."}</h1></div><div className="room-command-bar"><span className={`connection ${connection}`}>{connection}</span>{canChoose && <button className="button subtle room-change-button compact-command" onClick={() => setChooseOpen(true)} title="Change title" aria-label="Change title"><Sparkles size={16}/><span className="control-label">Change title</span></button>}<button className={`icon-command${theater ? " active" : ""}`} onClick={() => setTheater((value) => !value)} title="Toggle theater mode" aria-label="Toggle theater mode"><MonitorUp size={17}/></button><button className="icon-command" onClick={toggleFullscreen} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}>{fullscreen ? <Minimize2 size={17}/> : <Maximize2 size={17}/>}</button><PlaybackModeMenu mode={room?.playbackMode || "host-only"} disabled={role !== "host"} onChange={(playbackMode) => socketRef.current?.command("room-playback-mode", { playbackMode })}/><button className="room-code-button compact-command" onClick={copyCode} title="Copy room code" aria-label="Copy room code"><span>Code</span><strong>{roomId}</strong><Copy size={14}/></button><button className="button subtle compact-command" onClick={() => setInviteOpen(true)} title="Invite" aria-label="Invite"><UserPlus size={16}/><span className="control-label">Invite</span></button><PeopleMenu participants={room?.participants || []} quality={connectionQuality} role={role} onRoleChange={(targetUserId, nextRole) => socketRef.current?.command("room-role-update", { targetUserId, role: nextRole })} onRemoveGuest={(targetUserId) => socketRef.current?.command("room-guest-revoke", { targetUserId })}/></div></header>
     <main className={`room-layout ${roomStyles.roomLayout}${theater ? ` ${roomStyles.isTheater}` : ""}${theaterChatOpen ? ` theater-chat-open ${roomStyles.chatOpen}` : ""}${theaterChatUnread ? ` ${roomStyles.chatUnread}` : ""}${theaterIdle ? ` ${roomStyles.idle}` : ""}${room?.playbackState?.isPlaying !== true ? ` ${roomStyles.paused}` : ""}`} style={{ "--room-rail-width": `${railWidth}px`, "--normal-call-height": `${normalCallHeight}px`, "--theater-call-height": `${theaterCallHeight}px`, "--theater-chat-width-open": `${theaterChatWidth}px`, "--theater-chat-width": theaterChatOpen ? `min(${theaterChatWidth}px, ${window.innerWidth <= 960 ? 72 : 42}vw)` : "42px" }}>
       <section className={`provider-stage ${roomStyles.providerStage}`}>
         {content ? <ProviderStage key={`${content.id}:${content.provider?.id || "none"}:${content.provider?.destination || ""}`} content={content} room={room} userId={user.userId} socket={socketRef.current} canControl={canControl} canChoose={canChoose} onChoose={() => setChooseOpen(true)} onSyncAvailability={handleSyncAvailability} notify={notify} /> : <EmptyProvider canChoose={canChoose} onChoose={() => setChooseOpen(true)} />}
