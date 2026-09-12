@@ -182,6 +182,9 @@ Email confirmation resolves on the canonical Havyn Web domain at
 current confirmation UI and handles success, expired/invalid, and direct-visit
 states. Older Render and static verification URLs remain compatibility paths so
 confirmation links already sent do not strand users.
+The confirmation route follows the Havyn beta's light editorial visual system:
+Manrope typography, white space, near-black type, thin gray rules, and Havyn red
+actions, with a compact responsive layout for phones.
 
 ### Public positioning decision (2026-08-30)
 

@@ -8,6 +8,14 @@
     <link rel="icon" href="/havyn-icon.png" type="image/png">
     <link rel="apple-touch-icon" href="/havyn-icon.png">
     <title>Confirm your email | Havyn</title>
+    <script>
+      (() => {
+        const destination = new URL("https://havyn-web.pages.dev/verify/");
+        destination.search = window.location.search;
+        destination.hash = window.location.hash;
+        window.location.replace(destination.toString());
+      })();
+    </script>
     <style>
       :root {
         color-scheme: dark;
